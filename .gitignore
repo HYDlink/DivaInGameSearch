@@ -1,0 +1,24 @@
+# 本项目生成的构建、测试与运行产物。
+/build/
+/artifacts/
+/.vs/
+/CMakeUserPresets.json
+*.user
+*.log
+
+# 阅读参考的独立上游仓库由来源记录追溯，不纳入本项目发行。
+/third_party/reference/
+
+# 依赖的历史构建目录和本机中间文件不作为源码发行。
+/third_party/vendor/detours/
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exe
+*.dll
+/tests/runtime/
+/design/*.html
+/third_party/vendor/detours-source/*
+!/third_party/vendor/detours-source/src/
+!/third_party/vendor/detours-source/LICENSE.md
