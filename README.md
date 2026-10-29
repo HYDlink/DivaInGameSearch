@@ -91,6 +91,8 @@ cd DivaInGameSearch
 
 开发者和 AI Agent 可从 [AGENTS.md](AGENTS.md) 开始，再读 [开发指南](docs/IMPLEMENTATION_HANDOFF.md)、[定位流程研究](docs/research/NATIVE_SELECTION_METHODS.md) 和 [验收记录](docs/ACCEPTANCE.md)。原始本机日志、部署备份及临时资料不纳入公开仓库。
 
+游戏内截图与可见行为验收可复用 [Project DIVA 截图指南](docs/GAME_SCREENSHOT_GUIDE.md)，其中包含 BitBlt／PrintWindow 的调用方式、交互桌面权限和图片有效性检查；工具源码位于 tests/native_capture.cpp。
+
 ## 参考项目与致谢
 
 本项目建立在社区公开研究之上，特别感谢以下两个重点参考项目：
