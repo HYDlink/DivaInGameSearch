@@ -13,10 +13,11 @@ add_library(detours STATIC ${DETOURS_DIR}/detours.cpp ${DETOURS_DIR}/modules.cpp
 target_include_directories(detours PUBLIC ${DETOURS_DIR})
 set_property(TARGET detours PROPERTY CXX_STANDARD 14)
 target_compile_options(detours PRIVATE /permissive)
-add_library(search_core STATIC src/core.cpp src/catalog.cpp src/selector.cpp)
+add_library(search_core STATIC src/core.cpp src/catalog.cpp src/selector.cpp
+  src/customization.cpp src/customization_catalog.cpp)
 target_include_directories(search_core PUBLIC src PRIVATE third_party/vendor/toml)
 target_link_libraries(search_core PUBLIC normaliz)
-add_library(search_ui STATIC src/ui.cpp src/host.cpp
+add_library(search_ui STATIC src/ui.cpp src/host.cpp src/customization_ui.cpp
   third_party/vendor/imgui/imgui.cpp third_party/vendor/imgui/imgui_draw.cpp
   third_party/vendor/imgui/imgui_tables.cpp third_party/vendor/imgui/imgui_widgets.cpp
   third_party/vendor/imgui/backends/imgui_impl_win32.cpp
@@ -44,3 +45,10 @@ target_link_libraries(DllCheck PRIVATE d3d11 dxgi)
 add_executable(InputCheck tests/input_check.cpp)
 target_link_libraries(InputCheck PRIVATE search_ui)
 add_test(NAME 原生输入协议验收 COMMAND InputCheck "${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME 窗口消息生命周期验收 COMMAND InputCheck --messages-only "${CMAKE_CURRENT_SOURCE_DIR}")
+add_executable(ViewCheck tests/view_check.cpp)
+target_link_libraries(ViewCheck PRIVATE search_ui)
+add_test(NAME 搜索视图行为验收 COMMAND ViewCheck)
+add_executable(CustomizationCheck tests/customization_check.cpp)
+target_link_libraries(CustomizationCheck PRIVATE search_ui)
+add_test(NAME 服装饰品检索验收 COMMAND CustomizationCheck "${CMAKE_CURRENT_SOURCE_DIR}")

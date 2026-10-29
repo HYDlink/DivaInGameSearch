@@ -54,6 +54,15 @@ static void TestSearch() {
     q={}; q.sort=1; auto results=Search(c,q,{}); Check(c.songs[results.front().index].id==1,"全局编号排序失败");
     q.sort=3; results=Search(c,q,{}); Check(c.songs[results.front().index].id==637,"等级全局排序失败");
     q.text="不存在的歌曲"; Check(Search(c,q,{}).empty(),"无结果处理失败");
+    Catalog names;
+    for(int id:{2,3,1}) {
+        Song song; song.id=id; song.name=id==2?"Ｂ":id==3?"a":"Ａ";
+        song.charts[0][3].available=true; PrepareSong(song); names.songs.push_back(std::move(song));
+    }
+    q={}; q.sort=2; results=Search(names,q,{});
+    Check(names.songs[results[0].index].id==1 && names.songs[results[1].index].id==3 && names.songs[results[2].index].id==2,"名称排序未统一全角与大小写或稳定编号");
+    q.text="a"; results=Search(names,q,{});
+    Check(results.size()==2 && results[0].score==900 && results[1].score==900,"缓存名称精确匹配改变相关度");
 }
 // 验证真实格式 priority、enabled、include、字段覆盖与 NC 继承；参数 root 为本项目根目录。
 static void TestCatalog(const diva::fs::path& root) {

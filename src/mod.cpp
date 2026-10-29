@@ -7,9 +7,11 @@ namespace {
 diva::Selector& Selection() { static diva::Selector* selector=new diva::Selector; return *selector; }
 // 把中文诊断写到本 Mod 目录；参数 text 为记录内容。
 void Log(const std::string& text) {
+    static std::mutex mutex; std::lock_guard lock(mutex);
     SYSTEMTIME time{};GetLocalTime(&time);
     char prefix[48]{};snprintf(prefix,sizeof(prefix),"%04d-%02d-%02d %02d:%02d:%02d.%03d ",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,time.wMilliseconds);
-    std::ofstream out(diva::App().view.home/"search-diagnostics.log",std::ios::app);out<<prefix<<text<<"\n";
+    std::ofstream out(diva::App().view.home/"search-diagnostics.log",std::ios::app);out<<prefix<<text<<"\n";out.flush();
+    if(!out.good()) OutputDebugStringW(diva::Wide("DIVA 搜索诊断写入失败："+text+"\n").c_str());
 }
 }
 extern "C" {
@@ -19,10 +21,11 @@ __declspec(dllexport) void Init() {
     wchar_t path[32768]{}; GetModuleFileNameW(self,path,32768);
     wchar_t executable[32768]{}; GetModuleFileNameW(nullptr,executable,32768);
     auto& host=diva::App(); host.Init(diva::fs::path(path).parent_path(),diva::fs::path(executable).parent_path());
+    host.diagnostic=Log;
     // 打开面板时沿用游戏当前的难度和风格。
     host.view.onOpen=[] {
         auto snapshot=diva::Game().Read(); auto& view=diva::App().view;
-        Log("打开搜索："+diva::DescribeSnapshot(snapshot));
+        Log("打开搜索："+diva::DescribeSnapshot(snapshot)+"；"+diva::App().DescribeInputState());
         if(!diva::Game().inputReady) {
             view.open=false;Log(diva::Game().diagnostic);
             MessageBoxW(diva::App().window,diva::Wide("无法安全隔离当前游戏输入，搜索面板未打开。\n"+diva::Game().diagnostic).c_str(),L"DIVA 游戏内搜索",MB_OK|MB_ICONINFORMATION);
@@ -39,7 +42,7 @@ __declspec(dllexport) void Init() {
         auto& selector=Selection(); selector.Submit(request,available,snapshot,GetTickCount64());
         diva::App().view.status=selector.message; Log(selector.message);
     };
-    Log("已初始化原生搜索 1.0.0，默认 Ctrl+F；曲库后台读取，无外部服务。");
+    Log("已初始化原生搜索 1.0.0，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
 }
 // 所有 Mod 完成 Init 后再安装链式输入隔离。
 __declspec(dllexport) void PostInit() { diva::Game().Initialize(); Log(diva::Game().diagnostic); }
@@ -55,7 +58,10 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
         host.view.status=selection.message;
         if(!selection.Busy()) {
             Log(selection.message);
-            if(selection.succeeded && host.view.closeOnSuccess) { host.view.open=false; host.releaseUntil=GetTickCount64()+120; }
+            if(selection.succeeded && host.view.closeOnSuccess) {
+                host.view.open=false; host.view.ClearActions(); host.releaseUntil=GetTickCount64()+120;
+                Log("定位成功后关闭搜索："+host.DescribeInputState());
+            }
         }
     }
     host.Frame(chain);

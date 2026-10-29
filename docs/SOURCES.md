@@ -9,6 +9,9 @@
 | [NewClassics](https://github.com/mrcloverthecoder/nc) | c41d4f1c7113ff44dbc7afb888803ea252e201f6 | PC 选曲对象、列表函数与谱面风格处理，是将直接路线适配到 PC 的重要依据 |
 | [DivaModLoader](https://github.com/blueskythlikesclouds/DivaModLoader) | 0abc2c89229c4b307bfa1555656c54c2e5cff480 | 插件回调、加载优先级、数据库合并、名称 hook 与存取研究 |
 | [ReDIVA](https://github.com/korenkonder/ReDIVA) | 207c270472ba3f0edcda29bae777e5bd4a8952d9 | 数据格式与后续 Module、定制物品研究；不是商业 PC 版 SDK |
+| [Armoire](https://github.com/jaykthx/Armoire) | 8acdfada755323afdab03624d9dd3f35828ee222 | 服装／饰品实体文本字段与 MM／FT sprite 缩略图命名研究 |
+| [Future Tone Customization](https://github.com/ActualMandM/DivaDllMods/tree/a3fb8ba380063966febfed942324e73c4e9439ab/Source/FutureToneCustomization) | a3fb8ba380063966febfed942324e73c4e9439ab | 生效 sprite ID、FT 缩略图与预览风格研究；未复制其内存写入或 hook |
+| [MikuMikuLibrary](https://github.com/blueskythlikesclouds/MikuMikuLibrary) | 82380f1e40bbcf07d19c4ac8d0bdb95845be3628 | 普通 FArc／FArC 格式研究；本轮未引入其代码或资源解包依赖 |
 
 特别感谢 **QuantumSwitch** 与 **MikuMikuSwitchPlugin**：前者提供菜单生命周期恢复路线的重要依据，后者启发当前界面的直接定位路线。两者不是同一方案，Switch 地址也不能直接用于 PC。具体比较见 [实现研究](research/NATIVE_SELECTION_METHODS.md)。
 

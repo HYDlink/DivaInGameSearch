@@ -18,6 +18,8 @@ struct Song {
     // 逻辑歌曲编号，不使用物理脚本编号代替。
     int id = 0;
     std::string name, english, reading, aliases, source, key, modKey;
+    // 曲库构建时缓存名称规范化，避免逐字检索和排序重复调用 Unicode API。
+    std::string nameKey,englishKey;
     std::vector<std::string> sources;
     std::array<std::array<Chart, 5>, 3> charts;
     bool hidden = false;

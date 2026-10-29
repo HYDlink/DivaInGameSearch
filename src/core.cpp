@@ -100,7 +100,8 @@ void PrepareSong(Song& song) {
     auto aliases=song.aliases; std::replace(aliases.begin(),aliases.end(),'|','\n');
     std::istringstream aliasLines(aliases); std::string line,aliasKey;
     while(std::getline(aliasLines,line)) aliasKey+=Normalize(line)+"\n";
-    song.key = Normalize(song.name)+"\n"+Normalize(song.english)+"\n"+Normalize(song.reading)+"\n"+r+"\n"+Variant(r)+"\n"+aliasKey;
+    song.nameKey=Normalize(song.name); song.englishKey=Normalize(song.english);
+    song.key = song.nameKey+"\n"+song.englishKey+"\n"+Normalize(song.reading)+"\n"+r+"\n"+Variant(r)+"\n"+aliasKey;
     song.modKey.clear();
     for (const auto& source : song.sources) song.modKey += Normalize(source)+"\n";
 }
@@ -123,7 +124,7 @@ std::vector<Result> Search(const Catalog& catalog, const Query& query, const std
         auto id=std::to_string(s.id); int score=0;
         if (needle.empty()) score=1;
         else if (!query.modMode && (needle==id || needle=="pv"+id || needle=="pv"+std::string(id.size()<3?3-id.size():0,'0')+id || (needle.size()<=9 && std::all_of(needle.begin(),needle.end(),[](char c){ return c>='0'&&c<='9'; }) && std::stoi(needle)==s.id))) score=1000;
-        else if (!query.modMode && (needle==Normalize(s.name) || needle==Normalize(s.english))) score=900;
+        else if (!query.modMode && (needle==s.nameKey || needle==s.englishKey)) score=900;
         else if (key.find("\n"+needle+"\n")!=std::string::npos) score=850;
         else if (key.starts_with(needle)) score=700;
         else if (key.find(needle)!=std::string::npos) score=500;
@@ -133,7 +134,7 @@ std::vector<Result> Search(const Catalog& catalog, const Query& query, const std
     std::stable_sort(out.begin(),out.end(),[&](const Result& a,const Result& b){
         const auto& x=catalog.songs[a.index]; const auto& y=catalog.songs[b.index];
         if (query.sort==0 && a.score!=b.score) return a.score>b.score;
-        if (query.sort==2 && Normalize(x.name)!=Normalize(y.name)) return Normalize(x.name)<Normalize(y.name);
+        if (query.sort==2 && x.nameKey!=y.nameKey) return x.nameKey<y.nameKey;
         if (query.sort==3) {
             int d=difficulty>=0?difficulty:3;
             auto lx=x.charts[style][d].level, ly=y.charts[style][d].level;

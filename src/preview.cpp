@@ -20,6 +20,26 @@ static diva::Catalog StressCatalog() {
     }
     catalog.packs={"压力测试（非游戏曲库）","附加谱面来源"};return catalog;
 }
+// 仅在显式传入 --customization-demo 时生成测试卡片，不属于游戏或发行元数据。
+static diva::CustomizationCatalog DemoCustomizationCatalog() {
+    diva::CustomizationCatalog catalog;
+    catalog.sources={{"demo:a","演示来源 A","DemoA",".",false},{"demo:b","演示来源 B","DemoB",".",false}};
+    for(auto kind:{diva::CustomizationKind::Module,diva::CustomizationKind::Accessory}) for(int n=0;n<42;++n) {
+        diva::CustomizationItem item; item.key={kind,900000+n};
+        item.name=(kind==diva::CustomizationKind::Module?"演示服装 ":"演示饰品 ")+std::to_string(n+1);
+        if(n%7==0) item.name+=" · 超长名称、角色与来源裁剪测试";
+        item.character=n%6==5?diva::CustomizationCharacter::Rin:diva::CustomizationCharacter::Miku;
+        if(kind==diva::CustomizationKind::Accessory) {
+            item.part=static_cast<diva::CustomizationPart>(n%4);
+            if(n%4==0) item.character=diva::CustomizationCharacter::All;
+        }
+        item.definitionSource=item.nameSource=n%2?"demo:a":"demo:b";
+        item.sources.push_back({item.definitionSource,"演示定义",true}); item.sortIndex=n;
+        diva::PrepareCustomizationItem(item,catalog); catalog.items.push_back(std::move(item));
+    }
+    catalog.diagnostics={"显式演示数据：不来自游戏，不定位、不装备，卡片仅使用占位预览。"};
+    return catalog;
+}
 // 保存真实原生 DX11 后缓冲为 PNG；参数 chain/device/context/path 为图形对象和输出文件。
 static bool Screenshot(IDXGISwapChain* chain,ID3D11Device* device,ID3D11DeviceContext* context,const diva::fs::path& path) {
     ComPtr<ID3D11Texture2D> back,staging;
@@ -62,16 +82,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
     int argc=0; auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);
     wchar_t executable[32768]{};GetModuleFileNameW(nullptr,executable,32768);
     auto home=diva::fs::path(executable).parent_path(),game=home; diva::fs::path output=diva::fs::current_path()/"artifacts/native-preview.png";
-    bool smoke=false,stress=false,stressApplied=false;
+    bool smoke=false,stress=false,stressApplied=false,customizationDemo=false;
+    auto searchMode=diva::SearchMode::Songs;
     for(int i=1;i<argc;++i) {
         std::wstring arg=argv[i];
         if(arg==L"--smoke") smoke=true;
         else if(arg==L"--stress") stress=true;
+        else if(arg==L"--customization-demo") {customizationDemo=true;searchMode=diva::SearchMode::Modules;}
+        else if(arg==L"--customization") searchMode=diva::SearchMode::Modules;
+        else if(arg==L"--accessories") searchMode=diva::SearchMode::Accessories;
         else if(arg==L"--home" && i+1<argc) home=argv[++i];
         else if(arg==L"--game" && i+1<argc) game=argv[++i];
         else if(arg==L"--output" && i+1<argc) output=argv[++i];
     } LocalFree(argv);
-    auto& host=diva::App(); host.preview=true; host.Init(home,game); host.view.open=true;
+    auto& host=diva::App(); host.preview=true; host.Init(home,game); host.view.open=true; host.view.OnOpened(); host.view.SetMode(searchMode);
+    if(customizationDemo) {
+        auto& view=host.view.customization;
+        view.catalog=std::make_shared<diva::CustomizationCatalog>(DemoCustomizationCatalog()); ++view.generation;
+        view.status="演示数据：仅用于检查格子与键盘，不是游戏物品；原生定位和模型预览尚未接入。";
+    }
     // 预览动作只记录请求，参数 request/available 为共享界面实际提交的动作。
     host.view.submit=[&](diva::Request request,bool available) {
         host.view.status="预览定位：PVID "+std::to_string(request.pvid)+" / 难度 "+std::to_string(request.difficulty)+" / 风格 "+std::to_string(request.style)+(available?" / 可用":" / 缺失");
@@ -110,6 +139,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
             std::ofstream log(home/(stress?"artifacts/stress-preview.log":"artifacts/preview-verification.log"));
             PROCESS_MEMORY_COUNTERS memory{};GetProcessMemoryInfo(GetCurrentProcess(),&memory,sizeof(memory));
             log<<"原生 DX11 共用界面已运行。\n曲库歌曲："<<host.view.catalog->songs.size()<<"\n可见查询结果："<<host.view.results.size()<<"\n截图保存："<<(saved?"成功":"失败")<<"\n";
+            if(searchMode!=diva::SearchMode::Songs) log<<"当前领域："<<(searchMode==diva::SearchMode::Modules?"服装":"饰品")<<"\n定制可见结果："<<host.view.customization.State().results.size()<<"\n显式演示数据："<<customizationDemo<<"\n";
             log<<"截图图形设备：Windows WARP 软件 DX11。\n";
             log<<"可见界面 CPU 平均帧耗时（不含 Present 等待）："<<(measuredFrames?totalFrameMs/measuredFrames:0)<<" 毫秒\n工作集："<<memory.WorkingSetSize/1048576.0<<" MiB\n以上为独立预览测量，不代表真实游戏帧耗时。\n";
             auto previousContext=ImGui::GetCurrentContext();ImGui::SetCurrentContext((ImGuiContext*)host.context);

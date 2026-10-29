@@ -12,6 +12,10 @@ New-Item -ItemType Directory -Force artifacts | Out-Null
 if($LASTEXITCODE -ne 0){ throw '核心验证失败。' }
 & './build/release/InputCheck.exe' $projectRoot | Tee-Object -FilePath artifacts/input-tests.log
 if($LASTEXITCODE -ne 0){ throw '输入协议验证失败。' }
+& './build/release/ViewCheck.exe' | Tee-Object -FilePath artifacts/view-tests.log
+if($LASTEXITCODE -ne 0){ throw '搜索视图验证失败。' }
+& './build/release/CustomizationCheck.exe' $projectRoot | Tee-Object -FilePath artifacts/customization-tests.log
+if($LASTEXITCODE -ne 0){ throw '服装饰品检索验证失败。' }
 & './build/release/CatalogCheck.exe' $projectRoot $GameDirectory 'artifacts/catalog-audit.tsv' | Tee-Object -FilePath artifacts/catalog-summary.log
 if($LASTEXITCODE -ne 0){ throw '曲库审计失败。' }
 & './build/release/DllCheck.exe' (Join-Path $projectRoot 'build/release/DivaInGameSearch.dll') | Tee-Object -FilePath artifacts/dll-verification.log

@@ -8,6 +8,7 @@
 | --- | --- |
 | src/core.*、catalog.cpp | 数据模型、检索、来源合并与别名 |
 | src/ui.* | 游戏与预览共用的搜索界面 |
+| src/customization* | 服装／饰品导入、独立搜索、键盘格子和安全能力 stub；不写游戏内存 |
 | src/host.* | Win32、IME、DX11、图形资源与输入捕获 |
 | src/game.* | 游戏构建校验、对象读取、原生列表定位 |
 | src/selector.* | 请求校验、跨帧结果确认、超时与恢复 |
@@ -17,6 +18,8 @@
 | scripts/ | 构建、验证、打包、部署工具 |
 
 先执行 scripts/build.ps1。scripts/verify.ps1 和 scripts/check-profile.ps1 必须显式提供 GameDirectory，不能假定固定盘符。部署与更新脚本也要求显式目录，运行中游戏会被拒绝更新。
+
+服装／饰品实现依据在 [CUSTOMIZATION_SEARCH_PLAN.md](CUSTOMIZATION_SEARCH_PLAN.md)，实际导入范围在 [CUSTOMIZATION_IMPORT.md](CUSTOMIZATION_IMPORT.md)。`SearchPreview --customization-demo` 只为独立预览显式生成合成数据；游戏宿主没有导入数据时必须为空库。未验证的当前角色读取、原生定位和纹理能力保持禁用。`InputCheck --messages-only <项目目录>` 可单独验证 Win32 消息生命周期，但不替代 DX11 和实际游戏输入验收。
 
 ## 修改定位之前
 
