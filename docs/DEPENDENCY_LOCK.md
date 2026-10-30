@@ -9,6 +9,8 @@
 - toml++：3.1.0 单头文件，从 DivaModLoader 0abc2c89229c4b307bfa1555656c54c2e5cff480 的 Dependencies/toml.hpp 复制；文件内含 MIT 许可。
 - PC 选曲参考：QuantumSwitch 1001c43d67833b750f2a21def8c112c7b476f9aa，https://github.com/Snapmali/QuantumSwitch 。没有引用其 Python 模块或启动 HTTP API。
 - DML：接口协议参考官方 0abc2c89229c4b307bfa1555656c54c2e5cff480，不把 DML 本体打入发行包。
+- MikuMikuLibrary：固定提交 `82380f1e40bbcf07d19c4ac8d0bdb95845be3628`，MIT；只读使用 CPK 枚举／单条目读取、SpriteDatabase 查询和 SpriteSet 解码。CPK 格式仍由上游库处理；新增 NativeAOT C ABI 位于 `third_party/vendor/mml-cpk/AotBridge/Bridge.cs`，构建不要求玩家安装 .NET。许可证及上游说明随 vendor 源码保存。
+- NativeAOT 桥接构建：.NET SDK 8、win-x64、`NativeLib=Shared`；`scripts/build.ps1` 先设置 MSVC `PATH`、`INCLUDE`、`LIB`，然后调用 `scripts/build-module-assets.ps1`。输出 `build/release/MmlCpkBridge.dll` 与宿主同目录，脚本不固定依赖开发机盘符。项目的 NuGet 包版本在上游 csproj 中固定。
 
 随发行生成 dependencies.sha256，列出实际 vendor 源码与许可证的 SHA-256；发行目录 manifest.sha256 校验二进制与配置。third_party/reference 不进入可重建源码包。
 

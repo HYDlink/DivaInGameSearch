@@ -4,9 +4,15 @@
 #include <imgui_impl_dx11.h>
 #include <imm.h>
 #include <algorithm>
+#include <limits>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND,UINT,WPARAM,LPARAM);
 namespace diva {
+namespace {
+constexpr size_t kPreviewCacheImages=48;
+constexpr size_t kPreviewCacheBytes=64u*1024u*1024u;
+constexpr int kPreviewMaximumDimension=8192;
+}
 // 上下文作用域在回调完成后恢复其他 Mod 的上下文。
 struct ContextScope {
     ImGuiContext* previous;
@@ -32,6 +38,7 @@ void Host::ResetInputState(const char* reason) {
     bool hadState=view.open || captures || releaseUntil || std::any_of(swallowed.begin(),swallowed.end(),[](bool value){ return value; })
         || std::any_of(swallowedMouse.begin(),swallowedMouse.end(),[](bool value){ return value; });
     view.open=false; view.composing=false; view.imeGuard=false;
+    if(view.customization.invalidateModuleLocate) view.customization.invalidateModuleLocate();
     view.ClearActions(); view.listNavigation=true; view.horizontalNavigation=view.mode==SearchMode::Songs;
     releaseUntil=0; swallowed.fill(false); swallowedMouse.fill(false); captures=false;
     releasedKeys.fill(false); releasedMouse.fill(false);
@@ -53,13 +60,175 @@ void Host::UpdateInputCapture(uint64_t now,bool (*keyDown)(int)) {
     if(recovered && diagnostic) diagnostic("输入释放恢复：已松开但未收到释放消息的项目="+std::to_string(recovered)+"；"+DescribeInputState());
     if(changed && diagnostic) diagnostic("输入隔离切换："+DescribeInputState());
 }
+// 参数 assets 为旧目录或过时代数的资源对象；这里只排队，由正常帧启动后台销毁。
+void Host::RetireModuleAssets(std::shared_ptr<ModuleAssets> assets) {
+    if(assets) moduleAssetsRetiredPending.push_back(std::move(assets));
+}
+// 推进资源回收任务；后台析构可能等待解码线程，因此绝不在游戏帧直接执行。
+void Host::PumpModuleAssetRetirements() {
+    for(auto it=moduleAssetsRetirements.begin();it!=moduleAssetsRetirements.end();) {
+        if(it->valid() && it->wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+            try { it->get(); } catch(...) {}
+            it=moduleAssetsRetirements.erase(it);
+        } else ++it;
+    }
+    for(size_t i=0;i<moduleAssetsRetiredPending.size();) {
+        auto assets=moduleAssetsRetiredPending[i];
+        try {
+            auto task=std::async(std::launch::async,[assets]{assets->Shutdown(true);});
+            moduleAssetsRetirements.push_back(std::move(task));
+            moduleAssetsRetiredPending.erase(moduleAssetsRetiredPending.begin()+static_cast<std::ptrdiff_t>(i));
+        } catch(...) {
+            // 启动失败时保留 shared 所有权，下一帧重试，不能在此处触发可能阻塞的析构。
+            ++i;
+        }
+    }
+}
+// 清理本 Mod 创建的 SRV；游戏原生纹理不进入本缓存。
+void Host::ClearPreviewTextures() {
+    for(auto& [key,entry]:modulePreviewTextures) {
+        (void)key;
+        if(entry.view) entry.view->Release();
+    }
+    modulePreviewTextures.clear();modulePreviewBytes=0;
+}
+// 按当前服装目录代数异步建立资源映射；过时结果会被丢弃并后台回收。
+void Host::SyncModuleAssets() {
+    auto& customization=view.customization;
+    const uint64_t generation=customization.generation;
+    auto catalog=customization.catalog;
+    if(observedModuleCatalogGeneration!=generation) {
+        observedModuleCatalogGeneration=generation;
+        moduleAssetsFailedGeneration=UINT64_MAX;
+        moduleAssetsActiveGeneration=UINT64_MAX;
+        ClearPreviewTextures();
+        RetireModuleAssets(std::move(moduleAssets));
+    }
+
+    if(moduleAssetsBuilding.valid() && moduleAssetsBuilding.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+        const uint64_t builtGeneration=moduleAssetsBuildingGeneration;
+        try {
+            auto result=moduleAssetsBuilding.get();
+            if(result.first && catalog && builtGeneration==generation) {
+                moduleAssets=std::move(result.first);
+                moduleAssetsActiveGeneration=generation;
+                if(diagnostic) for(const auto& message:result.second) diagnostic("图片资源："+message);
+            } else RetireModuleAssets(std::move(result.first));
+        } catch(...) {
+            if(builtGeneration==generation) {
+                moduleAssetsFailedGeneration=generation;
+                customization.status="服装图片资源初始化失败；可刷新目录后重试。";
+            }
+        }
+    }
+
+    if(catalog && !moduleAssets && !moduleAssetsBuilding.valid() && moduleAssetsFailedGeneration!=generation) {
+        const auto gameRoot=view.game,pluginRoot=view.home;
+        auto snapshot=catalog;
+        moduleAssetsBuildingGeneration=generation;
+        try {
+            moduleAssetsBuilding=std::async(std::launch::async,[gameRoot,pluginRoot,snapshot]{
+                std::vector<std::string> diagnostics;
+                auto assets=std::make_shared<ModuleAssets>(gameRoot,pluginRoot,snapshot,diagnostics);
+                assets->SetCacheLimits(kPreviewCacheImages,kPreviewCacheBytes);
+                return ModuleAssetsBuild{std::move(assets),std::move(diagnostics)};
+            });
+        } catch(...) {
+            moduleAssetsFailedGeneration=generation;
+            customization.status="服装图片资源后台任务无法启动。";
+        }
+    }
+    PumpModuleAssetRetirements();
+}
+// 参数 key/pixels/width/height 为服装键、RGBA像素和尺寸；纹理仅在缓存准入后创建。
+ImTextureID Host::UploadPreviewPixels(const CustomizationKey& key,const unsigned char* pixels,int width,int height) {
+    if(!initialized || !device || !pixels || width<=0 || height<=0
+        || width>kPreviewMaximumDimension || height>kPreviewMaximumDimension) return nullptr;
+    const size_t pixelWidth=static_cast<size_t>(width),pixelHeight=static_cast<size_t>(height);
+    if(pixelWidth>std::numeric_limits<size_t>::max()/pixelHeight/4) return nullptr;
+    const size_t bytes=pixelWidth*pixelHeight*4;
+    if(bytes>kPreviewCacheBytes || pixelWidth*4>std::numeric_limits<UINT>::max()) return nullptr;
+
+    auto found=modulePreviewTextures.find(key);
+    if(found!=modulePreviewTextures.end() && found->second.width==width && found->second.height==height) {
+        found->second.lastUsedFrame=modulePreviewFrame;
+        return static_cast<ImTextureID>(static_cast<void*>(found->second.view));
+    }
+    if(found!=modulePreviewTextures.end()) {
+        if(found->second.view) found->second.view->Release();
+        modulePreviewBytes-=found->second.bytes;
+        modulePreviewTextures.erase(found);
+    }
+
+    while(modulePreviewTextures.size()>=kPreviewCacheImages || modulePreviewBytes>kPreviewCacheBytes-bytes) {
+        auto oldest=modulePreviewTextures.end();
+        for(auto it=modulePreviewTextures.begin();it!=modulePreviewTextures.end();++it) {
+            if(it->second.lastUsedFrame==modulePreviewFrame) continue;
+            if(oldest==modulePreviewTextures.end() || it->second.lastUsedFrame<oldest->second.lastUsedFrame) oldest=it;
+        }
+        // 本帧已使用的纹理必须活到 RenderDrawData 结束；空间不足时本张显示占位图。
+        if(oldest==modulePreviewTextures.end()) return nullptr;
+        if(oldest->second.view) oldest->second.view->Release();
+        modulePreviewBytes-=oldest->second.bytes;
+        modulePreviewTextures.erase(oldest);
+    }
+
+    D3D11_TEXTURE2D_DESC textureDesc{};
+    textureDesc.Width=static_cast<UINT>(width);textureDesc.Height=static_cast<UINT>(height);
+    textureDesc.MipLevels=1;textureDesc.ArraySize=1;textureDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+    textureDesc.SampleDesc.Count=1;textureDesc.Usage=D3D11_USAGE_DEFAULT;textureDesc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA initial{};initial.pSysMem=pixels;
+    initial.SysMemPitch=static_cast<UINT>(pixelWidth*4);initial.SysMemSlicePitch=static_cast<UINT>(bytes);
+    ID3D11Texture2D* texture=nullptr;
+    const HRESULT textureCreated=device->CreateTexture2D(&textureDesc,&initial,&texture);
+    if(FAILED(textureCreated) || !texture) { if(texture) texture->Release();return nullptr; }
+    D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};viewDesc.Format=textureDesc.Format;
+    viewDesc.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;viewDesc.Texture2D.MostDetailedMip=0;viewDesc.Texture2D.MipLevels=1;
+    ID3D11ShaderResourceView* view=nullptr;
+    const HRESULT created=device->CreateShaderResourceView(texture,&viewDesc,&view);
+    texture->Release();
+    if(FAILED(created) || !view) { if(view) view->Release();return nullptr; }
+
+    modulePreviewTextures.emplace(key,PreviewTextureEntry{view,width,height,bytes,modulePreviewFrame});
+    modulePreviewBytes+=bytes;
+    return static_cast<ImTextureID>(static_cast<void*>(view));
+}
 // 初始化曲库、收藏和 ImGui；参数 home/game 为工作资源与游戏目录。
 void Host::Init(const fs::path& home,const fs::path& game) {
     std::lock_guard lock(mutex);
     if(context) return;
     view.home=home; view.game=game; view.ReloadStyle();
     auto old=ImGui::GetCurrentContext(); context=ImGui::CreateContext();
-    SetupStyle(view.fontSize); view.fontDirty=false; ImGui::SetCurrentContext(old); view.Refresh();
+    SetupStyle(view.fontSize); view.fontDirty=false; ImGui::SetCurrentContext(old);
+    // 为服装卡片提供按目录代数校验的 CPU 像素快照；不向 ImGui 传递游戏裸纹理。
+    view.customization.previewProvider=[this](const CustomizationItem& item,bool requestVisible) {
+        CustomizationPreview preview;
+        if(!moduleAssets || moduleAssetsActiveGeneration!=view.customization.generation) return preview;
+        if(modulePreviewStyle!=view.customization.previewStyle) {ClearPreviewTextures();modulePreviewStyle=view.customization.previewStyle;}
+        const auto asset=moduleAssets->Peek(item,requestVisible,modulePreviewStyle);
+        preview.width=asset.width;preview.height=asset.height;preview.source=asset.source;
+        if(asset.rgbaOwner && !asset.rgbaOwner->empty() && asset.width>0 && asset.height>0
+            && asset.width<=kPreviewMaximumDimension && asset.height<=kPreviewMaximumDimension) {
+            const size_t width=static_cast<size_t>(asset.width),height=static_cast<size_t>(asset.height);
+            if(width<=std::numeric_limits<size_t>::max()/height/4) {
+                const size_t required=width*height*4;
+                const auto* pixels=asset.rgbaPixels?asset.rgbaPixels:asset.rgbaOwner->data();
+                const uintptr_t begin=reinterpret_cast<uintptr_t>(asset.rgbaOwner->data());
+                const uintptr_t address=reinterpret_cast<uintptr_t>(pixels);
+                const size_t ownerSize=asset.rgbaOwner->size();
+                if(address>=begin && address-begin<=ownerSize && required<=ownerSize-static_cast<size_t>(address-begin)) {
+                    preview.rgbaOwner=asset.rgbaOwner;
+                    preview.rgbaPixels=pixels;
+                }
+            }
+        }
+        return preview;
+    };
+    // UI 在该回调期间持有 rgbaOwner；这里只在 DX11 帧线程同步复制像素并缓存 SRV。
+    view.customization.uploadPreviewPixels=[this](const CustomizationKey& key,const unsigned char* pixels,int width,int height) {
+        return UploadPreviewPixels(key,pixels,width,height);
+    };
+    view.Refresh();
 }
 // 绑定加载器的图形对象；参数 chain/newDevice/newContext 为交换链及设备。
 bool Host::Attach(IDXGISwapChain* chain,ID3D11Device* newDevice,ID3D11DeviceContext* newContext) {
@@ -68,6 +237,7 @@ bool Host::Attach(IDXGISwapChain* chain,ID3D11Device* newDevice,ID3D11DeviceCont
     if(initialized) {
         if(device==newDevice && window==desc.OutputWindow) return true;
         ResetInputState("图形设备或窗口重绑");
+        ClearPreviewTextures();
         ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); initialized=false;
         if(previous && (WNDPROC)GetWindowLongPtrW(window,GWLP_WNDPROC)==SearchWndProc) {
             SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)previous);previous=nullptr;
@@ -184,6 +354,7 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
 // 绘制时短暂持有后缓冲，不妨碍 DML 的 ResizeBuffers；参数 chain 为交换链。
 void Host::Frame(IDXGISwapChain* chain) {
     std::lock_guard lock(mutex); if(!initialized) return;
+    ++modulePreviewFrame;
     if(!preview && !previous) {
         auto current=(WNDPROC)GetWindowLongPtrW(window,GWLP_WNDPROC);
         if(current==SearchWndProc) { ResetInputState("窗口输入链状态异常");view.status="窗口输入链状态异常，已停止搜索。";return; }
@@ -192,7 +363,7 @@ void Host::Frame(IDXGISwapChain* chain) {
         if(!old) { ResetInputState("窗口输入隔离安装失败");view.status="窗口输入隔离安装失败，已停止搜索。";return; }
         previous=(WNDPROC)old;
     }
-    ContextScope scope(context); view.Poll();
+    ContextScope scope(context); view.Poll();SyncModuleAssets();
     bool wasOpen=view.open;
     // 关闭后持续隔离仍按住的按键和鼠标，不能仅靠固定延迟放行，避免 Enter 长按开始演奏。
     UpdateInputCapture(GetTickCount64());
@@ -203,6 +374,7 @@ void Host::Frame(IDXGISwapChain* chain) {
     ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
     view.Draw(); ImGui::Render();
     if(wasOpen && !view.open) {
+        if(view.customization.invalidateModuleLocate) view.customization.invalidateModuleLocate();
         view.ClearActions(); releaseUntil=GetTickCount64()+120; ImGui::GetIO().ClearInputKeys();
         if(diagnostic) diagnostic("搜索面板关闭："+DescribeInputState());
     }
@@ -222,12 +394,22 @@ void Host::Frame(IDXGISwapChain* chain) {
 void Host::Shutdown() {
     std::lock_guard lock(mutex); if(!context) return;
     ResetInputState("宿主关闭");
+    ClearPreviewTextures();
     // 仅受控的预览或测试退出调用此处；等待副本任务结束，防止工作线程跨过 CRT 静态资源销毁。
     // 游戏帧和 DllMain 不调用 Shutdown，不能把这些等待挪到游戏生命周期回调。
     if(view.pending.valid()) view.pending.wait();
     if(view.searching.valid()) view.searching.wait();
     if(view.customization.pending.valid()) view.customization.pending.wait();
     if(view.customization.searching.valid()) view.customization.searching.wait();
+    if(moduleAssetsBuilding.valid()) {
+        moduleAssetsBuilding.wait();
+        try { auto result=moduleAssetsBuilding.get();if(result.first) result.first->Shutdown(true); } catch(...) {}
+    }
+    if(moduleAssets) { moduleAssets->Shutdown(true);moduleAssets.reset(); }
+    for(auto& assets:moduleAssetsRetiredPending) if(assets) assets->Shutdown(true);
+    moduleAssetsRetiredPending.clear();
+    for(auto& task:moduleAssetsRetirements) if(task.valid()) { task.wait();try {task.get();}catch(...){} }
+    moduleAssetsRetirements.clear();
     ContextScope scope(context);
     if(initialized) { ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); initialized=false; }
     if(previous && (WNDPROC)GetWindowLongPtrW(window,GWLP_WNDPROC)==SearchWndProc) SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)previous);

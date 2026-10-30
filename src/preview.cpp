@@ -131,7 +131,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         if(stress && !stressApplied && host.view.catalog) { host.view.catalog=std::make_shared<diva::Catalog>(StressCatalog());host.view.dirty=true;host.view.status="一万首合成曲目压力预览，不是游戏数据。";stressApplied=true; }
         auto frameStart=std::chrono::steady_clock::now();host.Frame(chain.Get());
         if(readyFrames>5) { totalFrameMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-frameStart).count();++measuredFrames; }
-        if(host.view.catalog) ++readyFrames;
+        // 服装截图等待真实目录和至少一张解码上传的图片，不能以歌曲目录就绪冒充图片通过。
+        bool previewReady=host.view.catalog!=nullptr;
+        if(searchMode!=diva::SearchMode::Songs && !customizationDemo)
+            previewReady=previewReady && host.view.customization.catalog && !host.view.customization.SearchPending() && !host.modulePreviewTextures.empty() && GetTickCount64()-start>5000;
+        if(previewReady) ++readyFrames;
         // 自动截图包含选中行，用于检查难度按钮与行底色的辨识度；只影响独立预览。
         if(smoke && readyFrames==1 && !host.view.results.empty()) host.view.selectedId=host.view.catalog->songs[host.view.results.front().index].id;
         if(smoke && readyFrames==30) {

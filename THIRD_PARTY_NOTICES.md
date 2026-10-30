@@ -19,3 +19,15 @@ data/base_pv_db.txt 与 data/dlc_pv_db.txt 仅保留官方地区数据库中的�
 中文别名为少量可编辑示例，不声称覆盖所有 Mod 的中文译名；在 aliases.toml 按 PVID 扩展。没有数据库读音的汉字不推测唯一罗马音。
 
 中日字体在运行时只读使用 Windows 安装的微软雅黑，不重新分发字体。依赖文件 SHA-256 清单由打包脚本生成，见发行包 dependencies.sha256。
+
+## miniz 3.0.2
+来源：https://github.com/richgel999/miniz/tree/3.0.2 。使用 MIT 许可的低层 tinfl 解压器，许可证保留于 third_party/vendor/miniz/LICENSE。miniz_tinfl.cpp 是原始 miniz_tinfl.c 的 C++ 编译副本；本地 miniz.h 仅引用 tinfl，miniz_export.h 使用静态链接导出宏。
+
+## MikuMikuLibrary CPK／精灵桥接
+来源：MikuMikuLibrary 固定提交 `82380f1e40bbcf07d19c4ac8d0bdb95845be3628`，MIT，Copyright (c) 2023 Skyth；上游许可证见 `third_party/vendor/mml-cpk/LICENSE.md`。本项目在 `AotBridge/Bridge.cs` 添加 NativeAOT C ABI，用于只读枚举和读取官方 CPK 条目、查询 SpriteDatabase 实际精灵索引，以及按 SpriteSet 矩形解码预览。CPK 与 SpriteSet 格式读取仍由 MikuMikuLibrary 实现，未在本项目另写 CPK 提取器。上游传递依赖版权和许可证汇总见 `third_party/vendor/mml-cpk/COPYRIGHT.md`。
+
+## BC7 与官方精灵解码
+
+bcdec v0.985，固定提交80859ed3b7afb1c527a2a99d70c61457bea72d0c，来源https://github.com/iOrange/bcdec，使用其MIT许可选项，完整声明保留在third_party/vendor/bcdec/bcdec.h。DivaTextureDecoder.dll是受限BC7块解码桥接。
+
+官方YCbCr精灵的BC5双平面合成参照固定MikuMikuLibrary提交的TextureDecoderCore.cpp实现系数及线性采样，保留上游MIT声明；未复用其C++/CLI运行依赖。桥接对SpriteDatabase/SpriteSet/TextureSet/SubTexture增加声明数量、源纹理尺寸和字节上限检查；归档与精灵读取均复用上游结构解析。

@@ -1,0 +1,1 @@
+来源：https://github.com/iOrange/bcdec；固定提交：80859ed3b7afb1c527a2a99d70c61457bea72d0c；许可保留于bcdec.h。

@@ -1,6 +1,7 @@
 #include "ui.h"
 #include <Windows.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -108,22 +109,26 @@ int main(int argc,char** argv) {
             item.character=diva::CustomizationCharacter::Miku;item.definitionSource=item.nameSource="fixture";
             item.sources.push_back({"fixture","定义",true});diva::PrepareCustomizationItem(item,*items);items->items.push_back(item);
         }
+        int moduleSubmitted=0;int moduleSubmittedId=-1;
+        // 参数 request 为服装稳定定位请求；确认Enter只提交当前选择，不调用歌曲回调。
+        view.customization.submitModuleLocate=[&](const diva::CustomizationLocateRequest& request) {++moduleSubmitted;moduleSubmittedId=request.key.id;};
         view.customization.catalog=items;++view.customization.generation;
         view.requestEnter=true;view.move=2;view.difficultyMove=1;
         view.SetMode(diva::SearchMode::Modules);view.open=true;view.OnOpened();
         Check(!view.requestEnter && !view.move && !view.difficultyMove && view.itemMoves.empty(),"切换领域未清空歌曲动作");
         CompleteCustomization(view.customization);Draw(view);Draw(view);
-        Check(view.listNavigation && !view.horizontalNavigation,"服装文本焦点未保留左右编辑");
-        for(int tab=0;tab<16 && !view.horizontalNavigation;++tab) {
+        Check(view.listNavigation && view.horizontalNavigation,"服装输入焦点未支持左右结果导航");
+        for(int tab=0;tab<16 && !view.customization.gridNavigation;++tab) {
             io.AddKeyEvent(ImGuiKey_Tab,true);Draw(view);io.AddKeyEvent(ImGuiKey_Tab,false);Draw(view);
         }
-        Check(view.horizontalNavigation,"全键盘 Tab 无法进入定制格子");
+        Check(view.customization.gridNavigation,"全键盘 Tab 无法进入定制格子");
         view.itemMoves={{diva::CustomizationNavigation::Down,1},{diva::CustomizationNavigation::Right,1}};Draw(view);
         Check(view.customization.State().cursor.selected==size_t(view.customization.columns+1),"外层没有按顺序路由格子方向动作");
         view.requestEnter=true;Draw(view);
-        Check(view.customization.State().details && submitted==1,"服装 Enter 未打开详情或误触歌曲定位");
-        io.AddKeyEvent(ImGuiKey_Escape,true);Draw(view);io.AddKeyEvent(ImGuiKey_Escape,false);Draw(view);
-        Check(view.open && !view.customization.State().details,"详情 Esc 未优先返回浏览界面");
+        Check(moduleSubmitted==1 && moduleSubmittedId==static_cast<int>(view.customization.State().cursor.selected)
+            && submitted==1,"服装 Enter 未提交当前项或误触歌曲定位");
+        io.AddKeyEvent(ImGuiKey_Escape,true);view.requestEscape=true;Draw(view);io.AddKeyEvent(ImGuiKey_Escape,false);Draw(view);
+        Check(!view.open && moduleSubmitted==1,"Esc 未关闭浏览窗口或重复提交服装定位");
         auto capabilities=diva::GetCustomizationCapabilities();
         Check(!capabilities.canLocate && !capabilities.canPreviewNative && !diva::TryReadCustomizationContext(),"未验证的定制原生能力意外启用");
         std::strcpy(view.customization.State().input,"Module");view.customization.QueueSearch(false);
@@ -134,6 +139,25 @@ int main(int argc,char** argv) {
         view.customization.State().detailsRequested=true;
         view.SetMode(diva::SearchMode::Songs);Check(!view.customization.State().detailsRequested,"返回歌曲遗留待打开的定制详情");
         Check(std::string(view.input)==songInput && view.currentDifficulty==songDifficulty,"定制浏览改变歌曲条件");
+        view.requestEnter=true;view.itemMoves={{diva::CustomizationNavigation::Right,1}};
+        view.ApplyOpeningContext(diva::SearchMode::Modules,diva::CustomizationContext{diva::CustomizationCharacter::Kaito,-1,42,true});
+        Check(view.mode==diva::SearchMode::Modules && view.customization.State().query.character==diva::CustomizationCharacter::Kaito,
+            "模型页面打开没有路由到服装或当前角色");
+        Check(!view.requestEnter && view.itemMoves.empty(),"页面自动路由遗留旧领域动作");
+        view.ApplyOpeningContext(diva::SearchMode::Songs);
+        Check(view.mode==diva::SearchMode::Songs && std::string(view.input)==songInput && view.currentDifficulty==songDifficulty,
+            "回到选曲页打开没有恢复歌曲搜索或丢失条件");
+        view.open=true;view.SetMode(diva::SearchMode::Modules);
+        auto& module=view.customization;module.State().query.character=diva::CustomizationCharacter::Miku;
+        module.State().input[0]=0;module.QueueSearch(false);CompleteCustomization(module);Draw(view);Draw(view);
+        ImGuiWindow* grid=nullptr;
+        for(auto* window:GImGui->Windows) if(std::strstr(window->Name,"module-grid")) grid=window;
+        Check(grid!=nullptr && !module.State().results.empty(),"鼠标定位回归缺少真实网格窗口或结果");
+        const ImVec2 point(grid->InnerRect.Min.x+30,grid->InnerRect.Min.y+30);
+        io.AddMousePosEvent(point.x,point.y);Draw(view);
+        const auto beforeClick=moduleSubmitted;
+        io.AddMouseButtonEvent(0,true);Draw(view);io.AddMouseButtonEvent(0,false);Draw(view);
+        Check(moduleSubmitted==beforeClick+1,"单击服装卡片没有恰好提交一次定位");
         ImGui::DestroyContext(context);
         std::cout<<"视图行为通过：歌曲防抖与导航、Tab 焦点、领域隔离、格子动作、定制详情与禁用原生定位。\n";
         return 0;

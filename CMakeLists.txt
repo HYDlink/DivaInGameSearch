@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 3.24)
-project(DivaInGameSearch VERSION 1.0.0 LANGUAGES CXX)
+project(DivaInGameSearch VERSION 1.0.6 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_compile_options(/utf-8 /W4 /permissive-)
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 set(DETOURS_DIR third_party/vendor/detours-source/src)
+add_library(DivaTextureDecoder SHARED src/texture_decoder.cpp)
+target_include_directories(DivaTextureDecoder PRIVATE third_party/vendor/bcdec)
 add_library(detours STATIC ${DETOURS_DIR}/detours.cpp ${DETOURS_DIR}/modules.cpp
   ${DETOURS_DIR}/disasm.cpp ${DETOURS_DIR}/image.cpp ${DETOURS_DIR}/creatwth.cpp
   ${DETOURS_DIR}/disolx86.cpp ${DETOURS_DIR}/disolx64.cpp ${DETOURS_DIR}/disolia64.cpp
@@ -14,9 +16,9 @@ target_include_directories(detours PUBLIC ${DETOURS_DIR})
 set_property(TARGET detours PROPERTY CXX_STANDARD 14)
 target_compile_options(detours PRIVATE /permissive)
 add_library(search_core STATIC src/core.cpp src/catalog.cpp src/selector.cpp
-  src/customization.cpp src/customization_catalog.cpp)
-target_include_directories(search_core PUBLIC src PRIVATE third_party/vendor/toml)
-target_link_libraries(search_core PUBLIC normaliz)
+  src/customization.cpp src/customization_catalog.cpp src/farc.cpp src/module_assets.cpp third_party/vendor/miniz/miniz_tinfl.cpp)
+target_include_directories(search_core PUBLIC src PRIVATE third_party/vendor/toml third_party/vendor/miniz)
+target_link_libraries(search_core PUBLIC normaliz advapi32)
 add_library(search_ui STATIC src/ui.cpp src/host.cpp src/customization_ui.cpp
   third_party/vendor/imgui/imgui.cpp third_party/vendor/imgui/imgui_draw.cpp
   third_party/vendor/imgui/imgui_tables.cpp third_party/vendor/imgui/imgui_widgets.cpp
@@ -24,8 +26,8 @@ add_library(search_ui STATIC src/ui.cpp src/host.cpp src/customization_ui.cpp
   third_party/vendor/imgui/backends/imgui_impl_dx11.cpp)
 target_include_directories(search_ui PUBLIC src third_party/vendor/imgui third_party/vendor/imgui/backends)
 target_link_libraries(search_ui PUBLIC search_core d3d11 dxgi d3dcompiler imm32 dwmapi)
-add_library(DivaInGameSearch SHARED src/mod.cpp src/game.cpp)
-target_include_directories(DivaInGameSearch PRIVATE third_party/vendor/toml)
+add_library(DivaInGameSearch SHARED src/mod.cpp src/game.cpp src/module_locator.cpp)
+target_include_directories(DivaInGameSearch PRIVATE third_party/vendor/toml third_party/vendor/miniz)
 target_link_libraries(DivaInGameSearch PRIVATE search_ui detours psapi)
 add_executable(SearchPreview WIN32 src/preview.cpp)
 target_link_libraries(SearchPreview PRIVATE search_ui windowscodecs shell32 ole32 psapi)
@@ -52,3 +54,22 @@ add_test(NAME 搜索视图行为验收 COMMAND ViewCheck)
 add_executable(CustomizationCheck tests/customization_check.cpp)
 target_link_libraries(CustomizationCheck PRIVATE search_ui)
 add_test(NAME 服装饰品检索验收 COMMAND CustomizationCheck "${CMAKE_CURRENT_SOURCE_DIR}")
+
+
+add_executable(CustomizationAudit src/customization_audit.cpp)
+target_link_libraries(CustomizationAudit PRIVATE search_core)
+
+add_executable(FarcCheck tests/farc_check.cpp)
+target_link_libraries(FarcCheck PRIVATE search_core)
+add_test(NAME 归档边界验收 COMMAND FarcCheck)
+add_executable(ModuleCatalogCheck tests/module_catalog_check.cpp)
+target_link_libraries(ModuleCatalogCheck PRIVATE search_core)
+add_test(NAME 自动服装目录验收 COMMAND ModuleCatalogCheck)
+add_executable(ModuleCategoryCheck tests/module_category_check.cpp)
+target_link_libraries(ModuleCategoryCheck PRIVATE search_core)
+add_test(NAME 全角色定位路径验收 COMMAND ModuleCategoryCheck)
+add_executable(ModuleLocatorCheck tests/module_locator_check.cpp)
+target_link_libraries(ModuleLocatorCheck PRIVATE search_ui detours)
+add_test(NAME 原生模型上下文验收 COMMAND ModuleLocatorCheck)
+add_executable(ModuleAssetAudit tests/module_asset_audit.cpp)
+target_link_libraries(ModuleAssetAudit PRIVATE search_core windowscodecs ole32 bcrypt)

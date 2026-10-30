@@ -137,6 +137,14 @@ void GameMemory::Initialize() {
     selectorObject=ReadSelectorObject(selectorGetter);
     supported=true; diagnostic="已核对本机 PC 构建、输入隔离和实际选曲对象，支持普通歌曲选择界面。";
 }
+// 只读复用直接定位的页面身份守卫，避免把仍驻留的选曲对象误作当前选曲页。
+bool GameMemory::IsSongSearchPage() {
+    const auto snapshot=Read();uintptr_t object=0;int state=-1,pvid=-1;
+    return snapshot.supported && snapshot.current==5 && snapshot.next==6 && snapshot.changing==1
+        && (snapshot.mode==0 || snapshot.mode==1) && snapshot.visiblePvid>0
+        && ReadAt(base+0xCC5EF18,object) && object && ReadAt(object+0x6C,state) && state==6
+        && ReadAt(object+0x262A4,pvid) && pvid==snapshot.visiblePvid;
+}
 // 获取独立字段和真实选曲对象中的 PVID。
 Snapshot GameMemory::Read() {
     Snapshot s; if(!supported) return s;
@@ -223,4 +231,6 @@ bool GameMemory::DirectSelect(const Request& request) {
     if(styleWindow) WriteValue<unsigned char>(styleWindow+preferredStyleOffset+6,1);
     diagnostic="已调用 PC 原生列表重建、筛选刷新与高亮入口，没有请求切换顶层菜单。";return true;
 }
+// 返回通过现有游戏构建核查的动态基址；不向未支持构建暴露可写内存入口。
+uintptr_t GameMemory::ExecutableBase() const { return supported?base:0; }
 }

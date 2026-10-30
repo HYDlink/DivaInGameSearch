@@ -1,8 +1,10 @@
-# DIVA In-Game Search · DIVA 游戏内搜索
+# DIVA 游戏内搜索
 
-在《初音未来 Project DIVA Mega Mix+》的选曲界面搜索歌曲，用键盘即可定位歌曲和难度。默认快捷键 **Ctrl+F**。
+在《初音未来 Project DIVA Mega Mix+》中搜索歌曲和服装，默认快捷键 **Ctrl+F**。
 
-**当前版本：1.0.0 · Windows x64 · DivaModLoader 插件**
+**当前版本：1.0.6 · Windows x64 · DivaModLoader 插件**
+
+服装搜索现已支持自动官方／DLC／启用Mod目录、真实图片、名称／英文／假名／别名／ID搜索、角色与来源筛选，以及原生模型列表定位。1.0.6已由用户在实际游戏中确认定位可用；歌曲搜索保留。完整分类、槽位和设置范围仍需继续回归。
 
 这是一个 **Vibe Coding 项目**：通过人与 AI 编程助手协作完成研究、实现与迭代，并通过实际游戏测试核对歌曲和难度定位。欢迎反馈、审阅代码和改进兼容性；版本号不代表所有游戏构建与 Mod 组合都已验证。
 
@@ -10,7 +12,7 @@
 
 ## 下载与安装
 
-从 [Releases](https://github.com/HYDlink/DivaInGameSearch/releases/latest) 下载 `DivaInGameSearch-1.0.0-win64.zip`。
+从 [Releases](https://github.com/HYDlink/DivaInGameSearch/releases/latest) 下载 `DivaInGameSearch-1.0.6-win64.zip`。
 
 1. 安装并配置 [DivaModLoader](https://github.com/blueskythlikesclouds/DivaModLoader)。
 2. 退出游戏，将压缩包中的 `DivaInGameSearch` 文件夹放入游戏的 `mods` 目录。
@@ -33,13 +35,21 @@
 
 定位会核对实际歌曲、难度与风格；不会自动开始演奏。搜索定位可能将游戏的当前分组切换为“全部”，以便显示目标。
 
+## 服装搜索
+
+进入游戏原生模型／服装列表后按 Ctrl+F，面板默认切到服装搜索。输入名称、英文、平片假名、别名或ID；可按角色、来源和顺序筛选。单击卡片、按Enter或点定位按钮提交定位，方向键浏览结果。预览样式、刷新和按键说明位于“选项”。
+
+正常使用自动读取游戏与启用Mod资源，不需要手工导出、Python或.NET。安装时保留压缩包内的三个DLL。目录数量不代表已解锁数量；定位只改变原生列表高亮，不自动装备、购买、保存或演奏。
+
+当前需要已进入模型列表；从换装父菜单自动进入模型、饰品原生定位和任意页面跳回选曲尚未实现。更多角色／槽位／设置范围及不同构建不承诺全面覆盖。已知验证和后续研究见[项目状态](docs/STATUS.md)与[当前运行时交接](docs/research/CURRENT_RUNTIME_HANDOFF.md)。
+
 ## 功能与边界
 
 支持原版、官方 DLC 及 Mod 元数据合并，按 DML 配置解析曲包来源；支持 New Classics 谱面风格的数据适配。开启的曲包或数据库发生变化后，需要重启游戏才能继续定位，避免磁盘曲库与游戏已加载内容不一致。
 
 1.0.0 已在实际游戏中确认歌曲定位、同曲切换难度、换曲同时切换难度，包括 EX EXT。当前定位实测以街机风格为主；其他风格、Eden、大量 Mod 组合、不同 DPI 与输入法仍需要更多回归。
 
-已观察到快速定位后封面或作者信息可能暂时保留上一首内容，预览同步仍需改进；不要据此将原生菜单高亮与预览显示视为同一字段。服装、发型、饰品搜索与原版收藏接入尚未提供。旧开发版的独立收藏入口已经移除。
+已观察到快速定位后封面或作者信息可能暂时保留上一首内容，预览同步仍需改进；不要据此将原生菜单高亮与预览显示视为同一字段。1.0.6已提供服装搜索与原生定位，用户已确认实际定位可用；发型、饰品原生定位与原版收藏接入尚未提供。旧开发版的独立收藏入口已经移除。
 
 本插件包含对特定 PC 游戏构建的适配检查，不承诺任意版本通用。检查不通过时会拒绝定位并显示说明。遇到问题可在 [Issues](https://github.com/HYDlink/DivaInGameSearch/issues) 提供复现步骤及必要的诊断片段；分享日志前请移除不想公开的本机路径。
 
@@ -53,7 +63,7 @@
 | --- | --- |
 | `settings.ini` | 快捷键、字号、行高、透明度和成功后是否关闭 |
 | `aliases.toml` | 按逻辑 PVID 添加别名，多个别名用竖线分隔；刷新曲库后生效 |
-| `customization_catalog.toml`（开发版可选） | 本地服装／饰品导入清单；不是 DML 标准或游戏存档 |
+| `customization_catalog.toml`（兼容导入，可选） | 本地服装／饰品导入清单；不是 DML 标准或游戏存档 |
 | `search-diagnostics.log` | 初始化、状态检查与定位结果；排错时使用 |
 
 默认快捷键为 Ctrl+F；如与其他 Mod 冲突，修改 `shortcut_vk` 为其他 Win32 虚拟键值。Ctrl+G/L/S 为已有兼容性保护保留，配置这些键会回退到 Ctrl+F。

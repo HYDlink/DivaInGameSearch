@@ -17,6 +17,8 @@ if(-not $toolset -or -not $sdk){ throw '未找到完整 MSVC 或 Windows SDK。'
 $env:PATH=(Join-Path $toolset.FullName 'bin/Hostx64/x64')+';'+(Join-Path $sdkRoot "bin/$($sdk.Name)/x64")+';'+$env:PATH
 $env:INCLUDE=(Join-Path $toolset.FullName 'include')+';'+(($('ucrt','shared','um','winrt','cppwinrt') | ForEach-Object { Join-Path $sdk.FullName $_ }) -join ';')
 $env:LIB=(Join-Path $toolset.FullName 'lib/x64')+';'+(Join-Path $sdkRoot "Lib/$($sdk.Name)/ucrt/x64")+';'+(Join-Path $sdkRoot "Lib/$($sdk.Name)/um/x64")
+& (Join-Path $PSScriptRoot 'build-module-assets.ps1')
+if($LASTEXITCODE -ne 0){ throw 'MikuMikuLibrary NativeAOT 桥接构建失败。' }
 Write-Output '正在配置本地 C++ 工程……'
 & cmake -S . -B build/release -G 'NMake Makefiles' -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_CONFIGURATION=Release
 if($LASTEXITCODE -ne 0){ throw '工程配置失败。' }

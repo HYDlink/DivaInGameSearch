@@ -1,5 +1,6 @@
 #include "customization_ui.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -17,6 +18,10 @@ void Complete(diva::CustomizationView& view) {
     auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
     while(view.SearchPending() && std::chrono::steady_clock::now()<deadline) {view.Poll();std::this_thread::sleep_for(std::chrono::milliseconds(1));}
     Check(!view.SearchPending(),"定制查询未及时完成");
+}
+// 参数 view 为定制界面；在测试ImGui窗口中绘制一帧，不创建游戏或DX11设备。
+void DrawCustomization(diva::CustomizationView& view) {
+    ImGui::NewFrame();ImGui::SetNextWindowSize({1100,780});ImGui::Begin("定制界面回归");view.Draw();ImGui::End();ImGui::EndFrame();
 }
 // 参数 catalog/kind/id 为快照和实体键，测试断言需要明确存在。
 const diva::CustomizationItem& Find(const diva::CustomizationCatalog& catalog,diva::CustomizationKind kind,int id) {
@@ -50,7 +55,7 @@ diva::CustomizationCatalog Catalog(const diva::fs::path& root) {
     Write(g/"mods/Omitted/rom/lang2/mod_str_array.toml","cn.module.0='Omitted'\n");
     Write(g/"mods/High/content/rom/mod_gm_module_tbl.farc","test archive marker; never decoded");
     Write(h/"dump/high/gm_module_id.bin","module.0.id=0\nmodule.0.name=High Table\nmodule.0.chara=MIKU\nmodule.data_list.length=1\n");
-    Write(h/"dump/low/gm_module_id.bin","module.0.id=0\nmodule.0.name=Low Table\nmodule.0.chara=RIN\nmodule.0.cos=COS_999\nmodule.0.sort_index=1\nmodule.1.id=1\nmodule.1.chara=MIKU\nmodule.data_list.length=2\n");
+    Write(h/"dump/low/gm_module_id.bin","module.0.id=0\nmodule.0.name=Low Table\nmodule.0.chara=RIN\nmodule.0.cos=COS_999\nmodule.0.sort_index=1\nmodule.1.id=1\nmodule.1.chara=MIKU\nmodule.2.id=2\nmodule.2.name=Derived Costume\nmodule.2.chara=SAKINE\nmodule.data_list.length=3\n");
     Write(h/"dump/repl-low/gm_module_id.bin","module.0.id=31\nmodule.0.chara=MIKU\nmodule.data_list.length=1\n");
     Write(h/"dump/repl-high/gm_module_id.bin","module.0.id=30\nmodule.0.chara=MIKU\nmodule.data_list.length=1\n");
     Write(h/"dump/disabled/gm_module_id.bin","module.0.id=88\nmodule.data_list.length=1\n");
@@ -126,7 +131,7 @@ mode='append'
 logical_path='rom/mod_gm_module_tbl.farc'
 path='dump/disabled/gm_module_id.bin'
 )");
-    auto catalog=LoadCustomizationCatalog(h,g);Check(catalog.items.size()==6,"普通替换表累加、禁用来源导入或孤立名字创建实体");
+    auto catalog=LoadCustomizationCatalog(h,g);Check(catalog.items.size()==7,"普通替换表累加、禁用来源导入或孤立名字创建实体");
     Check(catalog.sources[0].name==catalog.sources[1].name && catalog.sources[0].id!=catalog.sources[1].id,"重复显示名被合并为同一来源");
     const auto& zero=Find(catalog,CustomizationKind::Module,0);
     Check(zero.character==CustomizationCharacter::Miku && zero.cos.empty() && !zero.sortIndex,"高优先级没有整条替换，泄漏低优先级字段");
@@ -139,6 +144,12 @@ path='dump/disabled/gm_module_id.bin'
     query.text="English Alias";Check(SearchCustomization(catalog,query).size()==1,"其他语言真实别名未保留");
     query.text="手工 中文";Check(SearchCustomization(catalog,query).size()==1,"原文分词规范化错误");
     query.text.clear();query.source="dml:Low:.";Check(SearchCustomization(catalog,query).size()==2,"被覆盖定义/名字未保留关联来源");
+    const auto& derived=Find(catalog,CustomizationKind::Module,2);
+    Check(derived.characterToken=="SAKINE" && derived.character==CustomizationCharacter::Sakine && ModuleSearchCharacter(derived.character)==CustomizationCharacter::Derived,"原始角色与搜索分类没有独立保存");
+    query={};query.character=CustomizationCharacter::Derived;auto derivedResults=SearchCustomization(catalog,query);
+    Check(derivedResults.size()==1 && catalog.items[derivedResults[0]].key.id==2,"衍生角色筛选没有映射元数据角色");
+    query.character=CustomizationCharacter::Sakine;Check(SearchCustomization(catalog,query).empty(),"元数据角色泄漏为单独游戏分类");
+    query.character=CustomizationCharacter::Random;Check(SearchCustomization(catalog,query).empty(),"随机分类被错误解释为静态实体或全部服装");
     query={};query.kind=CustomizationKind::Accessory;Check(SearchCustomization(catalog,query).size()==1,"共通饰品未匹配具体角色或未知误入MIKU");
     query.part=CustomizationPart::Face;Check(SearchCustomization(catalog,query).size()==1,"饰品部位交集错误");
     query.character=CustomizationCharacter::Unknown;query.part=CustomizationPart::Unknown;Check(SearchCustomization(catalog,query).size()==1,"未知角色/部位过滤失败");
@@ -152,6 +163,18 @@ path='dump/disabled/gm_module_id.bin'
     Write(g/"config.toml","priority=['中文目录']\n");Write(g/L"mods/中文目录/config.toml","include=['.']\nname='重复显示名'\n");
     auto unicode=LoadCustomizationCatalog(h,g);Check(!unicode.sources.empty() && unicode.sources[0].id=="dml:中文目录:.","中文Mod目录身份使用了本机ANSI编码");
     return catalog;
+}
+// 验证显示语言、英文/日文检索与合并后的官方来源入口。
+void DefaultSearchLanguages() {
+    using namespace diva;CustomizationCatalog catalog;catalog.language="cn";
+    CustomizationItem item;item.key={CustomizationKind::Module,1};item.name="中文服装";item.character=CustomizationCharacter::Miku;
+    item.namesByLanguage={{"en","English Module"},{"jp","カタカナ"},{"fr","RobeFrancaise"}};
+    item.aliases={"AutreNomFrancais"};item.sources={{"official:pc-region","定义",false},{"official:pc-region-dlc","定义",true}};
+    PrepareCustomizationItem(item,catalog);catalog.items.push_back(std::move(item));
+    CustomizationQuery query;query.source="official";
+    Check(SearchCustomization(catalog,query).size()==1,"合并官方入口没有唯一匹配官方条目");
+    for(const auto* name:{"中文服装","English Module","english module","カタカナ","かたかな","ｶﾀｶﾅ"}) {query.text=name;Check(SearchCustomization(catalog,query).size()==1,"默认显示名称或英文/日文检索失败");}
+    for(const auto* name:{"RobeFrancaise","AutreNomFrancais"}) {query.text=name;Check(SearchCustomization(catalog,query).size()==1,"真实语言或别名未恢复检索");}
 }
 // 验证列意图、末行、边界、不同行数及有序重复动作。
 void Navigation() {
@@ -189,14 +212,63 @@ void Async(const diva::CustomizationCatalog& catalog) {
     for(auto it=next.items.begin();it!=next.items.end();) {if(it->key==CustomizationKey{CustomizationKind::Module,0}) it=next.items.erase(it);else ++it;}
     replacement.set_value(std::move(next));view.Poll();Complete(view);
     Check(view.State().results.empty(),"旧快照结果覆盖新目录或保留失效索引");
-    view.textNavigation=true;view.controlNavigation=false;view.State().detailsRequested=true;view.QueueSearch(true);Check(view.State().detailsRequested,"同帧输入清掉已排队Enter");view.SetKind(CustomizationKind::Accessory);Check(!view.states[0].detailsRequested,"模式切换遗留待确认");
-    Check(!view.WantsHorizontalNavigation(),"文本框左右被格子接管");
+    view.textNavigation=true;view.controlNavigation=false;view.RequestDetails();view.drawFrame=view.locateRequestFrame;
+    std::strcpy(view.State().input,"High General");view.QueueSearch(true);
+    Check(view.State().locateRequested && view.State().detailsRequested && view.locateRequestRevision==view.State().revision,"同帧输入未绑定到已排队Enter");
+    view.SetKind(CustomizationKind::Accessory);Check(!view.states[0].detailsRequested,"模式切换遗留待确认");
+    Check(!view.WantsHorizontalNavigation(),"无文本或卡片焦点时意外接管左右");
     view.OnOpen(std::nullopt);Check(!TryReadCustomizationContext() && !GetCustomizationCapabilities().canLocate && !GetCustomizationCapabilities().canPreviewNative,"安全stub意外启用原生能力");
+}
+// 参数 catalog 为隔离资源快照；验证Enter请求A后跨帧改搜B不会提交B。
+void LocateRevision(const diva::CustomizationCatalog& catalog) {
+    using namespace diva;
+    auto* context=ImGui::CreateContext();
+    auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
+    io.DisplaySize={1280.0f,900.0f};io.DeltaTime=1.0f/60.0f;
+    unsigned char* pixels=nullptr;int width=0,height=0;io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
+
+    CustomizationView view;view.catalog=std::make_shared<CustomizationCatalog>(catalog);view.OnOpen(std::nullopt);Complete(view);
+    int submitted=0;int submittedId=-1;int invalidated=0;
+    // 记录向已提交原生请求发布的失效通知，不能只清理界面自身的布尔状态。
+    view.invalidateModuleLocate=[&]{++invalidated;};
+    // 参数 request 为稳定服装定位请求；记录ID以发现错误提交到新查询结果。
+    view.submitModuleLocate=[&](const CustomizationLocateRequest& request){++submitted;submittedId=request.key.id;};
+    view.textNavigation=true;view.controlNavigation=false;
+    std::strcpy(view.State().input,"High Table");view.QueueSearch(false);
+    const auto requestRevision=view.State().revision;
+    const auto firstResults=SearchCustomization(*view.catalog,view.State().query);
+    Check(firstResults.size()==1 && view.catalog->items[firstResults.front()].key.id==0,"A查询夹具未命中服装ID 0");
+    std::promise<CustomizationView::SearchReply> delayedA;
+    view.searching=delayedA.get_future();view.runningMode=0;view.runningRevision=requestRevision;view.runningGeneration=view.generation;
+    view.RequestDetails();
+    DrawCustomization(view);DrawCustomization(view);
+    Check(view.State().locateRequested && submitted==0,"A结果尚未完成时Enter提前提交");
+
+    const int beforeChange=invalidated;
+    std::strcpy(view.State().input,"General Wins");view.QueueSearch(false);
+    Check(invalidated==beforeChange+1,"查询变化未使已提交原生请求失效");
+    Check(!view.State().locateRequested && !view.State().detailsRequested,"跨帧改搜B未取消A的Enter请求");
+    delayedA.set_value({0,requestRevision,view.generation,firstResults});
+    view.Poll();Complete(view);DrawCustomization(view);
+    Check(view.State().results.size()==1 && view.catalog->items[view.State().results.front()].key.id==1,"B查询夹具未命中服装ID 1");
+    Check(submitted==0 && submittedId==-1,"A的Enter请求错误地自动提交了B");
+    // 外部夹具替换文本前结束旧InputText会话，避免其内部缓冲把B写回。
+    ImGui::ClearActiveID();view.State().focus=false;
+    std::strcpy(view.State().input,"");view.QueueSearch(false);Complete(view);DrawCustomization(view);Complete(view);DrawCustomization(view);
+    Check(!view.SearchPending(),"方向键回归尚未得到最新搜索结果");
+    Check(view.State().results.size()>1,"方向键回归需要多件真实夹具服装");
+    view.textNavigation=true;view.gridNavigation=false;view.controlNavigation=false;
+    view.Navigate(CustomizationNavigation::Down);DrawCustomization(view);
+    Check(view.WantsHorizontalNavigation(),"上下浏览后焦点没有交给卡片，左右键仍被文本框占用");
+    const auto beforeRight=view.State().cursor.selected;
+    view.Navigate(CustomizationNavigation::Right);
+    Check(view.State().cursor.selected!=beforeRight,"卡片焦点的右方向键没有移动选择");
+    ImGui::DestroyContext(context);
 }
 }
 // 参数 argc/argv 保留命令行兼容；测试只在系统临时隔离目录创建夹具。
 int main(int argc,char** argv) {
     (void)argc;(void)argv;auto root=diva::fs::temp_directory_path()/("diva-customization-check-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    try {Parser(root);auto catalog=Catalog(root);Navigation();Async(catalog);diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
+    try {Parser(root);auto catalog=Catalog(root);DefaultSearchLanguages();Navigation();Async(catalog);LocateRevision(catalog);diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
     catch(const std::exception& error) {std::cerr<<error.what()<<"\n";diva::fs::remove_all(root);return 1;}
 }

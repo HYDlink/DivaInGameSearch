@@ -19,8 +19,13 @@ CustomizationPart ParseCustomizationPart(const std::string& token) {
     return CustomizationPart::Unknown;
 }
 const char* CustomizationCharacterName(CustomizationCharacter value) {
-    static const char* names[]={"初音未来","镜音铃","镜音连","巡音流歌","亚北音留","弱音白","KAITO","MEIKO","咲音美子","重音Teto","共通 ALL","未知角色"};
-    auto index=static_cast<size_t>(value); return names[std::min(index,size_t(11))];
+    static const char* names[]={"初音未来","镜音铃","镜音连","巡音流歌","亚北音留","弱音白","KAITO","MEIKO","咲音美子","重音Teto","共通 ALL","未知角色","衍生角色","随机"};
+    auto index=static_cast<size_t>(value); return names[std::min(index,size_t(13))];
+}
+// 参数 value 为原始角色，返回服装搜索使用的游戏界面分类。
+CustomizationCharacter ModuleSearchCharacter(CustomizationCharacter value) {
+    if(value==CustomizationCharacter::Neru || value==CustomizationCharacter::Haku || value==CustomizationCharacter::Sakine || value==CustomizationCharacter::Teto) return CustomizationCharacter::Derived;
+    return value;
 }
 const char* CustomizationPartName(CustomizationPart value) {
     static const char* names[]={"头部","脸部","胸颈","背部","未知部位"};
@@ -28,8 +33,10 @@ const char* CustomizationPartName(CustomizationPart value) {
 }
 void PrepareCustomizationItem(CustomizationItem& item,const CustomizationCatalog& catalog) {
     std::string key=item.name+" "+std::to_string(item.key.id);
-    for(const auto& [language,name]:item.namesByLanguage) { (void)language;key+=" "+name; }
-    for(const auto& name:item.aliases) key+=" "+name;
+    // 所有真实名称与别名都参与检索；Normalize统一英文大小写、全半角及平片假名。
+    for(const auto& [language,name]:item.namesByLanguage) key+=" "+name;
+    for(const auto& alias:item.aliases) key+=" "+alias;
+    if(auto original=item.rawFields.find("name");original!=item.rawFields.end()) key+=" "+original->second;
     item.searchKey=Normalize(key);item.nameKey=Normalize(item.name);item.modKey.clear();
     for(const auto& contribution:item.sources) {
         auto found=std::find_if(catalog.sources.begin(),catalog.sources.end(),[&](const auto& source){return source.id==contribution.source;});
@@ -43,9 +50,9 @@ std::vector<size_t> SearchCustomization(const CustomizationCatalog& catalog,cons
     while(words>>word) {auto term=Normalize(word);if(!term.empty()) terms.push_back(term); }
     for(size_t index=0;index<catalog.items.size();++index) {
         const auto& item=catalog.items[index]; if(item.key.kind!=query.kind) continue;
-        if(query.character && item.character!=*query.character && !(query.kind==CustomizationKind::Accessory && item.character==CustomizationCharacter::All && *query.character!=CustomizationCharacter::Unknown)) continue;
+        if(query.character && (query.kind==CustomizationKind::Module?ModuleSearchCharacter(item.character):item.character)!=*query.character && !(query.kind==CustomizationKind::Accessory && item.character==CustomizationCharacter::All && *query.character!=CustomizationCharacter::Unknown)) continue;
         if(query.kind==CustomizationKind::Accessory && query.part && item.part!=*query.part) continue;
-        if(!query.source.empty() && std::none_of(item.sources.begin(),item.sources.end(),[&](const auto& source){return source.source==query.source;})) continue;
+        if(!query.source.empty() && std::none_of(item.sources.begin(),item.sources.end(),[&](const auto& source){return query.source=="official"?source.source.starts_with("official:"):source.source==query.source;})) continue;
         const auto& key=query.modMode?item.modKey:item.searchKey;
         if(std::any_of(terms.begin(),terms.end(),[&](const auto& term){return key.find(term)==std::string::npos;})) continue;
         out.push_back(index);

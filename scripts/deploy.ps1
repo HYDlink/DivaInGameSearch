@@ -34,7 +34,7 @@ $backup=Join-Path $projectRoot "artifacts/deployment/$timestamp"
 New-Item -ItemType Directory -Force $backup | Out-Null
 Copy-Item -LiteralPath $configPath -Destination (Join-Path $backup 'config.toml.before')
 [IO.File]::WriteAllText((Join-Path $backup 'config.toml.after'),$updated,[Text.UTF8Encoding]::new($false))
-$files=@('DivaInGameSearch.dll','config.toml','settings.ini','aliases.toml','data/base_pv_db.txt','data/dlc_pv_db.txt')
+$files=@('DivaInGameSearch.dll','MmlCpkBridge.dll','DivaTextureDecoder.dll','config.toml','settings.ini','aliases.toml','data/base_pv_db.txt','data/dlc_pv_db.txt')
 $stage=Join-Path $modsRoot "DivaInGameSearch.deploy-$timestamp"
 if(Test-Path -LiteralPath $stage){ throw '暂存目录已存在，已停止部署。' }
 New-Item -ItemType Directory -Path $stage | Out-Null

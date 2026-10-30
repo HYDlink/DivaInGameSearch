@@ -102,6 +102,12 @@ void View::OnOpened() {
     customization.OnOpen(TryReadCustomizationContext());
     focus=true; listNavigation=true; horizontalNavigation=mode==SearchMode::Songs; ClearActions();
 }
+// 参数 preferred/context 为已识别的当前页面和可选角色；打开时覆盖上次领域，保留各领域查询。
+void View::ApplyOpeningContext(SearchMode preferred,std::optional<CustomizationContext> context) {
+    SetMode(preferred);
+    if(context) customization.OnOpen(context);
+    focus=true;listNavigation=true;horizontalNavigation=mode==SearchMode::Songs;ClearActions();
+}
 // 只清理尚未处理的 UI 动作，不改变条件或歌曲目标难度。
 void View::ClearActions() { requestEnter=requestEscape=false; move=difficultyMove=0; itemMoves.clear(); }
 // 提交确切的风格和难度，缺失难度不降级；参数 song/difficulty 为歌曲与请求等级。
@@ -144,14 +150,44 @@ void SetupStyle(float size) {
     if(fs::exists(font)) io.Fonts->AddFontFromFileTTF(Utf8(font.wstring()).c_str(),size,nullptr,ranges.Data);
     else io.Fonts->AddFontDefault();
     auto& s=ImGui::GetStyle(); ImGui::StyleColorsDark();
-    s.WindowPadding={24,22}; s.FramePadding={12,9}; s.ItemSpacing={10,10}; s.WindowRounding=14; s.FrameRounding=6;
+    s.WindowPadding={24,18}; s.FramePadding={12,8}; s.ItemSpacing={10,10}; s.WindowRounding=12; s.FrameRounding=5;
     s.CellPadding={10,7}; s.ScrollbarSize=12;
-    s.Colors[ImGuiCol_WindowBg]={0.025f,0.045f,0.065f,0.98f};
-    s.Colors[ImGuiCol_Header]={0.03f,0.33f,0.32f,0.75f};
-    s.Colors[ImGuiCol_HeaderHovered]={0.03f,0.48f,0.44f,0.8f};
-    s.Colors[ImGuiCol_Button]={0.06f,0.22f,0.25f,1};
-    s.Colors[ImGuiCol_ButtonHovered]={0.07f,0.42f,0.43f,1};
-    s.Colors[ImGuiCol_CheckMark]={0.25f,0.92f,0.79f,1};
+    s.Colors[ImGuiCol_Text]={0.91f,0.93f,0.94f,1};
+    s.Colors[ImGuiCol_TextDisabled]={0.53f,0.57f,0.61f,1};
+    s.Colors[ImGuiCol_WindowBg]={0.065f,0.073f,0.086f,1};
+    s.Colors[ImGuiCol_ChildBg]={0,0,0,0};
+    s.Colors[ImGuiCol_PopupBg]={0.095f,0.107f,0.123f,1};
+    s.Colors[ImGuiCol_TitleBg]={0.085f,0.096f,0.11f,1};
+    s.Colors[ImGuiCol_TitleBgActive]=s.Colors[ImGuiCol_TitleBg];
+    s.Colors[ImGuiCol_Border]={0.22f,0.25f,0.28f,0.7f};
+    s.Colors[ImGuiCol_Separator]={0.22f,0.25f,0.28f,0.7f};
+    s.Colors[ImGuiCol_FrameBg]={0.12f,0.137f,0.157f,1};
+    s.Colors[ImGuiCol_FrameBgHovered]={0.17f,0.20f,0.22f,1};
+    s.Colors[ImGuiCol_FrameBgActive]={0.18f,0.23f,0.25f,1};
+    s.Colors[ImGuiCol_Header]={0.18f,0.29f,0.29f,1};
+    s.Colors[ImGuiCol_HeaderHovered]={0.21f,0.34f,0.33f,1};
+    s.Colors[ImGuiCol_HeaderActive]={0.22f,0.39f,0.36f,1};
+    s.Colors[ImGuiCol_Button]={0.15f,0.175f,0.195f,1};
+    s.Colors[ImGuiCol_ButtonHovered]={0.22f,0.27f,0.29f,1};
+    s.Colors[ImGuiCol_ButtonActive]={0.22f,0.35f,0.33f,1};
+    s.Colors[ImGuiCol_CheckMark]={0.42f,0.88f,0.76f,1};
+    s.Colors[ImGuiCol_SliderGrab]=s.Colors[ImGuiCol_CheckMark];
+    s.Colors[ImGuiCol_NavHighlight]=s.Colors[ImGuiCol_CheckMark];
+    s.Colors[ImGuiCol_ScrollbarBg]={0,0,0,0};
+    s.Colors[ImGuiCol_ScrollbarGrab]={0.25f,0.29f,0.32f,1};
+    s.Colors[ImGuiCol_TableHeaderBg]={0.105f,0.12f,0.14f,1};
+    s.Colors[ImGuiCol_TableRowBgAlt]={1,1,1,0.025f};
+}
+// 参数 label/selected/width 为分段名称、当前状态和宽度；保留原生按钮的键盘导航与焦点描边。
+static bool SearchSegment(const char* label,bool selected,float width) {
+    ImGui::PushStyleColor(ImGuiCol_Button,selected?ImVec4(0.20f,0.32f,0.30f,1):ImVec4(0.105f,0.12f,0.14f,1));
+    ImGui::PushStyleColor(ImGuiCol_Text,selected?ImVec4(0.63f,0.97f,0.86f,1):ImVec4(0.66f,0.71f,0.75f,1));
+    const bool pressed=ImGui::Button(label,{width,36});
+    if(selected) {
+        auto min=ImGui::GetItemRectMin(),max=ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRectFilled({min.x+14,max.y-3},{max.x-14,max.y-1},IM_COL32(107,224,194,255),1);
+    }
+    ImGui::PopStyleColor(2);return pressed;
 }
 // 在固定宽度中省略长标题；参数 text/width 为文本与最大像素宽度。
 static void ClippedText(const std::string& text,float width) {
@@ -182,15 +218,15 @@ void EnableControlTabNavigation() {
 void View::Draw() {
     if(!open) return;
     auto display=ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowSize({std::min(1280.0f,display.x-24),std::min(810.0f,display.y-24)},ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({std::min(1280.0f,display.x-24),std::min(860.0f,display.y-24)},ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos({display.x/2,display.y/2},ImGuiCond_FirstUseEver,{0.5f,0.5f});
     ImGui::SetNextWindowBgAlpha(opacity);
     if(!ImGui::Begin("DIVA 游戏内搜索###DivaSearch",&open,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoSavedSettings)) { ImGui::End(); return; }
     EnableControlTabNavigation();
-    if(ImGui::RadioButton("歌曲##领域",mode==SearchMode::Songs)) SetMode(SearchMode::Songs);
-    ImGui::SameLine(); if(ImGui::RadioButton("服装##领域",mode==SearchMode::Modules)) SetMode(SearchMode::Modules);
-    ImGui::SameLine(); if(ImGui::RadioButton("饰品##领域",mode==SearchMode::Accessories)) SetMode(SearchMode::Accessories);
-    ImGui::Separator();
+    if(SearchSegment("歌曲##领域",mode==SearchMode::Songs,100)) SetMode(SearchMode::Songs);
+    ImGui::SameLine(0,4); if(SearchSegment("服装##领域",mode==SearchMode::Modules,100)) SetMode(SearchMode::Modules);
+    ImGui::SameLine(0,4); if(SearchSegment("饰品##领域",mode==SearchMode::Accessories,100)) SetMode(SearchMode::Accessories);
+    ImGui::Spacing();ImGui::Separator();ImGui::Spacing();
     if(mode!=SearchMode::Songs) {
         customization.EnsureLoaded(home,game); customization.composing=composing;
         customization.Poll();
@@ -206,16 +242,16 @@ void View::Draw() {
         ImGui::End(); return;
     }
     horizontalNavigation=true;
-    ImGui::TextColored({0.32f,0.94f,0.81f,1},"SONG FINDER"); ImGui::SameLine();
-    ImGui::TextDisabled("原生曲库 / 按名称或等级定位 / Ctrl+%c",shortcut);
+    ImGui::TextColored({0.63f,0.97f,0.86f,1},"歌曲搜索"); ImGui::SameLine();
+    ImGui::TextDisabled("按名称查找 · 选择难度 · Enter 定位");
     ImGui::Spacing();
     ImGui::SetNextItemWidth(-220);
     if(focus) { ImGui::SetKeyboardFocusHere(); focus=false; }
     if(ImGui::InputTextWithHint("##查询","输入原名、英文、中文别名、假名、罗马音或 PVID",input,sizeof(input))) QueueSearch(true);
     bool searchActive=ImGui::IsItemActive();
     ImGui::SameLine();
-    if(ImGui::RadioButton("歌曲",!query.modMode)) { query.modMode=false; dirty=true; }
-    ImGui::SameLine(); if(ImGui::RadioButton("Mod",query.modMode)) { query.modMode=true; dirty=true; }
+    if(SearchSegment("曲名##检索",!query.modMode,80)) { query.modMode=false; dirty=true; }
+    ImGui::SameLine(0,4); if(SearchSegment("Mod##检索",query.modMode,80)) { query.modMode=true; dirty=true; }
     const char* styles[]={"街机 ARCADE","主机 CONSOLE","混合 MIXED"};
     const char* difficulties[]={"EASY","NORMAL","HARD","EXTREME","EXTRA EXTREME"};
     const char* sorts[]={"相关度","PVID 升序","名称","等级 降序"};
@@ -273,7 +309,7 @@ void View::Draw() {
         }
         while(clipper.Step()) for(int row=clipper.DisplayStart;row<clipper.DisplayEnd;++row) {
             const auto& song=catalog->songs[results[row].index]; ImGui::PushID(song.id);
-            ImGui::TableNextRow(0,rowHeight); if(song.id==selectedId) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,IM_COL32(12,69,71,200));
+            ImGui::TableNextRow(0,rowHeight); if(song.id==selectedId) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,IM_COL32(41,63,62,255));
             ImGui::TableSetColumnIndex(0); auto pos=ImGui::GetCursorScreenPos();
             auto nameWidth=ImGui::GetContentRegionAvail().x;
             if(ImGui::InvisibleButton("名称",{nameWidth,rowHeight-16})) Locate(song,currentDifficulty);

@@ -58,6 +58,8 @@ struct View {
     void SetMode(SearchMode next);
     // 每次打开采样已验证的定制角色；当前适配未接线时明确回退初音未来。
     void OnOpened();
+    // 参数 preferred/context 为已核实页面与可选角色；每次打开重新路由，保留各页搜索条件。
+    void ApplyOpeningContext(SearchMode preferred,std::optional<CustomizationContext> context={});
     // 清除跨帧确认及方向请求，防止关闭或模式切换后漏到其他领域。
     void ClearActions();
     // 提交定位请求；参数 song/difficulty 为逻辑歌曲和确切难度。

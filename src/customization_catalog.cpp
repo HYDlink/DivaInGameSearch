@@ -1,4 +1,6 @@
 #include "customization.h"
+#include "farc.h"
+#include "module_assets.h"
 #include <toml.hpp>
 #include <algorithm>
 #include <charconv>
@@ -6,9 +8,27 @@
 #include <regex>
 #include <sstream>
 #include <climits>
+#include <Windows.h>
+#include <wincrypt.h>
 
 namespace diva {
 namespace {
+// 参数 game 为游戏根目录；仅支持已核实构建的旧式平面名称映射。
+bool LegacyNameBuild(const fs::path& game) {
+    HCRYPTPROV provider=0;HCRYPTHASH hash=0;bool valid=false;
+    if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT)) return false;
+    if(CryptCreateHash(provider,CALG_SHA_256,0,0,&hash)) {
+        std::ifstream file(game/"DivaMegaMix.exe",std::ios::binary);char buffer[65536];bool okay=file.good();
+        while(file.read(buffer,sizeof(buffer)) || file.gcount()) if(!CryptHashData(hash,reinterpret_cast<const BYTE*>(buffer),static_cast<DWORD>(file.gcount()),0)) {okay=false;break;}
+        BYTE digest[32];DWORD size=32;
+        if(okay && file.eof() && CryptGetHashParam(hash,HP_HASHVAL,digest,&size,0)) {
+            const char* digits="0123456789ABCDEF";std::string text;for(auto byte:digest) {text+=digits[byte>>4];text+=digits[byte&15];}
+            valid=text=="6F4DF714C28515C93B3023E7D6DAFA9095DD8835F762D54DB1726FB8BC04504D";
+        }
+        CryptDestroyHash(hash);
+    }
+    CryptReleaseContext(provider,0);return valid;
+}
 // 参数 path 为文件系统路径，转换为可保存的UTF-8，不使用本机ANSI代码页。
 std::string PathText(const fs::path& path) {auto text=path.generic_u8string();return std::string(reinterpret_cast<const char*>(text.data()),text.size());}
 // 参数 text 为UTF-8路径字符串，保持中文目录可用。
@@ -96,8 +116,9 @@ void Overlay(std::map<CustomizationKey,CustomizationItem>& dest,CustomizationIte
     dest.insert_or_assign(item.key,std::move(item));
 }
 }
-std::vector<CustomizationItem> ReadCustomizationTable(const fs::path& path,CustomizationKind kind,const std::string& source,std::vector<std::string>& diagnostics) {
-    std::ifstream stream(path,std::ios::binary);std::string line;std::map<int,std::map<std::string,std::string>> records;
+// 参数 stream/kind/source/diagnostics 为受限文本流、种类、来源与诊断。
+std::vector<CustomizationItem> ReadCustomizationStream(std::istream& stream,CustomizationKind kind,const std::string& source,std::vector<std::string>& diagnostics) {
+    std::string line;std::map<int,std::map<std::string,std::string>> records;
     const std::string prefix=kind==CustomizationKind::Module?"module.":"cstm_item.";std::optional<int> length;size_t lines=0;
     while(std::getline(stream,line)) {
         if(++lines>2000000 || line.size()>65536) {diagnostics.push_back("实体表超出安全读取上限");break;}
@@ -109,7 +130,7 @@ std::vector<CustomizationItem> ReadCustomizationTable(const fs::path& path,Custo
         auto field=key.substr(dot+1);if(records[*index].contains(field)) diagnostics.push_back("实体表字段重复，采用最后值："+key);
         records[*index][field]=value;
     }
-    if(!stream.eof() && stream.fail()) diagnostics.push_back("实体表读取失败或中断："+PathText(path.filename()));
+    if(!stream.eof() && stream.fail()) diagnostics.push_back("实体表读取失败或中断");
     if(length && records.size()!=size_t(*length)) diagnostics.push_back("实体表稀疏或声明长度不符");
     std::map<int,CustomizationItem> unique;
     for(const auto& [index,fields]:records) {
@@ -121,6 +142,15 @@ std::vector<CustomizationItem> ReadCustomizationTable(const fs::path& path,Custo
         unique.insert_or_assign(item->key.id,std::move(*item));
     }
     std::vector<CustomizationItem> out;for(auto& [id,item]:unique) { (void)id;out.push_back(std::move(item));}return out;
+}
+// 参数 path/kind/source/diagnostics 为本地文本、种类、来源与诊断。
+std::vector<CustomizationItem> ReadCustomizationTable(const fs::path& path,CustomizationKind kind,const std::string& source,std::vector<std::string>& diagnostics) {
+    std::ifstream stream(path,std::ios::binary);return ReadCustomizationStream(stream,kind,source,diagnostics);
+}
+// 参数 text/kind/source/diagnostics 为内存实体文本、种类、来源及诊断。
+std::vector<CustomizationItem> ReadCustomizationText(const std::string& text,CustomizationKind kind,const std::string& source,std::vector<std::string>& diagnostics) {
+    if(text.size()>16*1024*1024) {diagnostics.push_back("内存实体表超出安全大小上限");return {};}
+    std::istringstream stream(text);return ReadCustomizationStream(stream,kind,source,diagnostics);
 }
 CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game) {
     CustomizationCatalog out;auto roots=Roots(game,out);out.dmlFingerprint=Hash(out.configurationKey);
@@ -144,6 +174,28 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         }
     }
     std::map<CustomizationKey,CustomizationItem> merged;
+    // 官方目录使用PC地区表；DLC地区表是独立明确来源，不从PS4/Switch同名表任取版本。
+    auto officialTables=ReadOfficialModuleTables(game,home,out.diagnostics);
+    bool officialModuleTableReplaced=false;
+    for(const auto& root:roots) {
+        std::string reason;
+        if(ReadFarcEntry(root.path/"rom/gm_module_tbl.farc","gm_module_id.bin",reason)) {officialModuleTableReplaced=true;break;}
+    }
+    const OfficialModuleTable* pcBase=nullptr;const OfficialModuleTable* pcDlc=nullptr;
+    for(const auto& table:officialTables) {
+        if(table.internalPath=="rom_steam_region/rom/gm_module_tbl.farc!/gm_module_id.bin" && table.cpkPath.filename()=="diva_main_region.cpk") pcBase=&table;
+        if(table.internalPath=="rom_steam_region_dlc/rom/gm_module_tbl.farc!/gm_module_id.bin" && table.cpkPath.filename()=="diva_dlc00_region.cpk") pcDlc=&table;
+    }
+    for(const auto* table:{pcBase,pcDlc}) if(table) {
+        const std::string identity=table==pcBase?"official:pc-region":"official:pc-region-dlc";
+        out.sources.push_back({identity,table==pcBase?"官方PC基础地区表":"官方PC DLC地区表（含基础条目）","","",false});
+        out.configurationKey+=table->fingerprint+"\n";
+        if(officialModuleTableReplaced) continue;
+        auto items=ReadCustomizationText(table->tableText,CustomizationKind::Module,identity,out.diagnostics);
+        for(auto& item:items) {item.metadataState="官方PC地区实体表";Overlay(merged,std::move(item));}
+    }
+    if(officialModuleTableReplaced) out.diagnostics.push_back("启用Mod提供普通rom/gm_module_tbl.farc，官方同逻辑实体表整表退出，不保留其被删除的ID。");
+    if(!pcBase && !pcDlc && !officialTables.empty()) out.diagnostics.push_back("发现官方表，但未匹配已支持的PC地区路径；未任意合并其他平台表。");
     // 最终清单是用户导入目录，不能通过自填优先级宣称游戏生效集合。
     if(valid) if(auto items=manifest["items"].as_array()) for(auto& node:*items) if(auto table=node.as_table()) {
         auto source=(*table)["source"].value_or<std::string>("");if(!sourceIds.contains(source)) {out.diagnostics.push_back("项目引用未登记来源，跳过");continue;}
@@ -166,27 +218,89 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         const auto expected=kind=="module"?"gm_module_id.bin":"gm_customize_item_id.bin";
         if(path->filename()!=expected) {out.diagnostics.push_back("已解包适配仅接受gm_module_id.bin或gm_customize_item_id.bin");continue;}
         if(inactiveModSources.contains(source)) {out.diagnostics.push_back("跳过当前未启用来源的已解包DML表："+source);continue;}
-        auto identity=sourceIds[source];Fingerprint(*path,out);
+        auto identity=sourceIds[source];
+        if(mode=="replace") {
+            bool automaticWinner=false;
+            for(const auto& candidate:roots) {
+                if(ranks[candidate.id]>ranks[identity]) continue;
+                auto candidatePath=Inside(candidate.path,logical);std::string reason;
+                if(candidatePath && ReadFarcEntry(*candidatePath,expected,reason)) {automaticWinner=true;break;}
+            }
+            if(automaticWinner) {out.diagnostics.push_back("普通兼容表已由更高优先自动归档替换："+identity+" / "+logical);continue;}
+        }
+        // 同来源同逻辑表存在自动归档时，兼容副本整表退出，避免旧副本独有ID残留。
+        auto activeRoot=std::find_if(roots.begin(),roots.end(),[&](const auto& root){return root.id==identity;});
+        if(activeRoot!=roots.end()) {
+            auto automaticPath=Inside(activeRoot->path,logical);std::error_code error;
+            if(automaticPath && fs::is_regular_file(*automaticPath,error)) {
+                std::string reason;
+                auto automaticText=ReadFarcEntry(*automaticPath,expected,reason);
+                if(automaticText) {out.diagnostics.push_back("跳过已由自动归档接管的兼容表："+identity+" / "+logical);continue;}
+                out.diagnostics.push_back("自动归档无法读取，保留显式兼容表："+identity+" / "+logical);
+            }
+        }
+        Fingerprint(*path,out);
         tables.push_back({*path,kind=="module"?CustomizationKind::Module:CustomizationKind::Accessory,identity,mode,logical,ranks[identity],tables.size()});
     }
-    // 普通表同一逻辑路径仅选高优先级；追加表均参与低到高整条替换。
-    std::stable_sort(tables.begin(),tables.end(),[](const auto& a,const auto& b){
-        if(a.mode!=b.mode) return a.mode=="replace";
-        return a.rank>b.rank;
+    // 自动实体优先于兼容导入；普通表按逻辑路径只选最高优先级，追加表从低到高整条覆盖。
+    std::map<fs::path,std::string> automaticTexts;
+    struct AutomaticTable {fs::path path;std::string source,logical;CustomizationKind kind;bool append;};
+    std::vector<AutomaticTable> automatic;
+    for(const auto& root:roots) for(const auto* rom:{"rom","rom_steam","rom_steam_en","rom_steam_cn"}) for(const auto* filename:{"gm_module_tbl.farc","mod_gm_module_tbl.farc","gm_customize_item_tbl.farc","mod_gm_customize_item_tbl.farc"}) {
+        auto path=root.path/rom/filename;std::error_code error;if(!fs::is_regular_file(path,error)) continue;
+        Fingerprint(path,out);std::string logical=std::string(rom)+"/"+filename;bool append=std::string(filename).starts_with("mod_");
+        const auto kind=std::string(filename).find("customize")!=std::string::npos?CustomizationKind::Accessory:CustomizationKind::Module;
+        if(!append && std::any_of(tables.begin(),tables.end(),[&](const auto& table){return table.mode=="replace" && table.kind==kind && table.logical==logical && table.rank<ranks[root.id];})) continue;
+
+        automatic.push_back({path,root.id,logical,std::string(filename).find("customize")!=std::string::npos?CustomizationKind::Accessory:CustomizationKind::Module,append});
+    }
+    for(const auto& archive:automatic) {
+        std::string reason;
+        auto text=ReadFarcEntry(archive.path,archive.kind==CustomizationKind::Module?"gm_module_id.bin":"gm_customize_item_id.bin",reason);
+        if(!text) {++out.unimportedArchives;out.diagnostics.push_back("实体归档读取失败："+archive.source+" / "+archive.logical+"："+reason);continue;}
+        automaticTexts[archive.path]=std::move(*text);
+        tables.push_back({archive.path,archive.kind,archive.source,archive.append?"append":"replace",archive.logical,ranks[archive.source],tables.size()});
+    }
+    // 自动与兼容表统一竞争：普通表只取一个整表，追加按真实DML优先级低到高覆盖。
+    std::stable_sort(tables.begin(),tables.end(),[](const auto& left,const auto& right){
+        if(left.mode!=right.mode) return left.mode=="replace";
+        return left.rank>right.rank;
     });
     for(const auto& table:tables) {
         if(table.mode=="replace") {
-            bool winner=true;for(const auto& other:tables) if(other.mode=="replace" && other.kind==table.kind && other.logical==table.logical && (other.rank<table.rank || (other.rank==table.rank && other.order<table.order))) winner=false;
+            bool winner=true;
+            for(const auto& other:tables) if(other.mode=="replace" && other.kind==table.kind && other.logical==table.logical && (other.rank<table.rank || (other.rank==table.rank && other.order<table.order))) winner=false;
             if(!winner) continue;
         }
-        auto items=ReadCustomizationTable(table.path,table.kind,table.source,out.diagnostics);for(auto& item:items) Overlay(merged,std::move(item));
+        std::vector<CustomizationItem> items;
+        auto text=automaticTexts.find(table.path);
+        if(text!=automaticTexts.end()) {
+            std::istringstream stream(text->second);items=ReadCustomizationStream(stream,table.kind,table.source,out.diagnostics);
+            out.diagnostics.push_back("自动实体定义："+table.source+" / "+table.logical+"："+std::to_string(items.size())+" 件");
+        } else items=ReadCustomizationTable(table.path,table.kind,table.source,out.diagnostics);
+        for(auto& item:items) Overlay(merged,std::move(item));
     }
+    for(const auto& root:roots) if(std::none_of(automatic.begin(),automatic.end(),[&](const auto& table){return table.source==root.id;})) {
+        out.diagnostics.push_back("未检测到标准定制实体定义："+root.id+"；资源替换、PV引用或DLL动态注册需另行核查。");
+    }
+    const bool legacyBuild=LegacyNameBuild(game);
     std::set<CustomizationKey> named;
     for(const auto& root:roots) {
         for(const auto* rom:{"rom","rom_steam","rom_steam_en","rom_steam_cn"}) for(const auto* filename:{"gm_module_tbl.farc","mod_gm_module_tbl.farc","gm_customize_item_tbl.farc","mod_gm_customize_item_tbl.farc"}) {
-            auto path=root.path/rom/filename;std::error_code error;if(fs::is_regular_file(path,error)) {++out.unimportedArchives;Fingerprint(path,out);}
+            auto path=root.path/rom/filename;std::error_code error;if(fs::is_regular_file(path,error)) {Fingerprint(path,out);}
         }
         auto strings=Config(root.path/"rom/lang2/mod_str_array.toml",out);
+        // 已核实的旧式名称仅在精确来源、实体及COS对应时映射；绝不统一减275。
+        auto legacy=merged.find({CustomizationKind::Module,997});
+        if(legacyBuild && root.modDirectory=="X Song Pack" && legacy!=merged.end() && legacy->second.definitionSource==root.id && legacy->second.cos=="COS_482") {
+            for(const auto* locale:{"cn","tw","fr","ge","it","kr","sp",""}) {
+                auto name=std::string(locale).empty()?strings["1272"].value<std::string>():strings[locale]["1272"].value<std::string>();
+                if(!name) continue;
+                legacy->second.aliases.push_back(*name);
+                if(*locale) legacy->second.namesByLanguage[locale]=*name;
+                if(out.language==locale || (legacy->second.name.empty() && !*locale)) {legacy->second.name=*name;legacy->second.nameSource=root.id;}
+            }
+        }
         // 每个root先本语言后通用，且customize先于cstm_item；高优先级首次写入生效。
         std::vector<std::string> languages={out.language,""};if(out.language.empty()) languages={""};
         for(const auto& language:languages) for(const auto* group:{"module","customize","cstm_item"}) {
@@ -216,10 +330,22 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         if(item.name.empty()) item.name=std::string(key.kind==CustomizationKind::Module?"服装 #":"饰品 #")+std::to_string(key.id);
         PrepareCustomizationItem(item,out);out.items.push_back(std::move(item));
     }
-    if(out.items.empty()) out.diagnostics.push_back("未导入服装／饰品元数据。请在本插件目录创建customization_catalog.toml，参照docs/CUSTOMIZATION_IMPORT.md登记最终目录或已解包实体表。");
-    if(out.unimportedArchives) out.diagnostics.push_back("发现 "+std::to_string(out.unimportedArchives)+" 个实体归档，尚未解包导入；不读取FARC/CPK或纹理。");
+    // 图片替换也属于快照：只读索引元数据，刷新后失效旧定位，不能当成游戏已重载。
+    for(const auto& root:roots) {
+        auto directory=Inside(root.path,"rom/2d");if(!directory) continue;
+        std::vector<fs::path> imageFiles;std::error_code error;
+        for(fs::directory_iterator entry(*directory,error),end;entry!=end && !error && imageFiles.size()<32768;entry.increment(error)) {
+            auto name=PathText(entry->path().filename());
+            if(name=="spr_db.bin" || name=="mod_spr_db.bin" || (name.starts_with("spr_sel_md") && name.ends_with(".farc"))) imageFiles.push_back(entry->path());
+        }
+        std::sort(imageFiles.begin(),imageFiles.end());
+        for(const auto& path:imageFiles) Fingerprint(path,out);
+    }
+    out.catalogFingerprint=Hash(out.configurationKey);
+    if(out.items.empty()) out.diagnostics.push_back("未检测到可读取的服装／饰品实体。请查看来源诊断。");
+    if(out.unimportedArchives) out.diagnostics.push_back("发现 "+std::to_string(out.unimportedArchives)+" 个实体归档读取失败；详见来源诊断。");
     if(out.orphanNames) out.diagnostics.push_back("忽略 "+std::to_string(out.orphanNames)+" 个孤立名称补丁；名称不会创建实体。");
-    out.diagnostics.push_back("当前为导入目录，未验证为游戏有效目录；原版／DLC仅在用户导入后可搜索。显示语言使用本插件设置："+out.language+" → 通用 → 表名称。");
+    out.diagnostics.push_back("当前为磁盘元数据快照；磁盘刷新不等于游戏重载。官方PC地区表自动读取，未读取已购买或解锁状态。显示语言使用本插件设置："+out.language+" → 通用 → 表名称。");
     return out;
 }
 }

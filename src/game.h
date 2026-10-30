@@ -17,6 +17,10 @@ public:
     bool SupportsDirect() const override;
     // 调用 PC 版原生列表和高亮入口；参数 request 为已验证的定位目标。
     bool DirectSelect(const Request& request) override;
+    // 返回已通过 PE 构建核查的动态主程序基址，定位器不得使用固定加载地址。
+    uintptr_t ExecutableBase() const;
+    // 只读核对真实选曲对象与页面状态，用于快捷键默认领域，不触发菜单切换。
+    bool IsSongSearchPage();
     bool supported=false;
     // 输入隔离不可用时禁止打开可编辑面板，防止未知版本输入穿透。
     bool inputReady=false;

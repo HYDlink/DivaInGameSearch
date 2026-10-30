@@ -15,8 +15,9 @@ if([IO.Path]::GetDirectoryName($target) -ne [IO.Path]::GetFullPath((Join-Path $G
 if(-not (Test-Path -LiteralPath (Join-Path $target 'DivaInGameSearch.dll'))){ throw '没有找到本 Mod 的既有部署。' }
 $backup=Join-Path $projectRoot ('artifacts/deployment/update-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $backup | Out-Null
-$files=@('DivaInGameSearch.dll','config.toml')
-$backupFiles=$files
+$files=@('DivaInGameSearch.dll','MmlCpkBridge.dll','DivaTextureDecoder.dll','config.toml')
+$backupFiles=@($files | Where-Object { Test-Path -LiteralPath (Join-Path $target $_) })
+$newFiles=@($files | Where-Object { -not (Test-Path -LiteralPath (Join-Path $target $_)) })
 if($null -ne $ShortcutVk){ $backupFiles+=@('settings.ini') }
 $preserved=@('aliases.toml','settings.ini','favorites.txt')
 $originalSettings=@{}
@@ -47,12 +48,18 @@ try{
   }
   foreach($file in $originalSettings.Keys){ if((Get-FileHash (Join-Path $target $file)).Hash -ne $originalSettings[$file]){ throw "用户设置意外变更：$file" } }
   if((Get-FileHash $loaderConfig).Hash -ne $loaderHash){ throw '全局加载器配置意外变化。' }
-  $record=[ordered]@{ 时间=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); 版本='1.0.0'; 部署目录=$target; 备份=$backup; 更新文件=$backupFiles; 快捷键更新=$ShortcutVk; 预期设置哈希=$originalSettings; 全局配置哈希=$loaderHash; DLL哈希=(Get-FileHash (Join-Path $target 'DivaInGameSearch.dll')).Hash; 结果='文件更新与读回校验通过，实际游戏效果待重启复测' }
+  $record=[ordered]@{ 时间=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); 版本='1.0.6'; 部署目录=$target; 备份=$backup; 更新文件=$backupFiles; 快捷键更新=$ShortcutVk; 预期设置哈希=$originalSettings; 全局配置哈希=$loaderHash; DLL哈希=(Get-FileHash (Join-Path $target 'DivaInGameSearch.dll')).Hash; 结果='文件更新与读回校验通过，实际游戏效果待重启复测' }
   $record | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $backup 'update.json')
-  Write-Output '已更新本 Mod 至 1.0.0，默认快捷键为 Ctrl+F。'
+  Write-Output '已更新本 Mod 至 1.0.6，默认快捷键为 Ctrl+F。'
   Write-Output "旧版 DLL 和诊断备份：$backup"
   Write-Output '别名、收藏、其他界面设置和全局曲包加载配置保持不变。'
 }catch{
   foreach($file in $backupFiles){ Copy-Item -LiteralPath (Join-Path $backup $file) -Destination (Join-Path $target $file) -Force }
+  # 只回滚本次新增且内容仍匹配本次发行包的文件，避免覆盖外部新修改。
+  foreach($file in $newFiles){
+    $destination=Join-Path $target $file
+    $source=Join-Path $projectRoot "artifacts/release/DivaInGameSearch/$file"
+    if((Test-Path -LiteralPath $destination) -and (Test-Path -LiteralPath $source) -and (Get-FileHash -LiteralPath $destination).Hash -eq (Get-FileHash -LiteralPath $source).Hash){ Remove-Item -LiteralPath $destination }
+  }
   throw
 }

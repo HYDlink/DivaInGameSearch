@@ -12,11 +12,14 @@ if(Test-Path -LiteralPath $modRoot){
   Remove-Item -LiteralPath $resolvedTarget -Recurse -Force
 }
 New-Item -ItemType Directory -Force $modRoot,$sourceRoot,(Join-Path $modRoot 'data'),(Join-Path $modRoot 'licenses'),(Join-Path $sourceRoot 'third_party/vendor') | Out-Null
-foreach($file in @('DivaInGameSearch.dll','SearchPreview.exe')){
+foreach($file in @('DivaInGameSearch.dll','SearchPreview.exe','DivaTextureDecoder.dll')){
   $inputFile=Join-Path $projectRoot "build/release/$file"
   if(-not (Test-Path -LiteralPath $inputFile)){ throw "缺少已构建文件：$file" }
   Copy-Item -LiteralPath $inputFile -Destination $modRoot -Force
 }
+$assetBridge=Join-Path $projectRoot 'build/release/module-assets/MmlCpkBridge.dll'
+if(-not (Test-Path -LiteralPath $assetBridge)){ throw '缺少 NativeAOT 官方 CPK 读取组件 MmlCpkBridge.dll。' }
+Copy-Item -LiteralPath $assetBridge -Destination $modRoot -Force
 Copy-Item -LiteralPath config/config.toml -Destination (Join-Path $modRoot 'config.toml') -Force
 Copy-Item -LiteralPath settings.ini,aliases.toml,README.md,LICENSE,THIRD_PARTY_NOTICES.md -Destination $modRoot -Force
 Copy-Item -LiteralPath docs -Destination $modRoot -Recurse -Force
@@ -29,6 +32,10 @@ Copy-Item -LiteralPath third_party/vendor/licenses/DivaModLoader.md -Destination
 Copy-Item -LiteralPath third_party/vendor/licenses/toml++.txt -Destination (Join-Path $modRoot 'licenses/toml++.txt') -Force
 Copy-Item -LiteralPath third_party/vendor/licenses/NewClassics.txt -Destination (Join-Path $modRoot 'licenses/NewClassics.txt') -Force
 Copy-Item -LiteralPath third_party/vendor/licenses/QuantumSwitch.txt,third_party/vendor/licenses/MikuMikuSwitchPlugin.txt -Destination (Join-Path $modRoot 'licenses') -Force
+Copy-Item -LiteralPath third_party/vendor/miniz/LICENSE -Destination (Join-Path $modRoot 'licenses/miniz.txt') -Force
+Copy-Item -LiteralPath third_party/vendor/mml-cpk/LICENSE.md -Destination (Join-Path $modRoot 'licenses/MikuMikuLibrary.md') -Force
+Copy-Item -LiteralPath third_party/vendor/mml-cpk/COPYRIGHT.md -Destination (Join-Path $modRoot 'licenses/MikuMikuLibrary-Dependencies.md') -Force
+Copy-Item -LiteralPath third_party/vendor/bcdec/bcdec.h -Destination (Join-Path $modRoot 'licenses/bcdec.h') -Force
 # 公开包只附整理后的验收说明，避免把个人路径、运行日志或曲包审计上传。
 # toml++ 的单头文件含完整 MIT 文本，源码包保留该文件。
 Copy-Item -LiteralPath CMakeLists.txt,AGENTS.md,README.md,LICENSE,THIRD_PARTY_NOTICES.md,settings.ini,aliases.toml -Destination $sourceRoot -Force
@@ -39,7 +46,7 @@ New-Item -ItemType Directory -Force (Join-Path $sourceRoot 'design') | Out-Null
 Copy-Item -LiteralPath design/INTERACTION_SPEC.md -Destination (Join-Path $sourceRoot 'design') -Force
 New-Item -ItemType Directory -Force (Join-Path $sourceRoot 'tests') | Out-Null
 Copy-Item -Path tests/*.cpp -Destination (Join-Path $sourceRoot 'tests') -Force
-Copy-Item -LiteralPath third_party/vendor/imgui,third_party/vendor/toml,third_party/vendor/licenses -Destination (Join-Path $sourceRoot 'third_party/vendor') -Recurse -Force
+Copy-Item -LiteralPath third_party/vendor/imgui,third_party/vendor/toml,third_party/vendor/licenses,third_party/vendor/miniz,third_party/vendor/mml-cpk,third_party/vendor/bcdec -Destination (Join-Path $sourceRoot 'third_party/vendor') -Recurse -Force
 $detoursRoot=Join-Path $sourceRoot 'third_party/vendor/detours-source'
 New-Item -ItemType Directory -Force $detoursRoot | Out-Null
 Copy-Item -LiteralPath third_party/vendor/detours-source/src -Destination $detoursRoot -Recurse -Force
@@ -53,7 +60,7 @@ $manifest=Get-ChildItem $modRoot -Recurse -File | Where-Object { $_.Name -ne 'ma
   (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash+'  '+[IO.Path]::GetRelativePath($modRoot,$_.FullName).Replace('\','/')
 }
 [IO.File]::WriteAllLines((Join-Path $modRoot 'manifest.sha256'),$manifest,$utf8)
-$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.0.0-win64.zip'
+$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.0.6-win64.zip'
 Compress-Archive -LiteralPath $modRoot -DestinationPath $zip -Force
 [IO.File]::WriteAllText(($zip+'.sha256'),(Get-FileHash $zip -Algorithm SHA256).Hash+'  '+[IO.Path]::GetFileName($zip)+"`n",$utf8)
 Write-Output "发行包已生成：$zip"
