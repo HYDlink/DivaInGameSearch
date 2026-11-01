@@ -71,3 +71,15 @@ cmake --build build
 > 请先阅读本指南，使用随包 NativeCapture.exe 按当前 DivaMegaMix PID 截图。先只截图并打开检查，再决定下一步。若沙箱无法访问游戏窗口，核对交互桌面权限；若普通截图接口已连续超时，不反复重试。前台使用 BitBlt，后台尝试 PrintWindow，两者都必须检查图片。涉及 Mod 可见行为的实机验收，保留操作前后截图，并与实际高亮或独立字段交叉验证；不要把预览程序截图冒充游戏截图。未经授权不点击、不演奏、不装备、不写存档、不结束游戏。
 
 原始截图可能含 Steam 通知、其他覆盖层或个人信息，公开前应检查；不要把整套本机日志和截图自动上传。
+
+## 1.0.8自测：实际D3D11后缓冲
+
+用户指定AHK+D3D自测时，可用scripts/research/capture_d3d_frame.py。它在正式Mod公开OnFrame结束后只复制一帧实际交换链，创建自己的staging纹理并读回，结束立即卸载Hook。不会修改游戏菜单、装备或输入，不用独立WARP Preview替代游戏。需要已安装Frida运行时及Pillow；必须选当前PID。run_ui_step.py已复用这一分支保存每次AHK前后帧。BMP与PNG是同一帧的无损编码转换，仍须打开图片及独立读回。
+
+```bash
+python scripts/research/capture_d3d_frame.py \
+  --pid "$DIVA_PID" \
+  --output artifacts/下一轮-D3D游戏帧.png
+```
+
+桌面复制曾在远程环境返回DXGI_ERROR_WAIT_TIMEOUT，未算截图成功；早期NativeCapture的GDI组仍按实际分支标记。

@@ -19,6 +19,8 @@ public:
     bool DirectSelect(const Request& request) override;
     // 返回已通过 PE 构建核查的动态主程序基址，定位器不得使用固定加载地址。
     uintptr_t ExecutableBase() const;
+    // 读取已核查PC构建的原生语言目录；未知构建或非法值返回空，不把系统语言当游戏语言。
+    std::string CurrentLanguage() const;
     // 只读核对真实选曲对象与页面状态，用于快捷键默认领域，不触发菜单切换。
     bool IsSongSearchPage();
     bool supported=false;

@@ -1,6 +1,6 @@
 enabled = true
 name = "DIVA 游戏内搜索"
 description = "游戏内原生歌曲与服装搜索，默认 Ctrl+F"
-version = "1.0.6"
+version = "1.0.11"
 author = "DIVA In-Game Search contributors"
 dll = ["DivaInGameSearch.dll"]

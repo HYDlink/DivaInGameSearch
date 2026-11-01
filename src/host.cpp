@@ -35,6 +35,8 @@ std::string Host::DescribeInputState() const {
 }
 // 参数 reason 为调用点给出的清理原因；不修改其他 Mod 的窗口或原生输入链。
 void Host::ResetInputState(const char* reason) {
+    view.ResetSongBodyClick();if(view.invalidateSongNavigation) view.invalidateSongNavigation();
+    view.customization.ResetBodyClick();
     bool hadState=view.open || captures || releaseUntil || std::any_of(swallowed.begin(),swallowed.end(),[](bool value){ return value; })
         || std::any_of(swallowedMouse.begin(),swallowedMouse.end(),[](bool value){ return value; });
     view.open=false; view.composing=false; view.imeGuard=false;
@@ -112,6 +114,7 @@ void Host::SyncModuleAssets() {
             if(result.first && catalog && builtGeneration==generation) {
                 moduleAssets=std::move(result.first);
                 moduleAssetsActiveGeneration=generation;
+                ++customization.previewMetadataGeneration;
                 if(diagnostic) for(const auto& message:result.second) diagnostic("图片资源："+message);
             } else RetireModuleAssets(std::move(result.first));
         } catch(...) {
@@ -154,6 +157,7 @@ ImTextureID Host::UploadPreviewPixels(const CustomizationKey& key,const unsigned
         found->second.lastUsedFrame=modulePreviewFrame;
         return static_cast<ImTextureID>(static_cast<void*>(found->second.view));
     }
+    PerformanceStageScope uploadTiming(view.performance->current.upload);++view.performance->current.uploads;
     if(found!=modulePreviewTextures.end()) {
         if(found->second.view) found->second.view->Release();
         modulePreviewBytes-=found->second.bytes;
@@ -254,7 +258,10 @@ bool Host::Attach(IDXGISwapChain* chain,ID3D11Device* newDevice,ID3D11DeviceCont
 LRESULT CALLBACK SearchWndProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) { return App().Message(hwnd,message,w,l); }
 // 截获完整输入序列，同时保留系统 IME 默认处理；参数 hwnd/message/w/l 为原始消息。
 LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
+    const bool inputMessage=message==WM_CHAR || message==WM_IME_COMPOSITION;
+    const auto arrived=PerformanceNow();if(inputMessage) view.performance->Input();
     std::lock_guard lock(mutex);
+    if(inputMessage) view.performance->InputLock(PerformanceNow()-arrived);
     // 关闭面板仍消费已捕获按键的释放，防止游戏收到孤立 key-up。
     bool key=message==WM_KEYDOWN || message==WM_SYSKEYDOWN || message==WM_KEYUP || message==WM_SYSKEYUP;
     bool down=message==WM_KEYDOWN || message==WM_SYSKEYDOWN;
@@ -294,7 +301,7 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
         if(message==WM_RBUTTONUP) swallowedMouse[1]=releasedMouse[1]=false;
         if(message==WM_MBUTTONUP) swallowedMouse[2]=releasedMouse[2]=false;
         if(key && !down) releasedKeys[w&255]=false;
-        if(message==WM_IME_STARTCOMPOSITION) { view.composing=true; view.imeGuard=true; }
+        if(message==WM_IME_STARTCOMPOSITION) { view.composing=true; view.imeGuard=true;view.customization.ResetBodyClick();view.ResetSongBodyClick();if(view.invalidateSongNavigation) view.invalidateSongNavigation(); }
         if(message==WM_IME_ENDCOMPOSITION) { view.composing=false; view.imeGuard=true; }
         if(key && down) {
             if(w!=VK_PROCESSKEY) swallowed[w&255]=true;
@@ -354,6 +361,7 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
 // 绘制时短暂持有后缓冲，不妨碍 DML 的 ResizeBuffers；参数 chain 为交换链。
 void Host::Frame(IDXGISwapChain* chain) {
     std::lock_guard lock(mutex); if(!initialized) return;
+    PerformanceFrameScope performance(*view.performance,!view.performance->active);
     ++modulePreviewFrame;
     if(!preview && !previous) {
         auto current=(WNDPROC)GetWindowLongPtrW(window,GWLP_WNDPROC);
@@ -363,7 +371,9 @@ void Host::Frame(IDXGISwapChain* chain) {
         if(!old) { ResetInputState("窗口输入隔离安装失败");view.status="窗口输入隔离安装失败，已停止搜索。";return; }
         previous=(WNDPROC)old;
     }
-    ContextScope scope(context); view.Poll();SyncModuleAssets();
+    ContextScope scope(context);
+    {PerformanceStageScope stage(view.performance->current.poll);view.Poll();}
+    {PerformanceStageScope stage(view.performance->current.assets);SyncModuleAssets();}
     bool wasOpen=view.open;
     // 关闭后持续隔离仍按住的按键和鼠标，不能仅靠固定延迟放行，避免 Enter 长按开始演奏。
     UpdateInputCapture(GetTickCount64());
@@ -372,13 +382,15 @@ void Host::Frame(IDXGISwapChain* chain) {
         ImGui_ImplDX11_InvalidateDeviceObjects(); ImGui::GetIO().Fonts->Clear(); SetupStyle(view.fontSize); view.fontDirty=false;
     }
     ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-    view.Draw(); ImGui::Render();
+    {PerformanceStageScope stage(view.performance->current.draw);view.Draw();ImGui::Render();}
     if(wasOpen && !view.open) {
+        view.ResetSongBodyClick();if(view.invalidateSongNavigation) view.invalidateSongNavigation();
         if(view.customization.invalidateModuleLocate) view.customization.invalidateModuleLocate();
         view.ClearActions(); releaseUntil=GetTickCount64()+120; ImGui::GetIO().ClearInputKeys();
         if(diagnostic) diagnostic("搜索面板关闭："+DescribeInputState());
     }
     ID3D11Texture2D* buffer=nullptr; ID3D11RenderTargetView* target=nullptr;
+    PerformanceStageScope rendering(view.performance->current.render);
     if(SUCCEEDED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer)))) {
         device->CreateRenderTargetView(buffer,nullptr,&target); buffer->Release();
     }

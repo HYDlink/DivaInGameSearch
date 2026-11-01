@@ -1,6 +1,7 @@
 # 本项目生成的构建、测试与运行产物。
 /build/
 /artifacts/
+/scripts/research/__pycache__/
 /.vs/
 /CMakeUserPresets.json
 *.user

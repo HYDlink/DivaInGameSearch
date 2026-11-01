@@ -152,10 +152,27 @@ std::vector<CustomizationItem> ReadCustomizationText(const std::string& text,Cus
     if(text.size()>16*1024*1024) {diagnostics.push_back("内存实体表超出安全大小上限");return {};}
     std::istringstream stream(text);return ReadCustomizationStream(stream,kind,source,diagnostics);
 }
-CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game) {
+// 参数data为PC小端偏移表；遵循随包MikuMikuLibrary的经典StringArray格式，不接受现代节格式。
+std::map<int,std::string> ReadCustomizationStrings(const std::string& data) {
+    std::map<int,std::string> result;
+    if(data.size()<8 || data.size()>16*1024*1024) return {};
+    const auto offset=[&](size_t at) {uint32_t value=0;for(int n=0;n<4;++n) value|=static_cast<uint32_t>(static_cast<unsigned char>(data[at+n]))<<(n*8);return value;};
+    const auto first=offset(0);
+    if(first<8 || first%4 || first>data.size() || first/4>100000) return {};
+    for(size_t at=0;at<first;at+=4) {
+        const auto begin=offset(at);if(!begin) break;
+        if(begin<first || begin>=data.size()) return {};
+        const auto end=data.find('\0',begin);if(end==std::string::npos || end-begin>65536) return {};
+        auto text=data.substr(begin,end-begin);
+        if(!text.empty() && !MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0)) return {};
+        if(!text.empty() && text!="BLANK") result.emplace(static_cast<int>(at/4),std::move(text));
+    }
+    return result;
+}
+CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language) {
     CustomizationCatalog out;auto roots=Roots(game,out);out.dmlFingerprint=Hash(out.configurationKey);
     for(const auto& root:roots) out.sources.push_back({root.id,root.name,root.modDirectory,root.includeRoot,true});
-    auto manifest=Config(home/"customization_catalog.toml",out);out.language=manifest["language"].value_or<std::string>("cn");
+    auto manifest=Config(home/"customization_catalog.toml",out);out.language=language.empty()?manifest["language"].value_or<std::string>("cn"):language;
     bool valid=manifest["schema_version"].value_or<int64_t>(0)==1;
     auto expectedFingerprint=manifest["dml_fingerprint"].value_or<std::string>("");
     if(!expectedFingerprint.empty() && expectedFingerprint!=out.dmlFingerprint) {out.stale=true;out.diagnostics.push_back("导入清单DML指纹不匹配，来源配置已变化；目录标为过期。");}
@@ -284,6 +301,21 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         out.diagnostics.push_back("未检测到标准定制实体定义："+root.id+"；资源替换、PV引用或DLL动态注册需另行核查。");
     }
     const bool legacyBuild=LegacyNameBuild(game);
+    // PC已核查构建的原生名称调用以ModuleID+0x113查语言表；只应用于官方实体，Mod名称随后按DML优先级覆盖。
+    if(legacyBuild && out.language.size()==2 && out.language.find_first_not_of("abcdefghijklmnopqrstuvwxyz")==std::string::npos) {
+        const auto suffix="rom/lang2/"+out.language+"/str_array.bin";
+        auto strings=ReadOfficialCpkEntries(game,home,suffix,out.diagnostics);
+        for(const auto& entry:strings) if(entry.internalPath=="rom_steam/"+suffix) {
+            const auto names=ReadCustomizationStrings(entry.entryData);
+            out.configurationKey+=entry.fingerprint+"\n";
+            for(auto& [key,item]:merged) if(key.kind==CustomizationKind::Module && item.definitionSource.starts_with("official:") && key.id<=100000-0x113) {
+                const auto name=names.find(key.id+0x113);if(name==names.end()) continue;
+                item.namesByLanguage[out.language]=name->second;item.name=name->second;
+            }
+            out.diagnostics.push_back("官方服装语言表："+out.language+"，有效字符串 "+std::to_string(names.size())+" 条。");
+            break;
+        }
+    }
     std::set<CustomizationKey> named;
     for(const auto& root:roots) {
         for(const auto* rom:{"rom","rom_steam","rom_steam_en","rom_steam_cn"}) for(const auto* filename:{"gm_module_tbl.farc","mod_gm_module_tbl.farc","gm_customize_item_tbl.farc","mod_gm_customize_item_tbl.farc"}) {
@@ -345,7 +377,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
     if(out.items.empty()) out.diagnostics.push_back("未检测到可读取的服装／饰品实体。请查看来源诊断。");
     if(out.unimportedArchives) out.diagnostics.push_back("发现 "+std::to_string(out.unimportedArchives)+" 个实体归档读取失败；详见来源诊断。");
     if(out.orphanNames) out.diagnostics.push_back("忽略 "+std::to_string(out.orphanNames)+" 个孤立名称补丁；名称不会创建实体。");
-    out.diagnostics.push_back("当前为磁盘元数据快照；磁盘刷新不等于游戏重载。官方PC地区表自动读取，未读取已购买或解锁状态。显示语言使用本插件设置："+out.language+" → 通用 → 表名称。");
+    out.diagnostics.push_back("当前为磁盘元数据快照；磁盘刷新不等于游戏重载。官方PC地区表自动读取，未读取已购买或解锁状态。显示语言："+out.language+" → Mod通用名称 → 实体表原名；游戏内优先跟随当前语言。");
     return out;
 }
 }

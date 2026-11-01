@@ -5,6 +5,7 @@
 #include <fstream>
 #include <Psapi.h>
 #include <imgui.h>
+#include <algorithm>
 
 using Microsoft::WRL::ComPtr;
 // 为独立预览生成大列表和超长名称，不进入 DLL 或发行曲库。
@@ -19,6 +20,13 @@ static diva::Catalog StressCatalog() {
         diva::PrepareSong(song);catalog.songs.push_back(std::move(song));
     }
     catalog.packs={"压力测试（非游戏曲库）","附加谱面来源"};return catalog;
+}
+// 离线预览明确复用报告637的六角色原始值，仅用于共用UI验证，不冒充当前游戏快照。
+static std::shared_ptr<const diva::RecommendationSnapshot> DemoRecommendations() {
+    auto snapshot=std::make_shared<diva::RecommendationSnapshot>();snapshot->ready=true;snapshot->generation=1;
+    const int characters[]={0,1,2,3,7,6},costumes[]={114,30,25,28,22,23};
+    for(int i=0;i<6;++i) {diva::RecommendedPerformer value;value.type=0;value.character=characters[i];value.costumes.fill(costumes[i]);snapshot->songs[637].push_back(value);}
+    return snapshot;
 }
 // 仅在显式传入 --customization-demo 时生成测试卡片，不属于游戏或发行元数据。
 static diva::CustomizationCatalog DemoCustomizationCatalog() {
@@ -82,7 +90,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
     int argc=0; auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);
     wchar_t executable[32768]{};GetModuleFileNameW(nullptr,executable,32768);
     auto home=diva::fs::path(executable).parent_path(),game=home; diva::fs::path output=diva::fs::current_path()/"artifacts/native-preview.png";
-    bool smoke=false,stress=false,stressApplied=false,customizationDemo=false;
+    bool smoke=false,stress=false,stressApplied=false,customizationDemo=false,recommendationDemo=false,recommendationApplied=false;
+    // 指定真实来源进行离线界面检查；条件只影响独立Preview，不操作游戏。
+    std::string moduleSource;bool moduleSourceApplied=false;
+    // 可选初始检索文本，用共用原生界面离线检查实际歌曲或服装结果。
+    std::string initialQuery;bool initialQueryApplied=false;
     auto searchMode=diva::SearchMode::Songs;
     for(int i=1;i<argc;++i) {
         std::wstring arg=argv[i];
@@ -90,12 +102,17 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         else if(arg==L"--stress") stress=true;
         else if(arg==L"--customization-demo") {customizationDemo=true;searchMode=diva::SearchMode::Modules;}
         else if(arg==L"--customization") searchMode=diva::SearchMode::Modules;
+        else if(arg==L"--module-source" && i+1<argc) {moduleSource=diva::Utf8(argv[++i]);searchMode=diva::SearchMode::Modules;}
+        else if(arg==L"--query" && i+1<argc) initialQuery=diva::Utf8(argv[++i]);
+        else if(arg==L"--recommendation-demo") {recommendationDemo=true;searchMode=diva::SearchMode::Modules;}
         else if(arg==L"--accessories") searchMode=diva::SearchMode::Accessories;
         else if(arg==L"--home" && i+1<argc) home=argv[++i];
         else if(arg==L"--game" && i+1<argc) game=argv[++i];
         else if(arg==L"--output" && i+1<argc) output=argv[++i];
     } LocalFree(argv);
     auto& host=diva::App(); host.preview=true; host.Init(home,game); host.view.open=true; host.view.OnOpened(); host.view.SetMode(searchMode);
+    // 推荐样例在目录就绪后才填入文本，先避免空输入框占用ImGui编辑缓冲。
+    if(recommendationDemo || !initialQuery.empty()) {host.view.focus=false;host.view.customization.State().focus=false;}
     if(customizationDemo) {
         auto& view=host.view.customization;
         view.catalog=std::make_shared<diva::CustomizationCatalog>(DemoCustomizationCatalog()); ++view.generation;
@@ -129,6 +146,28 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         }
         target.Reset(); back.Reset();
         if(stress && !stressApplied && host.view.catalog) { host.view.catalog=std::make_shared<diva::Catalog>(StressCatalog());host.view.dirty=true;host.view.status="一万首合成曲目压力预览，不是游戏数据。";stressApplied=true; }
+        if(!initialQuery.empty() && !initialQueryApplied && host.view.catalog && (searchMode==diva::SearchMode::Songs || host.view.customization.catalog)) {
+            if(searchMode==diva::SearchMode::Songs) {strcpy_s(host.view.input,initialQuery.c_str());host.view.focus=true;host.view.QueueSearch(false);}
+            else {auto& view=host.view.customization;strcpy_s(view.State().input,initialQuery.c_str());view.State().focus=true;view.QueueSearch(false);}
+            initialQueryApplied=true;
+        }
+        if(!moduleSource.empty() && !moduleSourceApplied && host.view.customization.catalog) {
+            auto& view=host.view.customization;
+            // 参数source为真实目录来源，按完整名称选择，避免用显示文本猜资源路径。
+            const auto source=std::find_if(view.catalog->sources.begin(),view.catalog->sources.end(),[&](const diva::CustomizationSource& source) {return source.name==moduleSource;});
+            if(source!=view.catalog->sources.end()) {view.State().query.source=source->id;view.State().query.character.reset();view.QueueSearch(false);}
+            moduleSourceApplied=true;
+        }
+        if(recommendationDemo && !recommendationApplied && host.view.catalog && host.view.customization.catalog) {
+            auto& view=host.view.customization;const auto snapshot=DemoRecommendations();
+            // 捕获离线值快照；独立预览不访问游戏进程或调用原生动作。
+            view.recommendationProvider=[snapshot] {return snapshot;};
+            // 参数item为共用曲库歌曲，离线样例使用实际曲名验证直接输入歌曲名称的布局。
+            const auto song=std::find_if(host.view.catalog->songs.begin(),host.view.catalog->songs.end(),[](const diva::Song& item){return item.id==637;});
+            const auto queryText=song==host.view.catalog->songs.end()?std::string("637"):song->name;
+            strcpy_s(view.State().input,queryText.c_str());view.State().focus=true;view.QueueSearch(false);
+            view.status="离线推荐样例：共用目录与界面，不是实机功能验收。";recommendationApplied=true;
+        }
         auto frameStart=std::chrono::steady_clock::now();host.Frame(chain.Get());
         if(readyFrames>5) { totalFrameMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-frameStart).count();++measuredFrames; }
         // 服装截图等待真实目录和至少一张解码上传的图片，不能以歌曲目录就绪冒充图片通过。
@@ -144,6 +183,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
             PROCESS_MEMORY_COUNTERS memory{};GetProcessMemoryInfo(GetCurrentProcess(),&memory,sizeof(memory));
             log<<"原生 DX11 共用界面已运行。\n曲库歌曲："<<host.view.catalog->songs.size()<<"\n可见查询结果："<<host.view.results.size()<<"\n截图保存："<<(saved?"成功":"失败")<<"\n";
             if(searchMode!=diva::SearchMode::Songs) log<<"当前领域："<<(searchMode==diva::SearchMode::Modules?"服装":"饰品")<<"\n定制可见结果："<<host.view.customization.State().results.size()<<"\n显式演示数据："<<customizationDemo<<"\n";
+            if(recommendationDemo) log<<"歌曲推荐关系：离线637六角色样例，不是当前游戏快照。\n";
             log<<"截图图形设备：Windows WARP 软件 DX11。\n";
             log<<"可见界面 CPU 平均帧耗时（不含 Present 等待）："<<(measuredFrames?totalFrameMs/measuredFrames:0)<<" 毫秒\n工作集："<<memory.WorkingSetSize/1048576.0<<" MiB\n以上为独立预览测量，不代表真实游戏帧耗时。\n";
             auto previousContext=ImGui::GetCurrentContext();ImGui::SetCurrentContext((ImGuiContext*)host.context);

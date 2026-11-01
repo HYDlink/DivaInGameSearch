@@ -26,6 +26,8 @@ struct ModuleLocateStatus {
     bool completed=false;
     bool succeeded=false;
     std::string message="原生服装定位尚未初始化。";
+    CustomizationAction action=CustomizationAction::Locate;
+    bool previewReady=false,previewRestored=false;
 };
 
 // 初始化受支持游戏构建的 Module 原生定位；参数 base 为动态取得的主程序基址。
@@ -44,7 +46,7 @@ ModuleLocateStatus PollModuleLocator();
 uint64_t ModuleLocatorContextGeneration();
 // 递增原子取消代数；不读取或写入游戏对象，可由输入线程立即调用。
 void CancelModuleLocate();
-// 只读返回已观察的当前角色与页面代数；未知槽位为-1，不授予任何原生写入能力。
+// 只读返回已核对的当前角色、歌者槽位与页面代数；读取失败返回未知，不使用默认槽位。
 std::optional<CustomizationContext> ReadModuleLocatorContext();
 
 } // namespace diva

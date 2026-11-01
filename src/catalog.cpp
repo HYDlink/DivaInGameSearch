@@ -44,19 +44,26 @@ static toml::table Config(const fs::path& path,std::vector<std::string>& diagnos
     catch(...) { diagnostics.push_back("配置解析失败："+Utf8(path.wstring())); return {}; }
 }
 // 查找实际脚本覆盖；参数 script 为逻辑路径、roots 为高优先级在前的目录、fallback 为原来源。
-static std::pair<bool,std::string> Resolve(const std::string& script,const std::vector<Root>& roots,const std::string& fallback) {
+static std::pair<bool,std::string> Resolve(const std::string& script,const std::vector<Root>& roots,const std::string& fallback,const std::map<std::string,std::string>& officialScripts) {
     if(script.empty()) return {false,fallback};
     auto p=fs::path(Wide(script));
     if(p.is_absolute() || script.find("..")!=std::string::npos) return {false,fallback};
     for(const auto& root:roots) if(fs::is_regular_file(root.path/p)) return {true,root.name};
     // 随发行包的官方元数据对应 CPK 内脚本，不依赖开发机解包路径。
-    return {fallback=="原版" || fallback=="官方 DLC",fallback};
+    if(const auto official=officialScripts.find(script);official!=officialScripts.end()) return {true,official->second};
+    return {false,fallback};
 }
 // 生成配置对应的曲库快照；参数 home/game 为本 Mod 和游戏目录。
 Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
     auto start=std::chrono::steady_clock::now(); Catalog out; Fields fields;
     Overlay(fields,ReadPvdb(home/"data/base_pv_db.txt","原版"));
     if(fs::exists(game/"diva_dlc00.cpk")) Overlay(fields,ReadPvdb(home/"data/dlc_pv_db.txt","官方 DLC"));
+    // 官方脚本身份与后续PVDB字段来源分开：Mod复制同一路径并不会让CPK内原版谱面消失。
+    std::map<std::string,std::string> officialScripts;
+    for(const auto& [id,attributes]:fields) {
+        (void)id;
+        for(const auto& [key,value]:attributes) if(key.ends_with(".script_file_name") && !value.first.empty()) officialScripts.emplace(value.first,value.second);
+    }
     std::map<int,std::set<std::string>> associations;
     std::vector<Root> roots;
     bool ncEnabled=false;
@@ -115,7 +122,7 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
                 auto scriptKey=p+"script_file_name"; auto it=attrs.find(scriptKey);
                 if(it==attrs.end()) continue;
                 int actual=(d==3 && (index>0 || get(p+"attribute.extra")=="1"))?4:d;
-                auto resolved=Resolve(it->second.first,roots,it->second.second);
+                auto resolved=Resolve(it->second.first,roots,it->second.second,officialScripts);
                 song.charts[0][actual]={ParseLevel(get(p+"level")),it->second.first,resolved.second,resolved.first};
             }
         }
@@ -148,7 +155,7 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
             auto script=(*t)["script_file_name"].value_or<std::string>("");
             if(script.empty()) song.charts[s][d]=inherited;
             else {
-                auto resolved=Resolve(script,roots,entry.source);
+                auto resolved=Resolve(script,roots,entry.source,officialScripts);
                 auto level=(*t)["level"].value_or<std::string>("");
                 song.charts[s][d]={ParseLevel(level),script,resolved.second,resolved.first};
             }

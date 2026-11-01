@@ -1,5 +1,6 @@
 #include "module_locator.h"
 #include "module_category.h"
+#include "module_action.h"
 
 #include <Windows.h>
 #include <wincrypt.h>
@@ -23,6 +24,7 @@ constexpr uintptr_t kInitializeChoiceRva=0x6916E0;
 constexpr uintptr_t kMoveCategoryRva=0x694D00;
 constexpr uintptr_t kModuleVtableRva=0xCC4BB0;
 constexpr uintptr_t kControllerRootRva=0xCC6F100;
+constexpr uintptr_t kScopeSelectorRva=0x12B5A74;
 constexpr char kExpectedSha256[]="6F4DF714C28515C93B3023E7D6DAFA9095DD8835F762D54DB1726FB8BC04504D";
 constexpr uint64_t kContextFreshMilliseconds=500;
 constexpr int32_t kMaximumListCount=10000;
@@ -185,7 +187,7 @@ bool InvokeChoiceAtIndex(uintptr_t function,void* page,int32_t index) {
 // 模型页观测值；成员字段只保存地址及已有实验核实的原始状态。
 struct FrameSnapshot {
     uintptr_t page=0,controller=0,configuration=0,listBegin=0,listEnd=0;
-    int32_t pageState=-1,pageEpoch=-1,rawContext=-1,popup=-1,rawModelA=-1,rawModelB=-1;
+    int32_t pageState=-1,pageEpoch=-1,rawContext=-1,popup=-1,rawModelA=-1,rawModelB=-1,slotCount=-1,nativeScope=-1;
     int32_t category=-1,index=-1,count=0,currentId=-1,currentCharacter=-1;
     bool structurallyValid=false,contextReady=false;
 };
@@ -202,9 +204,13 @@ bool ReadFrameSnapshot(uintptr_t base,uintptr_t page,FrameSnapshot& snapshot) {
     if(!ReadAt(controller+0x18,snapshot.configuration) || !snapshot.configuration) return false;
     if(!ReadAt(page+0x20,snapshot.pageState) || !ReadAt(page+0x28,snapshot.pageEpoch)
         || !ReadAt(page+0x110,snapshot.index) || !ReadAt(page+0x60,snapshot.popup)
-        || !ReadAt(controller+0x3C,snapshot.rawContext) || !ReadAt(controller+0x40,snapshot.category)
-        || !ReadAt(controller+0x320,snapshot.rawModelA) || !ReadAt(controller+0x338,snapshot.rawModelB)
+        || !ReadAt(controller+0x38,snapshot.slotCount) || !ReadAt(controller+0x3C,snapshot.rawContext) || !ReadAt(controller+0x40,snapshot.category)
+        || !ReadAt(base+kScopeSelectorRva,snapshot.nativeScope)
         || !ReadAt(page+0x70,snapshot.listBegin) || !ReadAt(page+0x78,snapshot.listEnd)) return false;
+    // 自然E/Q已确认3C是当前歌者槽位；按真实槽位读取模型，不回退到0号槽位。
+    if(snapshot.rawContext>=0 && snapshot.rawContext<6
+        && (!ReadAt(controller+0x320+snapshot.rawContext*0xE0,snapshot.rawModelA)
+            || !ReadAt(controller+0x338+snapshot.rawContext*0xE0,snapshot.rawModelB))) return false;
     if(snapshot.listEnd<snapshot.listBegin || ((snapshot.listEnd-snapshot.listBegin)&7)) return false;
     auto count=(snapshot.listEnd-snapshot.listBegin)/8;
     if(!count || count>kMaximumListCount) return false;
@@ -217,7 +223,9 @@ bool ReadFrameSnapshot(uintptr_t base,uintptr_t page,FrameSnapshot& snapshot) {
         || !ReadModuleRecord(selectedRecord,snapshot.currentId,snapshot.currentCharacter)) return false;
     snapshot.structurallyValid=true;
     // 320/338在正常列表也可保持125，不能把非零当作试穿标志；只记录原值并追踪变化。
-    snapshot.contextReady=(snapshot.pageState==1 || snapshot.pageState==2) && snapshot.rawContext==0 && snapshot.popup==-1
+    snapshot.contextReady=(snapshot.pageState==1 || snapshot.pageState==2)
+        && snapshot.slotCount>0 && snapshot.slotCount<=6 && snapshot.rawContext>=0 && snapshot.rawContext<snapshot.slotCount
+        && snapshot.nativeScope>=0 && snapshot.nativeScope<=3 && snapshot.popup==-1
         && snapshot.category>=0 && snapshot.category<=6
         && ModuleRecordCategory(snapshot.currentCharacter)==snapshot.category;
     return true;
@@ -226,7 +234,8 @@ bool ReadFrameSnapshot(uintptr_t base,uintptr_t page,FrameSnapshot& snapshot) {
 // 判断两个样本是否仍属于同一列表／菜单上下文；参数 left/right 为前后帧观测。
 bool SameMenuContext(const FrameSnapshot& left,const FrameSnapshot& right) {
     return left.page==right.page && left.controller==right.controller && left.configuration==right.configuration && left.pageState==right.pageState
-        && left.pageEpoch==right.pageEpoch && left.rawContext==right.rawContext && left.popup==right.popup
+        && left.pageEpoch==right.pageEpoch && left.rawContext==right.rawContext && left.slotCount==right.slotCount
+        && left.nativeScope==right.nativeScope && left.popup==right.popup
         && left.rawModelA==right.rawModelA && left.rawModelB==right.rawModelB
         && left.category==right.category && left.listBegin==right.listBegin && left.listEnd==right.listEnd
         && left.count==right.count;
@@ -242,7 +251,8 @@ bool SameSubmittedSelection(const FrameSnapshot& initial,const FrameSnapshot& cu
 std::string ContextUnavailableMessage(const FrameSnapshot& snapshot) {
     if(!snapshot.structurallyValid) return "原生模型页面或当前服装列表已失效。";
     if(snapshot.pageState!=1 && snapshot.pageState!=2) return "当前不在已验证的模型服装列表状态。";
-    if(snapshot.rawContext!=0) return "未解释的原生上下文字段与已观察值不符，无法确认当前设置范围。";
+    if(snapshot.slotCount<1 || snapshot.slotCount>6 || snapshot.rawContext<0 || snapshot.rawContext>=snapshot.slotCount) return "当前歌者槽位或歌者数量无效，未提交定位。";
+    if(snapshot.nativeScope<0 || snapshot.nativeScope>3) return "当前设置范围不可识别，未提交定位。";
     if(snapshot.popup!=-1) return "请先关闭服装操作菜单，再提交定位。";
     if(snapshot.category<0 || snapshot.category>6) return "请先进入实际角色服装分类；随机不是服装实体。";
     if(ModuleRecordCategory(snapshot.currentCharacter)!=snapshot.category) return "当前列表记录与角色分类不一致，已拒绝定位。";
@@ -281,7 +291,7 @@ public:
     ModuleLocateStatus Poll();
     // 返回页面生命周期代数；参数无，失效与重建时递增。
     uint64_t ContextGeneration();
-    // 仅输出已核对的角色分类，slot=-1明确保留未知，不把原始字段假作槽位。
+    // 输出自然E/Q已核对的槽位；未认证读数不返回上下文，不使用默认槽位。
     std::optional<CustomizationContext> ReadContext();
 private:
     struct ActiveRequest {
@@ -331,6 +341,7 @@ ModuleLocator& Locator() {
 uint8_t __fastcall ModuleFrameHook(void* page) {
     auto result=g_originalModuleFrame(page);
     Locator().OnModelFrame(reinterpret_cast<uintptr_t>(page),GetTickCount64(),GetCurrentThreadId());
+    OnModuleActionModelFrame(reinterpret_cast<uintptr_t>(page));
     return result;
 }
 
@@ -373,6 +384,7 @@ bool ModuleLocator::Submit(const CustomizationLocateRequest& request,std::string
     if(!lock.owns_lock()) { message="模型帧正在处理原生定位，请稍候再试。";return false; }
     auto reject=[&](const std::string& why) { status_={ModuleLocatePhase::Rejected,request.serial,request.uiGeneration,contextGeneration_,true,false,why};message=why;return false; };
     if(!hookInstalled_) return reject(status_.message.empty()?"原生服装定位未启用。":status_.message);
+    if(request.action!=CustomizationAction::Locate) return reject("定位适配器不能执行预览或换装。");
     if(active_.active && active_.cancelGeneration!=g_cancelGeneration.load()) active_.active=false;
     if(active_.active) { message="上一条服装定位仍待跨帧确认，请稍候再提交。";return false; }
     if(request.serial==0 || request.serial<=lastSerial_) return reject("服装定位请求序号过期，已拒绝重复提交。");
@@ -643,7 +655,7 @@ std::optional<CustomizationContext> ModuleLocator::ReadContext() {
     std::unique_lock lock(mutex_,std::try_to_lock);
     if(!lock.owns_lock() || !contextActive_ || !hasSnapshot_ || !latest_.contextReady || GetTickCount64()-lastModelFrame_>kContextFreshMilliseconds) return {};
     const auto character=ModuleMenuCharacter(latest_.category);
-    return CustomizationContext{character,-1,contextGeneration_,true};
+    return CustomizationContext{character,latest_.rawContext,contextGeneration_,true};
 }
 // 输出最近帧的只读角色上下文，不从UI线程调用游戏函数。
 std::optional<CustomizationContext> ReadModuleLocatorContext() {return Locator().ReadContext();}

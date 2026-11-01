@@ -2,7 +2,15 @@
 #include <cstdint>
 #include <string>
 namespace diva {
-struct Request { int pvid=0, difficulty=0, style=0; uint64_t serial=0; };
+// 歌曲主体双击、难度按钮与键盘分别标记；前两者按用户指令允许跨页。
+enum class SongOrigin { Keyboard, BodySingleClick, BodyDoubleClick, DifficultyButton };
+struct Request {
+    int pvid=0, difficulty=0, style=0; uint64_t serial=0;
+    // 稳定歌曲身份、查询和目录代数；不使用结果行号作为跨页目标。
+    SongOrigin origin=SongOrigin::Keyboard;
+    uint64_t queryRevision=0,catalogGeneration=0,firstClickRevision=0;
+    int firstClickPvid=0;
+};
 struct Snapshot {
     // 实际菜单、过渡标记、请求字段和实际可见 PVID。
     bool supported=false;
@@ -36,6 +44,8 @@ public:
     void Tick(Memory& memory,uint64_t now);
     // 返回当前请求是否尚未结束。
     bool Busy() const;
+    // 取消后续定位与反馈，不反向写回玩家当前歌曲；已完成的原生调用不撤销。
+    void Cancel();
     std::string message="在稳定选曲菜单打开面板后定位。";
     bool succeeded=false;
 private:

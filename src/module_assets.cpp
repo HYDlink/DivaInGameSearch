@@ -54,6 +54,7 @@ struct CpkApi {
     std::mutex mutex;
     std::mutex nativeCallMutex;
     std::string loadedPath;
+    fs::path loadedModulePath;
 
     // 参数 pluginRoot/diagnostics 为插件目录和中文诊断接收器；组件仅从随包 DLL 加载。
     bool Load(const fs::path& pluginRoot, std::vector<std::string>* diagnostics) {
@@ -77,6 +78,7 @@ struct CpkApi {
             module=LoadLibraryExW(candidate.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
             if (module) {
                 loadedPath=PathText(candidate);
+                loadedModulePath=candidate;
                 break;
             }
         }
@@ -85,6 +87,17 @@ struct CpkApi {
             if (diagnostics)
                 diagnostics->push_back("未找到随包的 MmlCpkBridge.dll；官方 CPK 资源读取不可用。");
             return false;
+        }
+
+        // BC7由桥接在解码时延迟导入；必须先从桥接同目录加载，不能依赖游戏EXE所在目录或当前工作目录。
+        const auto decoderPath=loadedModulePath.parent_path()/L"DivaTextureDecoder.dll";
+        if(!GetModuleHandleW(L"DivaTextureDecoder.dll")) {
+            const auto decoder=LoadLibraryExW(decoderPath.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+            if(!decoder || !GetProcAddress(decoder,"DivaDecodeBc7")) {
+                if(diagnostics) diagnostics->push_back("BC7预览解码组件加载失败："+PathText(decoderPath));
+                if(decoder) FreeLibrary(decoder);
+            }
+            // 成功的解码器与进程内固定桥接共同存活，不修改进程全局DLL搜索路径。
         }
 
         open=reinterpret_cast<Open>(GetProcAddress(module,"DivaCpkOpen"));

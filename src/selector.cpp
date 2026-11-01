@@ -6,6 +6,8 @@ std::string DescribeSnapshot(const Snapshot& s) {
 }
 // 查询是否正在切换。
 bool Selector::Busy() const { return phase!=Phase::Idle; }
+// 取消等待或读回，不尝试恢复旧歌曲，避免覆盖玩家的新操作。
+void Selector::Cancel() {phase=Phase::Idle;succeeded=false;message="歌曲定位已取消；未反向修改当前歌曲。";}
 // 在普通歌曲选择界面接受请求，内部状态不是面向玩家的菜单名称；参数 value/available/snapshot/now 为动作与状态。
 bool Selector::Submit(Request value,bool available,const Snapshot& snapshot,uint64_t now) {
     if(Busy()) { message="定位进行中，请稍候。"; return false; }

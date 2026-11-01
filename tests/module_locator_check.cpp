@@ -2,6 +2,10 @@
 #include "../src/module_locator.cpp"
 #include <iostream>
 #include <stdexcept>
+namespace diva {
+// 定位器隔离测试不推进真实动作，仅验证原有读取器和定位上下文。
+void OnModuleActionModelFrame(uintptr_t page) {(void)page;}
+}
 
 namespace {
 // 参数 condition/message 为断言与中文原因。
@@ -12,7 +16,8 @@ template<class T> void Put(uintptr_t address,T value) {std::memcpy(reinterpret_c
 struct Fixture {
     void* allocation=nullptr;
     uintptr_t base=0,page=0,controller=0;
-    alignas(uintptr_t) std::array<unsigned char,0x400> pageData{},controllerData{};
+    alignas(uintptr_t) std::array<unsigned char,0x400> pageData{};
+    alignas(uintptr_t) std::array<unsigned char,0xA00> controllerData{};
     alignas(uintptr_t) std::array<int32_t,4> record{};
     uintptr_t recordPointer=0;
     // 创建只读模型页快照所需的最小对象关系和唯一真实列表条目。
@@ -23,10 +28,14 @@ struct Fixture {
         if(!VirtualAlloc(reinterpret_cast<void*>(rootPage),0x1000,MEM_COMMIT,PAGE_READWRITE)) {
             VirtualFree(allocation,0,MEM_RELEASE);allocation=nullptr;throw std::runtime_error("无法提交隔离根对象页");
         }
+        const auto scopePage=(base+diva::kScopeSelectorRva)&~uintptr_t(0xFFF);
+        Check(VirtualAlloc(reinterpret_cast<void*>(scopePage),0x1000,MEM_COMMIT,PAGE_READWRITE)!=nullptr,"无法提交范围字段页");
+        Put(base+diva::kScopeSelectorRva,int32_t(3));
         page=reinterpret_cast<uintptr_t>(pageData.data());controller=reinterpret_cast<uintptr_t>(controllerData.data());
         record[0]=137;record[2]=0;recordPointer=reinterpret_cast<uintptr_t>(record.data());
         Put(page,base+diva::kModuleVtableRva);Put(page+8,controller);
         Put(base+diva::kControllerRootRva+0x78,controller);Put(controller+0x18,page);
+        Put(controller+0x38,int32_t(3));
         Put(page+0x20,int32_t(1));Put(page+0x60,int32_t(-1));
         Put(page+0x70,reinterpret_cast<uintptr_t>(&recordPointer));
         Put(page+0x78,reinterpret_cast<uintptr_t>(&recordPointer)+sizeof(uintptr_t));Put(page+0x11C,int32_t(1));
@@ -51,7 +60,11 @@ int main() {
         Put(f.page+0x20,int32_t(2));Check(f.Read().contextReady,"现场正常列表状态2被误拒绝");
         for(int32_t state:{0,3}) {Put(f.page+0x20,state);Check(!f.Read().contextReady,"非列表页面意外允许定位");}
         Put(f.page+0x20,int32_t(1));Put(f.page+0x60,int32_t(0));Check(!f.Read().contextReady,"操作弹层未阻止定位");
-        Put(f.page+0x60,int32_t(-1));Put(f.controller+0x3C,int32_t(1));Check(!f.Read().contextReady,"未知原始上下文未阻止定位");
+        Put(f.page+0x60,int32_t(-1));Put(f.controller+0x3C,int32_t(1));Check(f.Read().contextReady,"自然核实的第二歌者槽位被误拒绝");
+        Put(f.controller+0x3C,int32_t(3));Check(!f.Read().contextReady,"槽位超过实际歌者数量仍允许定位");
+        Put(f.controller+0x3C,int32_t(0));auto scoped=f.Read();Put(f.base+diva::kScopeSelectorRva,int32_t(2));
+        Check(!diva::SameMenuContext(scoped,f.Read()),"同一对象切换设置范围没有作废上下文");
+        Put(f.base+diva::kScopeSelectorRva,int32_t(4));Check(!f.Read().contextReady,"未知设置范围仍开放定位");Put(f.base+diva::kScopeSelectorRva,int32_t(3));
         Put(f.controller+0x3C,int32_t(0));Put(f.controller+0x40,int32_t(7));Check(!f.Read().contextReady,"随机分类未阻止定位");
         Put(f.controller+0x40,int32_t(1));Check(!f.Read().contextReady,"记录人物不匹配未阻止定位");
         Put(f.controller+0x40,int32_t(0));Put(f.page+0x11C,int32_t(2));

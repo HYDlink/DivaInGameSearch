@@ -48,9 +48,9 @@ try{
   }
   foreach($file in $originalSettings.Keys){ if((Get-FileHash (Join-Path $target $file)).Hash -ne $originalSettings[$file]){ throw "用户设置意外变更：$file" } }
   if((Get-FileHash $loaderConfig).Hash -ne $loaderHash){ throw '全局加载器配置意外变化。' }
-  $record=[ordered]@{ 时间=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); 版本='1.0.6'; 部署目录=$target; 备份=$backup; 更新文件=$backupFiles; 快捷键更新=$ShortcutVk; 预期设置哈希=$originalSettings; 全局配置哈希=$loaderHash; DLL哈希=(Get-FileHash (Join-Path $target 'DivaInGameSearch.dll')).Hash; 结果='文件更新与读回校验通过，实际游戏效果待重启复测' }
+  $record=[ordered]@{ 时间=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); 版本='1.0.11'; 部署目录=$target; 备份=$backup; 更新文件=$backupFiles; 快捷键更新=$ShortcutVk; 预期设置哈希=$originalSettings; 全局配置哈希=$loaderHash; DLL哈希=(Get-FileHash (Join-Path $target 'DivaInGameSearch.dll')).Hash; 结果='文件更新与读回校验通过，实际游戏效果待重启复测' }
   $record | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $backup 'update.json')
-  Write-Output '已更新本 Mod 至 1.0.6，默认快捷键为 Ctrl+F。'
+  Write-Output '已更新本 Mod 至 1.0.11，默认快捷键为 Ctrl+F。'
   Write-Output "旧版 DLL 和诊断备份：$backup"
   Write-Output '别名、收藏、其他界面设置和全局曲包加载配置保持不变。'
 }catch{

@@ -93,6 +93,12 @@ static void TestCatalog(const diva::fs::path& root) {
     Check(song.charts[1][3].available && song.charts[1][3].level==9.5f,"NC 风格分离失败");
     Check(!song.charts[2][3].available,"未定义 NC 风格误生效");
     Check(song.aliases=="中文别名","用户别名加载失败");
+    // 重现641：人物包复制原版脚本字段，磁盘无松散文件时仍应读取官方CPK谱面。
+    Write(g/L"mods/低/rom/mod_pv_db.txt","pv_001.song_name=不应覆盖\npv_001.song_name_en=English Alias\npv_001.difficulty.extreme.0.script_file_name=rom/script/base.dsc\n");
+    auto copied=LoadCatalog(h,g);Query copiedQuery;copiedQuery.text="实际名称";
+    Check(copied.songs[0].charts[0][3].available && copied.songs[0].charts[0][3].source=="原版" && Search(copied,copiedQuery,{}).size()==1,"Mod重复原版CPK脚本路径导致歌曲被过滤");
+    Write(g/L"mods/低/rom/mod_pv_db.txt","pv_001.difficulty.extreme.0.script_file_name=rom/script/nonexistent.dsc\n");
+    auto missing=LoadCatalog(h,g);Check(!missing.songs[0].charts[0][3].available,"陌生脚本被无条件当作CPK内原版谱面");
     Check(SaveFavorites(h/L"favorites.txt",{1,637}) && LoadFavorites(h/L"favorites.txt").size()==2,"收藏持久化失败");
     Write(g/L"mods/高/子目录/rom/mod_pv_db.txt","pv_001.song_name=重建名称\npv_001.difficulty.extreme.length=0\n");
     auto changed=LoadCatalog(h,g);

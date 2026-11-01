@@ -233,4 +233,23 @@ bool GameMemory::DirectSelect(const Request& request) {
 }
 // 返回通过现有游戏构建核查的动态基址；不向未支持构建暴露可写内存入口。
 uintptr_t GameMemory::ExecutableBase() const { return supported?base:0; }
+// 参数image/output为通过构建校验的主程序基址和固定32字节输出，调用与DML相同的只读语言目录获取器。
+static bool ReadLanguageDirectory(uintptr_t image,char* output) {
+    __try {
+        const unsigned char expected[]={0xE8,0xF6,0xF4,0x08,0x00};
+        if(std::memcmp(reinterpret_cast<const void*>(image+0x239835),expected,sizeof(expected))) return false;
+        const char* directory=reinterpret_cast<const char*(__fastcall*)()>(image+0x2C8D30)();
+        if(!directory) return false;
+        for(size_t n=0;n<32;++n) {output[n]=directory[n];if(!output[n]) return true;}
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+    return false;
+}
+// 原生目录形如lang2/cn；限定现有游戏语言集合，未知值保留为空并使用目录的明确回退。
+std::string GameMemory::CurrentLanguage() const {
+    char directory[32]{};if(!supported || !base || !ReadLanguageDirectory(base,directory)) return {};
+    const std::string path(directory);const auto slash=path.find_last_of('/');if(slash==std::string::npos) return {};
+    const auto language=path.substr(slash+1);
+    for(const auto* valid:{"jp","en","cn","tw","kr","fr","ge","it","sp"}) if(language==valid) return language;
+    return {};
+}
 }

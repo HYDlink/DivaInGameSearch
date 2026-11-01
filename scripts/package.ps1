@@ -24,7 +24,7 @@ Copy-Item -LiteralPath config/config.toml -Destination (Join-Path $modRoot 'conf
 Copy-Item -LiteralPath settings.ini,aliases.toml,README.md,LICENSE,THIRD_PARTY_NOTICES.md -Destination $modRoot -Force
 Copy-Item -LiteralPath docs -Destination $modRoot -Recurse -Force
 New-Item -ItemType Directory -Force (Join-Path $modRoot 'design') | Out-Null
-Copy-Item -LiteralPath design/INTERACTION_SPEC.md -Destination (Join-Path $modRoot 'design') -Force
+Copy-Item -LiteralPath design/INTERACTION_SPEC.md,design/CUSTOMIZATION_ACTIONS_SPEC.md -Destination (Join-Path $modRoot 'design') -Force
 Copy-Item -Path data/*.txt -Destination (Join-Path $modRoot 'data') -Force
 Copy-Item -LiteralPath third_party/vendor/imgui/LICENSE.txt -Destination (Join-Path $modRoot 'licenses/ImGui.txt') -Force
 Copy-Item -LiteralPath third_party/vendor/detours-source/LICENSE.md -Destination (Join-Path $modRoot 'licenses/Detours.md') -Force
@@ -42,8 +42,14 @@ Copy-Item -LiteralPath CMakeLists.txt,AGENTS.md,README.md,LICENSE,THIRD_PARTY_NO
 foreach($folder in @('src','scripts','config','data','docs')){
   Copy-Item -LiteralPath $folder -Destination $sourceRoot -Recurse -Force
 }
+# 只清理本轮发行暂存区的Python缓存，避免打包本机字节码与其中的绝对路径。
+foreach($cache in @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'scripts') -Directory -Recurse -Filter '__pycache__')){
+  $cachePath=[IO.Path]::GetFullPath($cache.FullName)
+  if(-not $cachePath.StartsWith([IO.Path]::GetFullPath($sourceRoot)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){ throw '缓存路径超出发行源码暂存区，已拒绝清理。' }
+  Remove-Item -LiteralPath $cachePath -Recurse -Force
+}
 New-Item -ItemType Directory -Force (Join-Path $sourceRoot 'design') | Out-Null
-Copy-Item -LiteralPath design/INTERACTION_SPEC.md -Destination (Join-Path $sourceRoot 'design') -Force
+Copy-Item -LiteralPath design/INTERACTION_SPEC.md,design/CUSTOMIZATION_ACTIONS_SPEC.md -Destination (Join-Path $sourceRoot 'design') -Force
 New-Item -ItemType Directory -Force (Join-Path $sourceRoot 'tests') | Out-Null
 Copy-Item -Path tests/*.cpp -Destination (Join-Path $sourceRoot 'tests') -Force
 Copy-Item -LiteralPath third_party/vendor/imgui,third_party/vendor/toml,third_party/vendor/licenses,third_party/vendor/miniz,third_party/vendor/mml-cpk,third_party/vendor/bcdec -Destination (Join-Path $sourceRoot 'third_party/vendor') -Recurse -Force
@@ -60,7 +66,7 @@ $manifest=Get-ChildItem $modRoot -Recurse -File | Where-Object { $_.Name -ne 'ma
   (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash+'  '+[IO.Path]::GetRelativePath($modRoot,$_.FullName).Replace('\','/')
 }
 [IO.File]::WriteAllLines((Join-Path $modRoot 'manifest.sha256'),$manifest,$utf8)
-$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.0.6-win64.zip'
+$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.0.11-win64.zip'
 Compress-Archive -LiteralPath $modRoot -DestinationPath $zip -Force
 [IO.File]::WriteAllText(($zip+'.sha256'),(Get-FileHash $zip -Algorithm SHA256).Hash+'  '+[IO.Path]::GetFileName($zip)+"`n",$utf8)
 Write-Output "发行包已生成：$zip"

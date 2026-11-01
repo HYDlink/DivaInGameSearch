@@ -62,7 +62,10 @@ void PrepareCustomizationItem(CustomizationItem& item,const CustomizationCatalog
 // 参数 catalog/query 为不可变快照和完整条件，结果为快照索引。
 std::vector<size_t> SearchCustomization(const CustomizationCatalog& catalog,const CustomizationQuery& query);
 // 参数 home/game 为插件和游戏目录；后台只读当前启用Mod归档与可选兼容导入。
-CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game);
+// 参数language为已认证游戏当前语言；独立预览未提供时使用导入设置或中文。
+CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language="");
+// 参数data为PC官方经典字符串表；越界、无终止符或无效UTF-8时拒绝整表。
+std::map<int,std::string> ReadCustomizationStrings(const std::string& data);
 // 参数 path/kind/source/diagnostics 为已解包文本、数据库种类、来源与诊断接收器。
 std::vector<CustomizationItem> ReadCustomizationTable(const fs::path& path,CustomizationKind kind,const std::string& source,std::vector<std::string>& diagnostics);
 // 参数 text/kind/source/diagnostics 为受限内存文本、实体种类、来源和诊断；用于官方CPK中的表。

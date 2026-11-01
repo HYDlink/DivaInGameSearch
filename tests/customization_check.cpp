@@ -31,6 +31,14 @@ const diva::CustomizationItem& Find(const diva::CustomizationCatalog& catalog,di
 // 参数 root 为临时目录；验证真实key=value格式、稀疏和ID边界。
 void Parser(const diva::fs::path& root) {
     using namespace diva;std::vector<std::string> diagnostics;auto path=root/"parser/gm_module_id.bin";
+    // 官方经典语言表以小端偏移索引UTF-8文本；非法偏移及损坏编码不得部分发布。
+    std::string strings(12,'\0');strings[0]=12;strings[4]=19;
+    strings.append("初音",6);strings.push_back('\0');strings.append("MIKU");strings.push_back('\0');
+    auto localized=ReadCustomizationStrings(strings);
+    Check(localized.size()==2 && localized.at(0)=="初音" && localized.at(1)=="MIKU","官方语言表没有保持真实偏移或UTF-8名称");
+    auto brokenStrings=strings;brokenStrings[4]=127;Check(ReadCustomizationStrings(brokenStrings).empty(),"越界语言表未拒绝整表");
+    brokenStrings=strings;brokenStrings.pop_back();Check(ReadCustomizationStrings(brokenStrings).empty(),"语言表未终止文本未拒绝");
+    brokenStrings=strings;brokenStrings[12]=static_cast<char>(0xFF);Check(ReadCustomizationStrings(brokenStrings).empty(),"损坏UTF-8语言表未拒绝");
     Write(path,"\xEF\xBB\xBFmodule.2.name=First=Equals\r\nmodule.0.id=0\r\nmodule.0.chara=MIKU\nmodule.0.cos=COS_001\nmodule.2.id=7\nmodule.2.chara=ALIEN\nmodule.2.future_field=raw\nmodule.3.id=7\nmodule.3.name=Last\nmodule.3.chara=RIN\nmodule.4.name=Missing\nmodule.5.id=-1\nmodule.6.id=12oops\nmodule.data_list.length=7\n");
     auto items=ReadCustomizationTable(path,CustomizationKind::Module,"fixture",diagnostics);
     Check(items.size()==2 && items[0].key.id==0,"零ID非法或无效ID被创建");
@@ -132,6 +140,8 @@ logical_path='rom/mod_gm_module_tbl.farc'
 path='dump/disabled/gm_module_id.bin'
 )");
     auto catalog=LoadCustomizationCatalog(h,g);Check(catalog.items.size()==7,"普通替换表累加、禁用来源导入或孤立名字创建实体");
+    auto english=LoadCustomizationCatalog(h,g,"en");
+    Check(english.language=="en" && Find(english,CustomizationKind::Module,0).name=="High General","当前游戏语言未覆盖导入默认语言或破坏Mod名称优先级");
     Check(catalog.sources[0].name==catalog.sources[1].name && catalog.sources[0].id!=catalog.sources[1].id,"重复显示名被合并为同一来源");
     const auto& zero=Find(catalog,CustomizationKind::Module,0);
     Check(zero.character==CustomizationCharacter::Miku && zero.cos.empty() && !zero.sortIndex,"高优先级没有整条替换，泄漏低优先级字段");
@@ -193,7 +203,7 @@ void Navigation() {
 // 参数 catalog 为隔离快照；验证防抖、IME、跨版本任务与安全能力。
 void Async(const diva::CustomizationCatalog& catalog) {
     using namespace diva;CustomizationView view;view.catalog=std::make_shared<CustomizationCatalog>(catalog);view.OnOpen(std::nullopt);Complete(view);
-    Check(view.contextReason.find("默认初音未来")!=std::string::npos,"未知角色没有说明默认原因");
+    Check(!view.State().query.character && view.contextReason.find("保持")!=std::string::npos,"首次打开没有使用全部角色或误填当前人物");
     std::strcpy(view.State().input,"English Alias");view.QueueSearch(true);view.Poll();Check(!view.searching.valid() || view.runningMode==1,"防抖期间提前启动当前模式任务");
     view.State().due={};Complete(view);Check(view.State().results.size()==1,"最终防抖查询未生效");
     // 人工Promise仅控制异步任务时序，返回越界索引证明旧结果未被发布。
@@ -218,6 +228,12 @@ void Async(const diva::CustomizationCatalog& catalog) {
     view.SetKind(CustomizationKind::Accessory);Check(!view.states[0].detailsRequested,"模式切换遗留待确认");
     Check(!view.WantsHorizontalNavigation(),"无文本或卡片焦点时意外接管左右");
     view.OnOpen(std::nullopt);Check(!TryReadCustomizationContext() && !GetCustomizationCapabilities().canLocate && !GetCustomizationCapabilities().canPreviewNative,"安全stub意外启用原生能力");
+    view.states[0].query.character=CustomizationCharacter::Kaito;view.states[0].query.source="保留来源";view.states[0].query.sort=2;
+    view.states[1].query.character.reset();const auto preservedRevision=view.states[0].revision;
+    view.OnOpen(CustomizationContext{CustomizationCharacter::Miku,0,1,true});
+    view.OnOpen(std::nullopt);
+    Check(view.states[0].query.character==CustomizationCharacter::Kaito && view.states[0].query.source=="保留来源" && view.states[0].query.sort==2
+        && !view.states[1].query.character && view.states[0].revision==preservedRevision,"重新打开／角色变化覆盖了独立角色来源排序条件或触发无效重查");
 }
 // 参数 catalog 为隔离资源快照；验证Enter请求A后跨帧改搜B不会提交B。
 void LocateRevision(const diva::CustomizationCatalog& catalog) {
@@ -269,6 +285,7 @@ void LocateRevision(const diva::CustomizationCatalog& catalog) {
 // 参数 argc/argv 保留命令行兼容；测试只在系统临时隔离目录创建夹具。
 int main(int argc,char** argv) {
     (void)argc;(void)argv;auto root=diva::fs::temp_directory_path()/("diva-customization-check-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    try {Parser(root);auto catalog=Catalog(root);DefaultSearchLanguages();Navigation();Async(catalog);LocateRevision(catalog);diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
+    try {Parser(root);auto catalog=Catalog(root);
+        DefaultSearchLanguages();Navigation();Async(catalog);LocateRevision(catalog);diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
     catch(const std::exception& error) {std::cerr<<error.what()<<"\n";diva::fs::remove_all(root);return 1;}
 }
