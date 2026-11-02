@@ -65,9 +65,11 @@ struct CustomizationView {
     std::shared_ptr<const CustomizationCatalog> catalog;
     std::future<CustomizationCatalog> pending;
     std::future<SearchReply> searching;
-    // 下标见 CustomizationDomainIndex：0 模型、1 发型、2 自定义道具。
-    std::array<ModeState,3> states;
+    // 下标见 Slot()：0 模型、1 发型、2～5 自定义道具的头／脸／胸口／背部子标签，各自保存查询、选择与滚动。
+    std::array<ModeState,6> states;
     CustomizationDomain domain=CustomizationDomain::Models;
+    // 自定义道具当前子标签；每次只展示一个部位，不提供混合四部位的结果。
+    CustomizationPart accessoryPart=CustomizationPart::Head;
     uint64_t generation=0,runningRevision=0,runningGeneration=0,locateSerial=0,drawFrame=0,locateRequestFrame=0,locateRequestRevision=0;
     size_t runningMode=0;
     bool composing=false;
@@ -78,6 +80,8 @@ struct CustomizationView {
     // 独立预览样式：1为MEGA39，2为Future Tone；不借用歌曲模式枚举。
     int previewStyle=2;
     float cardWidth=1.0f,cardHeight=344.0f,rowHeight=356.0f,gridScrollY=0;
+    // 当前领域卡片的图片区高度及名称、信息行纵向偏移；模型保持原尺寸，发型与道具按宽度紧凑计算。
+    float imageHeight=280.0f,nameOffset=290.0f,detailOffset=315.0f;
     int previousLayoutColumns=0;
     std::vector<int> previousLayoutSpans;
     float previousGridWidth=0.0f;
@@ -88,8 +92,9 @@ struct CustomizationView {
     uint64_t previewMetadataGeneration=0,layoutMetadataGeneration=~uint64_t(0),layoutRevision=~uint64_t(0),layoutCatalogGeneration=~uint64_t(0);
     int layoutStyle=-1;
     CustomizationDomain layoutDomain=CustomizationDomain::Accessories;
+    size_t layoutSlot=~size_t(0);
     float layoutWidth=-1;
-    std::array<std::map<std::string,size_t>,3> sourceAssociationCounts;
+    std::array<std::map<std::string,size_t>,6> sourceAssociationCounts;
     std::optional<CustomizationKey> hoveredKey;
     std::chrono::steady_clock::time_point hoverSince{};
     bool textNavigation=false,gridNavigation=false,controlNavigation=false;
@@ -128,6 +133,10 @@ struct CustomizationView {
     void Poll();
     // 参数 domain 为当前领域；切换只保留各自条件，不操作游戏页面。
     void SetDomain(CustomizationDomain domain);
+    // 参数 part 为自定义道具子标签（头／脸／胸口／背部）；只切搜索状态，不切游戏部位、不改装备，旧查询与旧双击失效。
+    void SetAccessoryPart(CustomizationPart part);
+    // 返回当前领域与子标签对应的状态下标。
+    size_t Slot() const;
     // 参数context仅更新游戏角色说明；不重置已选搜索筛选，首次默认全部角色。
     void OnOpen(std::optional<CustomizationContext> context);
     // 在外层现有窗口内绘制，不自行 Begin 主窗口。

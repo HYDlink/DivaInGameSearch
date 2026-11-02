@@ -1,4 +1,6 @@
 #include "host.h"
+#include "sprite_resolver.h"
+#include <map>
 #include <shellapi.h>
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -54,6 +56,35 @@ static diva::CustomizationCatalog DemoCustomizationCatalog() {
     }
     catalog.diagnostics={"显式演示数据：不来自游戏，不定位、不装备；发型与道具卡片只显示占位，不是原生预览。"};
     return catalog;
+}
+// 参数 item 为演示实体；在 408×494 透明画布上按领域与部位绘制不同轮廓（全身、发型、头饰、眼镜、领结、宽翅膀），
+// 只用于离线检查卡片比例与透明边界适配，不是游戏图像，也不代表原生缩略图已加载。
+static diva::CustomizationPreview DemoPreview(const diva::CustomizationItem& item) {
+    static std::map<diva::CustomizationKey,std::shared_ptr<std::vector<unsigned char>>> cache;
+    constexpr int width=408,height=494;
+    auto& pixels=cache[item.key];
+    if(!pixels) {
+        pixels=std::make_shared<std::vector<unsigned char>>(static_cast<size_t>(width)*height*4,0);
+        // 参数 cx/cy/rx/ry/r/g/b 为椭圆中心、半径与颜色；超出画布的部分忽略。
+        auto ellipse=[&](int cx,int cy,int rx,int ry,unsigned char r,unsigned char g,unsigned char b) {
+            for(int y=std::max(0,cy-ry);y<std::min(height,cy+ry);++y) for(int x=std::max(0,cx-rx);x<std::min(width,cx+rx);++x) {
+                const float dx=float(x-cx)/rx,dy=float(y-cy)/ry;if(dx*dx+dy*dy>1.0f) continue;
+                auto* p=pixels->data()+(static_cast<size_t>(y)*width+x)*4;p[0]=r;p[1]=g;p[2]=b;p[3]=255;
+            }
+        };
+        const auto domain=diva::CustomizationItemDomain(item);
+        if(domain==diva::CustomizationDomain::Models) {ellipse(204,90,60,70,240,210,190);ellipse(204,300,95,190,90,170,190);}
+        else if(item.part==diva::CustomizationPart::Hair) {ellipse(204,170,120,110,80,200,190);ellipse(110,300,40,150,80,200,190);ellipse(298,300,40,150,80,200,190);ellipse(204,190,70,70,240,210,190);}
+        else if(item.part==diva::CustomizationPart::Head) ellipse(204,70,70,35,240,240,250);
+        else if(item.part==diva::CustomizationPart::Face) {ellipse(160,180,32,26,60,70,90);ellipse(248,180,32,26,60,70,90);}
+        else if(item.part==diva::CustomizationPart::Neck) {ellipse(178,270,30,18,220,60,80);ellipse(230,270,30,18,220,60,80);}
+        else ellipse(204,240,200,90,240,240,255);
+    }
+    diva::CustomizationPreview preview;preview.width=width;preview.height=height;preview.rgbaOwner=pixels;preview.rgbaPixels=pixels->data();
+    const auto bounds=diva::ComputeSpriteBounds(*pixels,width,height);
+    preview.contentX=bounds.x;preview.contentY=bounds.y;preview.contentWidth=bounds.width;preview.contentHeight=bounds.height;
+    preview.source="演示合成图（不是游戏图像）";
+    return preview;
 }
 // 保存真实原生 DX11 后缓冲为 PNG；参数 chain/device/context/path 为图形对象和输出文件。
 static bool Screenshot(IDXGISwapChain* chain,ID3D11Device* device,ID3D11DeviceContext* context,const diva::fs::path& path) {
@@ -125,6 +156,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         auto& view=host.view.customization;
         view.catalog=std::make_shared<diva::CustomizationCatalog>(DemoCustomizationCatalog()); ++view.generation;
         view.status="演示数据：仅用于检查格子与键盘，不是游戏物品；原生定位和模型预览尚未接入。";
+        // 参数 item/visible 为演示实体与可见请求；返回合成轮廓，验证发型／道具紧凑卡片与透明边界显示。
+        view.previewProvider=[](const diva::CustomizationItem& item,bool visible) {(void)visible;return DemoPreview(item);};
         // 参数 request 为共用界面实际提交的发型／道具请求；预览只显示请求摘要，不判定或执行原生导航。
         view.submitItemRequest=[&host](const diva::CustomizationLocateRequest& request) {
             const char* origins[]={"单击","双击","按钮","Enter","底栏"};

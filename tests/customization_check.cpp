@@ -1,6 +1,7 @@
 #include "customization_ui.h"
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -323,8 +324,11 @@ struct FakeItemBackend {
 };
 // 参数 view 为测试视图；返回网格子窗口，测试据此计算卡片坐标。
 ImGuiWindow* GridWindow() {
-    for(auto* window:GImGui->Windows) if(std::strstr(window->Name,"module-grid")) return window;
-    throw std::runtime_error("缺少定制网格窗口");
+    // 每个领域／子标签有各自的子窗口；取最近一帧实际绘制的那个，避免用到已隐藏领域的旧坐标。
+    ImGuiWindow* latest=nullptr;
+    for(auto* window:GImGui->Windows) if(std::strstr(window->Name,"module-grid") && (!latest || window->LastFrameActive>latest->LastFrameActive)) latest=window;
+    if(!latest) throw std::runtime_error("缺少定制网格窗口");
+    return latest;
 }
 // 参数 view/point/frames 为视图、屏幕坐标与左键按下前的悬浮帧数；执行一次真实 ImGui 左键单击。
 void ClickAt(diva::CustomizationView& view,ImVec2 point,int frames=1) {
@@ -360,15 +364,30 @@ void ItemDomainInteractions() {
     std::strcpy(view.State().input,"合成发型1");view.QueueSearch(false);view.State().query.character=CustomizationCharacter::Rin;view.QueueSearch(false);Complete(view);
     const auto hairRevision=view.State().revision;const auto hairResults=view.State().results;
     view.SetDomain(CustomizationDomain::Accessories);Complete(view);
-    Check(view.State().input[0]==0 && !view.State().query.character && view.State().results.size()==8,"道具领域继承了发型查询或人物筛选");
-    view.State().query.part=CustomizationPart::Face;view.QueueSearch(false);Complete(view);
-    Check(view.State().results.size()==2,"道具部位筛选错误");
+    // 道具首个子标签为头；每次只展示一个部位，不提供混合四部位结果，也没有人物筛选。
+    auto allPart=[&](CustomizationPart part) {
+        return std::all_of(view.State().results.begin(),view.State().results.end(),[&](size_t index){return view.catalog->items[index].part==part;});
+    };
+    Check(view.State().input[0]==0 && !view.State().query.character && view.accessoryPart==CustomizationPart::Head
+        && view.State().results.size()==2 && allPart(CustomizationPart::Head),"道具领域继承了发型查询、人物筛选或混合了部位");
+    std::strcpy(view.State().input,"合成道具");view.QueueSearch(false);Complete(view);view.State().cursor.selected=1;
+    const auto headRevision=view.State().revision;
+    view.SetAccessoryPart(CustomizationPart::Face);Complete(view);
+    Check(view.State().input[0]==0 && view.State().results.size()==2 && allPart(CustomizationPart::Face) && view.State().query.part==CustomizationPart::Face,"脸部子标签继承了头部查询或部位错误");
+    for(auto part:{CustomizationPart::Neck,CustomizationPart::Back}) {
+        view.SetAccessoryPart(part);Complete(view);
+        Check(view.State().results.size()==2 && allPart(part) && !view.State().query.character,"胸口／背部子标签结果混入其他部位");
+    }
+    view.SetAccessoryPart(CustomizationPart::Head);
+    Check(std::string(view.State().input)=="合成道具" && view.State().cursor.selected==1 && view.State().revision==headRevision,"头部子标签未独立保留查询、选择或修订");
+    view.SetAccessoryPart(CustomizationPart::Face);
+    Check(backend.requests.empty(),"切换道具子标签提交了原生请求");
     view.SetDomain(CustomizationDomain::Models);Complete(view);
     Check(view.State().results.size()==4 && !view.State().query.part,"模型领域混入定制结果或继承部位");
     view.SetDomain(CustomizationDomain::Hair);
     Check(std::string(view.State().input)=="合成发型1" && view.State().query.character==CustomizationCharacter::Rin && view.State().revision==hairRevision
         && view.State().results==hairResults,"切回发型丢失独立查询、筛选或修订");
-    view.SetDomain(CustomizationDomain::Accessories);Check(view.State().query.part==CustomizationPart::Face,"切回道具丢失部位筛选");
+    view.SetDomain(CustomizationDomain::Accessories);Check(view.accessoryPart==CustomizationPart::Face && view.State().query.part==CustomizationPart::Face,"切回道具丢失子标签");
     Check(backend.requests.empty() && moduleCalls==0,"切换搜索Tab触发了原生请求");
 
     // 恢复发型全部结果，模拟当前原生页为模型页（发型目标不在当前页）。
@@ -416,7 +435,9 @@ void ItemDomainInteractions() {
     Check(backend.requests.back().origin==CustomizationOrigin::Footer && backend.navigations==1,"底栏定位获得跨页权限");
     // 不在目标页时按钮禁用；即使能力误报可执行，也只提示双击而不提交、不冒泡成主体点击。
     backend.allowActions=true;const auto beforeButtons=backend.requests.size();
-    const ImVec2 equip(grid->DC.CursorStartPos.x+35,grid->DC.CursorStartPos.y+258);
+    // 发型卡片使用紧凑图片区；操作条位于图片区底部。
+    Check(view.imageHeight>=view.cardWidth*0.70f-0.5f && view.imageHeight<=view.cardWidth*0.85f+0.5f && view.cardHeight<340.0f*0.76f && view.cardHeight>340.0f*0.55f,"发型卡片尺寸不在设计区间");
+    const ImVec2 equip(grid->DC.CursorStartPos.x+35,grid->DC.CursorStartPos.y+view.imageHeight-22.0f);
     Idle(view,40);ClickAt(view,equip);ClickAt(view,equip,0);
     Check(backend.requests.size()==beforeButtons && backend.navigations==1 && moduleActions==0,"不在发型页时更换按钮提交请求、跨页或冒泡");
     view.RequestAction(view.catalog->items[view.State().results.front()].key,CustomizationAction::Preview);
@@ -438,9 +459,17 @@ void ItemDomainInteractions() {
 
     // 道具领域双击携带真实部位，并与发型状态各自独立。
     backend.page=CustomizationDomain::Hair;const auto navigationsBefore=backend.navigations;
-    view.SetDomain(CustomizationDomain::Accessories);view.State().query.part.reset();view.QueueSearch(false);Complete(view);Idle(view,40);
+    view.SetDomain(CustomizationDomain::Accessories);view.SetAccessoryPart(CustomizationPart::Head);view.State().input[0]=0;view.QueueSearch(false);Complete(view);
+    view.State().cursor={};view.State().scroll=true;Idle(view,40);
     grid=GridWindow();
-    ClickAt(view,first);ClickAt(view,first,0);
+    // 道具页多一行子标签，网格位置下移；按当前网格重新计算首张卡片坐标。
+    const ImVec2 accessoryFirst(grid->InnerRect.Min.x+30,grid->InnerRect.Min.y+30);
+    Check(view.imageHeight>=view.cardWidth*0.50f-0.5f && view.imageHeight<=view.cardWidth*0.65f+0.5f && view.cardHeight<340.0f*0.66f,"道具卡片尺寸不在设计区间");
+    // 首击后切换子标签再切回，旧首击失效，不构成双击。
+    ClickAt(view,accessoryFirst);view.SetAccessoryPart(CustomizationPart::Face);view.SetAccessoryPart(CustomizationPart::Head);Idle(view,1);ClickAt(view,accessoryFirst,0);
+    Check(backend.requests.back().domain==CustomizationDomain::Accessories && backend.requests.back().origin==CustomizationOrigin::CardSingleClick
+        && backend.navigations==navigationsBefore,"切换子标签后旧首击仍授予跨页");
+    Idle(view,40);ClickAt(view,accessoryFirst);ClickAt(view,accessoryFirst,0);
     const auto item=backend.requests.back();
     Check(backend.navigations==navigationsBefore+1 && item.domain==CustomizationDomain::Accessories && item.part==CustomizationPart::Head && item.key.id==200
         && item.firstClickDomain==CustomizationDomain::Accessories,"道具双击未携带领域与部位或未跨页");
@@ -448,7 +477,7 @@ void ItemDomainInteractions() {
     // 模型领域仍走原模型定位入口，不经发型／道具后端。
     const auto itemRequests=backend.requests.size();
     view.SetDomain(CustomizationDomain::Models);Complete(view);Idle(view,40);grid=GridWindow();
-    ClickAt(view,first);
+    ClickAt(view,ImVec2(grid->InnerRect.Min.x+30,grid->InnerRect.Min.y+30));
     Check(moduleCalls==1 && backend.requests.size()==itemRequests,"模型请求进入了发型／道具后端");
     ImGui::DestroyContext(context);
 }
