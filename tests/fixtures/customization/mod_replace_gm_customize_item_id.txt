@@ -1,0 +1,6 @@
+# 人工合成测试夹具：Mod 普通定制表 gm_customize_item_tbl.farc，按 DML 规则整表替换官方定制表；不是游戏数据。
+cstm_item.0.chara=MIKU
+cstm_item.0.id=800
+cstm_item.0.name=替换表发型
+cstm_item.0.parts=KAMI
+cstm_item.data_list.length=1

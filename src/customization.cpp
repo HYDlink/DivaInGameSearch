@@ -16,6 +16,7 @@ CustomizationPart ParseCustomizationPart(const std::string& token) {
     if(token=="FACE") return CustomizationPart::Face;
     if(token=="NECK") return CustomizationPart::Neck;
     if(token=="BACK") return CustomizationPart::Back;
+    if(token=="KAMI") return CustomizationPart::Hair;
     return CustomizationPart::Unknown;
 }
 const char* CustomizationCharacterName(CustomizationCharacter value) {
@@ -28,8 +29,40 @@ CustomizationCharacter ModuleSearchCharacter(CustomizationCharacter value) {
     return value;
 }
 const char* CustomizationPartName(CustomizationPart value) {
-    static const char* names[]={"头部","脸部","胸颈","背部","未知部位"};
-    return names[std::min(static_cast<size_t>(value),size_t(4))];
+    // 玩家界面沿用原生自定义道具页的“头／脸／胸口／背部”；内部 Neck 枚举保持不变。
+    static const char* names[]={"头","脸","胸口","背部","发型","未知部位"};
+    return names[std::min(static_cast<size_t>(value),size_t(5))];
+}
+std::optional<CustomizationDomain> CustomizationItemDomain(const CustomizationItem& item) {
+    if(item.key.kind==CustomizationKind::Module) return CustomizationDomain::Models;
+    if(item.part==CustomizationPart::Hair) return CustomizationDomain::Hair;
+    if(item.part==CustomizationPart::Head || item.part==CustomizationPart::Face || item.part==CustomizationPart::Neck || item.part==CustomizationPart::Back) return CustomizationDomain::Accessories;
+    return std::nullopt;
+}
+CustomizationKind CustomizationDomainKind(CustomizationDomain domain) {
+    return domain==CustomizationDomain::Models?CustomizationKind::Module:CustomizationKind::Accessory;
+}
+size_t CustomizationDomainIndex(CustomizationDomain domain) {
+    return domain==CustomizationDomain::Models?0:domain==CustomizationDomain::Hair?1:2;
+}
+const char* CustomizationDomainName(CustomizationDomain domain) {
+    return domain==CustomizationDomain::Models?"模型":domain==CustomizationDomain::Hair?"发型":"自定义道具";
+}
+const char* CustomizationDomainPageName(CustomizationDomain domain) {
+    return domain==CustomizationDomain::Models?"模型页":domain==CustomizationDomain::Hair?"发型页":"自定义道具页";
+}
+namespace {
+// 参数 normalized 为 Normalize 后文本；含平假名（片假名已统一为平假名）时才视为可靠假名来源。
+bool ContainsKana(const std::string& normalized) {
+    for(auto ch:Wide(normalized)) if(ch>=0x3041 && ch<=0x3096) return true;
+    return false;
+}
+// 参数 key/text 为检索键缓冲及真实名称、别名或显式读音；只转写假名，汉字原样保留，不推测读音。
+void AppendRomanized(std::string& key,const std::string& text) {
+    if(text.empty() || !ContainsKana(Normalize(text))) return;
+    const auto roman=Romanize(text);
+    key+=" "+roman+" "+RomanizeVariant(roman);
+}
 }
 void PrepareCustomizationItem(CustomizationItem& item,const CustomizationCatalog& catalog) {
     std::string key=item.name+" "+std::to_string(item.key.id);
@@ -37,7 +70,16 @@ void PrepareCustomizationItem(CustomizationItem& item,const CustomizationCatalog
     for(const auto& [language,name]:item.namesByLanguage) key+=" "+name;
     for(const auto& alias:item.aliases) key+=" "+alias;
     if(auto original=item.rawFields.find("name");original!=item.rawFields.end()) key+=" "+original->second;
-    item.searchKey=Normalize(key);item.nameKey=Normalize(item.name);item.modKey.clear();
+    // 显式读音只来自导入清单或表字段 reading，不由汉字名称生成。
+    const auto reading=item.rawFields.find("reading");
+    if(reading!=item.rawFields.end()) key+=" "+reading->second;
+    // 罗马音键只转写名称／别名／读音中的真实假名，罗马音拼写变体与歌曲检索一致。
+    std::string romanized;
+    AppendRomanized(romanized,item.name);
+    for(const auto& [language,name]:item.namesByLanguage) AppendRomanized(romanized,name);
+    for(const auto& alias:item.aliases) AppendRomanized(romanized,alias);
+    if(reading!=item.rawFields.end()) AppendRomanized(romanized,reading->second);
+    item.searchKey=Normalize(key+romanized);item.nameKey=Normalize(item.name);item.modKey.clear();
     for(const auto& contribution:item.sources) {
         auto found=std::find_if(catalog.sources.begin(),catalog.sources.end(),[&](const auto& source){return source.id==contribution.source;});
         item.modKey+=" "+contribution.source;
@@ -49,9 +91,14 @@ std::vector<size_t> SearchCustomization(const CustomizationCatalog& catalog,cons
     std::vector<size_t> out;std::vector<std::string> terms;std::istringstream words(query.text);std::string word;
     while(words>>word) {auto term=Normalize(word);if(!term.empty()) terms.push_back(term); }
     for(size_t index=0;index<catalog.items.size();++index) {
-        const auto& item=catalog.items[index]; if(item.key.kind!=query.kind) continue;
-        if(query.character && (query.kind==CustomizationKind::Module?ModuleSearchCharacter(item.character):item.character)!=*query.character && !(query.kind==CustomizationKind::Accessory && item.character==CustomizationCharacter::All && *query.character!=CustomizationCharacter::Unknown)) continue;
-        if(query.kind==CustomizationKind::Accessory && query.part && item.part!=*query.part) continue;
+        const auto& item=catalog.items[index];const auto domain=CustomizationItemDomain(item);
+        if(!domain || *domain!=query.domain) continue;
+        // 模型沿用原生模型页分类；发型与道具按原始人物过滤，共通 ALL 匹配任一具体人物。
+        if(query.character) {
+            if(query.domain==CustomizationDomain::Models) {if(ModuleSearchCharacter(item.character)!=*query.character) continue;}
+            else if(item.character!=*query.character && !(item.character==CustomizationCharacter::All && *query.character!=CustomizationCharacter::Unknown)) continue;
+        }
+        if(query.domain==CustomizationDomain::Accessories && query.part && item.part!=*query.part) continue;
         if(!query.source.empty() && std::none_of(item.sources.begin(),item.sources.end(),[&](const auto& source){return query.source=="official"?source.source.starts_with("official:"):source.source==query.source;})) continue;
         const auto& key=query.modMode?item.modKey:item.searchKey;
         if(std::any_of(terms.begin(),terms.end(),[&](const auto& term){return key.find(term)==std::string::npos;})) continue;

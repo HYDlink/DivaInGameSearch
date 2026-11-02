@@ -614,40 +614,56 @@ std::vector<OfficialCpkEntry> ReadOfficialCpkEntries(const fs::path& gameRoot,co
     return ReadEntriesInternal(gameRoot,pluginRoot,suffix,diagnostics);
 }
 
-// 参数 gameRoot/pluginRoot/diagnostics 为游戏目录、插件目录和中文诊断接收器；读取全部官方基础及DLC实体表候选。
-std::vector<OfficialModuleTable> ReadOfficialModuleTables(const fs::path& gameRoot,const fs::path& pluginRoot,
-                                                           std::vector<std::string>& diagnostics) {
-    std::vector<OfficialModuleTable> tables;
-    auto archives=ReadEntriesInternal(gameRoot,pluginRoot,"gm_module_tbl.farc",diagnostics);
+// 参数 gameRoot/pluginRoot 为游戏与插件目录，archiveSuffix/entryName 为归档后缀与内部表名，
+// marker 为直读条目必须包含的表前缀，label 为诊断中的中文表类别；diagnostics 接收读取诊断。
+static std::vector<OfficialEntityTable> ReadOfficialEntityTables(const fs::path& gameRoot,const fs::path& pluginRoot,
+                                                          const std::string& archiveSuffix,const std::string& entryName,
+                                                          const std::string& marker,const std::string& label,
+                                                          std::vector<std::string>& diagnostics) {
+    std::vector<OfficialEntityTable> tables;
+    auto archives=ReadEntriesInternal(gameRoot,pluginRoot,archiveSuffix,diagnostics);
     for(auto& archive:archives) {
         std::string reason;
-        auto text=ReadFarcEntryMemory(archive.entryData,"gm_module_id.bin",reason);
+        auto text=ReadFarcEntryMemory(archive.entryData,entryName,reason);
         if(!text) {
-            diagnostics.push_back("官方服装表归档缺少可读 gm_module_id.bin："+PathText(archive.cpkPath.filename())+" / "+archive.internalPath+"："+reason);
+            diagnostics.push_back("官方"+label+"归档缺少可读 "+entryName+"："+PathText(archive.cpkPath.filename())+" / "+archive.internalPath+"："+reason);
             continue;
         }
-        OfficialModuleTable table;
+        OfficialEntityTable table;
         table.cpkPath=archive.cpkPath;
-        table.internalPath=archive.internalPath+"!/gm_module_id.bin";
-        table.logicalPath=archive.logicalPath+"!/gm_module_id.bin";
+        table.internalPath=archive.internalPath+"!/"+entryName;
+        table.logicalPath=archive.logicalPath+"!/"+entryName;
         table.tableText=std::move(*text);
         table.fingerprint=Fingerprint(table.cpkPath,table.internalPath,table.tableText);
-        diagnostics.push_back("官方服装表候选："+PathText(table.cpkPath.filename())+" / "+table.logicalPath+" / 文本 "+std::to_string(table.tableText.size())+" 字节 / 指纹 "+table.fingerprint);
+        diagnostics.push_back("官方"+label+"候选："+PathText(table.cpkPath.filename())+" / "+table.logicalPath+" / 文本 "+std::to_string(table.tableText.size())+" 字节 / 指纹 "+table.fingerprint);
         tables.push_back(std::move(table));
     }
 
     // 某些构建把表文本直接放入 CPK；只接受标准 UTF-8 文本，不解析归档结构。
-    auto direct=ReadEntriesInternal(gameRoot,pluginRoot,"gm_module_id.bin",diagnostics);
+    auto direct=ReadEntriesInternal(gameRoot,pluginRoot,entryName,diagnostics);
     for(auto& entry:direct) {
-        if(entry.entryData.find("module") == std::string::npos) continue;
-        OfficialModuleTable table;
+        if(entry.entryData.find(marker) == std::string::npos) continue;
+        OfficialEntityTable table;
         table.cpkPath=entry.cpkPath;table.internalPath=entry.internalPath;table.logicalPath=entry.logicalPath;
         table.tableText=std::move(entry.entryData);table.fingerprint=Fingerprint(table.cpkPath,table.internalPath,table.tableText);
-        diagnostics.push_back("官方直读服装表候选："+PathText(table.cpkPath.filename())+" / "+table.logicalPath+" / 文本 "+std::to_string(table.tableText.size())+" 字节 / 指纹 "+table.fingerprint);
+        diagnostics.push_back("官方直读"+label+"候选："+PathText(table.cpkPath.filename())+" / "+table.logicalPath+" / 文本 "+std::to_string(table.tableText.size())+" 字节 / 指纹 "+table.fingerprint);
         tables.push_back(std::move(table));
     }
+    return tables;
+}
+
+// 参数 gameRoot/pluginRoot/diagnostics 为游戏目录、插件目录和中文诊断接收器；读取全部官方基础及DLC实体表候选。
+std::vector<OfficialModuleTable> ReadOfficialModuleTables(const fs::path& gameRoot,const fs::path& pluginRoot,
+                                                           std::vector<std::string>& diagnostics) {
+    auto tables=ReadOfficialEntityTables(gameRoot,pluginRoot,"gm_module_tbl.farc","gm_module_id.bin","module","服装表",diagnostics);
     CompareOfficialModuleTables(tables,diagnostics);
     return tables;
+}
+
+// 参数 gameRoot/pluginRoot/diagnostics 为游戏目录、插件目录和中文诊断接收器；不硬编码条目数量，逐个保留来源与指纹。
+std::vector<OfficialEntityTable> ReadOfficialCustomizeItemTables(const fs::path& gameRoot,const fs::path& pluginRoot,
+                                                                 std::vector<std::string>& diagnostics) {
+    return ReadOfficialEntityTables(gameRoot,pluginRoot,"gm_customize_item_tbl.farc","gm_customize_item_id.bin","cstm_item","定制表",diagnostics);
 }
 
 struct ModuleAssets::Impl {

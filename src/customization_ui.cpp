@@ -200,8 +200,8 @@ void BuildSourceAssociationCounts(CustomizationView& view) {
 
 // 参数无；初始化服装和饰品各自的查询领域。
 CustomizationView::CustomizationView() {
-    states[0].query.kind=CustomizationKind::Module;
-    states[1].query.kind=CustomizationKind::Accessory;
+    states[0].query.domain=CustomizationDomain::Models;
+    states[1].query.domain=CustomizationDomain::Accessories;
     states[0].query.character.reset();states[1].query.character.reset();
     status="尚未读取服装目录。";
 }

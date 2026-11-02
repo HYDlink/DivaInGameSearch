@@ -160,9 +160,12 @@ path='dump/disabled/gm_module_id.bin'
     Check(derivedResults.size()==1 && catalog.items[derivedResults[0]].key.id==2,"衍生角色筛选没有映射元数据角色");
     query.character=CustomizationCharacter::Sakine;Check(SearchCustomization(catalog,query).empty(),"元数据角色泄漏为单独游戏分类");
     query.character=CustomizationCharacter::Random;Check(SearchCustomization(catalog,query).empty(),"随机分类被错误解释为静态实体或全部服装");
-    query={};query.kind=CustomizationKind::Accessory;Check(SearchCustomization(catalog,query).size()==1,"共通饰品未匹配具体角色或未知误入MIKU");
+    query={};query.domain=CustomizationDomain::Accessories;Check(SearchCustomization(catalog,query).size()==1,"共通饰品未匹配具体角色或未知误入MIKU");
     query.part=CustomizationPart::Face;Check(SearchCustomization(catalog,query).size()==1,"饰品部位交集错误");
-    query.character=CustomizationCharacter::Unknown;query.part=CustomizationPart::Unknown;Check(SearchCustomization(catalog,query).size()==1,"未知角色/部位过滤失败");
+    // 清单中的KAMI属于发型领域，不能再以未知部位混入道具。
+    query={};query.domain=CustomizationDomain::Hair;query.character=CustomizationCharacter::Unknown;
+    auto hairResults=SearchCustomization(catalog,query);Check(hairResults.size()==1 && catalog.items[hairResults[0]].key.id==2,"KAMI未归入发型或未知角色过滤失败");
+    query.domain=CustomizationDomain::Accessories;query.part=CustomizationPart::Unknown;Check(SearchCustomization(catalog,query).empty(),"发型KAMI误入道具未知部位");
     Check(Find(catalog,CustomizationKind::Accessory,0).bindModule==0,"绑定原值零被丢失");
     query={};auto byDefault=SearchCustomization(catalog,query);Check(catalog.items[byDefault.front()].key.id==9,"缺sort_index没有排最后");
     query.sort=2;auto results=SearchCustomization(catalog,query);Check(catalog.items[results.front()].key.id==0,"数值ID排序错误");

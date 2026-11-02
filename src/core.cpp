@@ -89,7 +89,7 @@ std::string Romanize(const std::string& text) {
     return out;
 }
 // 生成常见罗马音变体；参数 text 为标准罗马音。
-static std::string Variant(std::string text) {
+std::string RomanizeVariant(std::string text) {
     const std::pair<std::string,std::string> pairs[] = {{"shi","si"},{"chi","ti"},{"tsu","tu"},{"fu","hu"},{"ji","zi"},{"ou","o"},{"oo","o"},{"uu","u"}};
     for (const auto& [a,b] : pairs) { size_t p=0; while ((p=text.find(a,p))!=std::string::npos) { text.replace(p,a.size(),b); p+=b.size(); } }
     return text;
@@ -101,7 +101,7 @@ void PrepareSong(Song& song) {
     std::istringstream aliasLines(aliases); std::string line,aliasKey;
     while(std::getline(aliasLines,line)) aliasKey+=Normalize(line)+"\n";
     song.nameKey=Normalize(song.name); song.englishKey=Normalize(song.english);
-    song.key = song.nameKey+"\n"+song.englishKey+"\n"+Normalize(song.reading)+"\n"+r+"\n"+Variant(r)+"\n"+aliasKey;
+    song.key = song.nameKey+"\n"+song.englishKey+"\n"+Normalize(song.reading)+"\n"+r+"\n"+RomanizeVariant(r)+"\n"+aliasKey;
     song.modKey.clear();
     for (const auto& source : song.sources) song.modKey += Normalize(source)+"\n";
 }

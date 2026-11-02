@@ -1,0 +1,12 @@
+# 人工合成测试夹具：Mod 名称补丁；customize 优先于 cstm_item，孤立名称 9999 不得创建实体。
+module.500 = '模型五百通用'
+customize.600 = '通用护士帽'
+cstm_item.620 = '兼容名缎带'
+customize.9999 = '孤立名称'
+
+[cn]
+module.500 = '模型五百中文'
+customize.500 = '合成初音发型'
+
+[en]
+customize.502 = 'Twin Tail'

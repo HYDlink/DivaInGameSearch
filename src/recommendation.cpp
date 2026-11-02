@@ -58,7 +58,7 @@ RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snaps
 // 保留原服装名称结果；歌曲匹配严格使用歌曲页Search，推荐卡片按稳定身份去重。
 RecommendedModules SearchModulesWithSongs(const CustomizationCatalog& modules,const CustomizationQuery& moduleQuery,const Catalog* songs,Query songQuery,const std::set<int>& favorites,const RecommendationSnapshot* recommendations) {
     RecommendedModules result;result.items=SearchCustomization(modules,moduleQuery);
-    if(moduleQuery.kind!=CustomizationKind::Module || moduleQuery.modMode || Normalize(moduleQuery.text).empty()) return result;
+    if(moduleQuery.domain!=CustomizationDomain::Models || moduleQuery.modMode || Normalize(moduleQuery.text).empty()) return result;
     if(!songs) {result.unresolved.push_back("歌曲目录正在加载，歌曲推荐暂不可用。");return result;}
     if(songs->requiresRestart || modules.stale) {result.unresolved.push_back("目录配置已改变，重启游戏后读取歌曲推荐。");return result;}
     songQuery.text=moduleQuery.text;

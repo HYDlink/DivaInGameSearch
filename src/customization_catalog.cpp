@@ -115,6 +115,55 @@ void Overlay(std::map<CustomizationKey,CustomizationItem>& dest,CustomizationIte
     }
     dest.insert_or_assign(item.key,std::move(item));
 }
+// 官方 PC 地区实体表的路径、来源身份与中文标签；模型表与定制表各一份，不混用逻辑路径。
+struct OfficialRegionProfile {
+    CustomizationKind kind;
+    const char* archive;
+    const char* entry;
+    const char* baseId;
+    const char* dlcId;
+    const char* baseName;
+    const char* dlcName;
+    const char* metadataState;
+    const char* label;
+};
+constexpr OfficialRegionProfile kOfficialModules{CustomizationKind::Module,"gm_module_tbl.farc","gm_module_id.bin",
+    "official:pc-region","official:pc-region-dlc","官方PC基础地区表","官方PC DLC地区表（含基础条目）","官方PC地区实体表","实体表"};
+// 定制表 DLC 路径沿用模型表的 rom_steam_region_dlc 与 diva_dlc00_region.cpk 命名，属于待本机核对的假设。
+constexpr OfficialRegionProfile kOfficialCustomizeItems{CustomizationKind::Accessory,"gm_customize_item_tbl.farc","gm_customize_item_id.bin",
+    "official:pc-region-customize","official:pc-region-dlc-customize","官方PC基础地区定制表","官方PC DLC地区定制表","官方PC地区定制表","定制表"};
+// 参数 tables/profile/roots/merged/out 为官方候选表、表类别、启用Mod根、合并目标与目录快照。
+// 只接受已核对的 PC 地区路径；启用Mod提供同逻辑普通表时官方整表退出，追加表仍按稳定ID覆盖。
+void MergeOfficialRegionTables(const std::vector<OfficialEntityTable>& tables,const OfficialRegionProfile& profile,const std::vector<Root>& roots,
+                               std::map<CustomizationKey,CustomizationItem>& merged,CustomizationCatalog& out) {
+    bool replaced=false;
+    for(const auto& root:roots) {
+        std::string reason;
+        if(ReadFarcEntry(root.path/"rom"/profile.archive,profile.entry,reason)) {replaced=true;break;}
+    }
+    const std::string basePath=std::string("rom_steam_region/rom/")+profile.archive+"!/"+profile.entry;
+    const std::string dlcPath=std::string("rom_steam_region_dlc/rom/")+profile.archive+"!/"+profile.entry;
+    const OfficialEntityTable* base=nullptr;const OfficialEntityTable* dlc=nullptr;
+    for(const auto& table:tables) {
+        if(table.internalPath==basePath && table.cpkPath.filename()=="diva_main_region.cpk") base=&table;
+        if(table.internalPath==dlcPath && table.cpkPath.filename()=="diva_dlc00_region.cpk") dlc=&table;
+    }
+    for(const auto* table:{base,dlc}) if(table) {
+        const std::string identity=table==base?profile.baseId:profile.dlcId;
+        out.sources.push_back({identity,table==base?profile.baseName:profile.dlcName,"","",false});
+        out.configurationKey+=table->fingerprint+"\n";
+        if(replaced) continue;
+        auto items=ReadCustomizationText(table->tableText,profile.kind,identity,out.diagnostics);
+        if(profile.kind==CustomizationKind::Accessory) out.diagnostics.push_back(std::string(table==base?profile.baseName:profile.dlcName)+"："+std::to_string(items.size())+" 条定制实体。");
+        for(auto& item:items) {item.metadataState=profile.metadataState;Overlay(merged,std::move(item));}
+    }
+    if(replaced) out.diagnostics.push_back(std::string("启用Mod提供普通rom/")+profile.archive+"，官方同逻辑"+profile.label+"整表退出，不保留其被删除的ID。");
+    if(!base && !dlc && !tables.empty()) out.diagnostics.push_back(profile.kind==CustomizationKind::Module?std::string("发现官方表，但未匹配已支持的PC地区路径；未任意合并其他平台表。")
+        :std::string("发现官方")+profile.label+"，但未匹配已支持的PC地区路径；未任意合并其他平台表。");
+}
+}
+OfficialTableSource ProductionOfficialTables() {
+    return {ReadOfficialModuleTables,ReadOfficialCustomizeItemTables};
 }
 // 参数 stream/kind/source/diagnostics 为受限文本流、种类、来源与诊断。
 std::vector<CustomizationItem> ReadCustomizationStream(std::istream& stream,CustomizationKind kind,const std::string& source,std::vector<std::string>& diagnostics) {
@@ -170,6 +219,9 @@ std::map<int,std::string> ReadCustomizationStrings(const std::string& data) {
     return result;
 }
 CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language) {
+    return LoadCustomizationCatalog(home,game,language,ProductionOfficialTables());
+}
+CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language,const OfficialTableSource& official) {
     CustomizationCatalog out;auto roots=Roots(game,out);out.dmlFingerprint=Hash(out.configurationKey);
     for(const auto& root:roots) out.sources.push_back({root.id,root.name,root.modDirectory,root.includeRoot,true});
     auto manifest=Config(home/"customization_catalog.toml",out);out.language=language.empty()?manifest["language"].value_or<std::string>("cn"):language;
@@ -192,27 +244,9 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
     }
     std::map<CustomizationKey,CustomizationItem> merged;
     // 官方目录使用PC地区表；DLC地区表是独立明确来源，不从PS4/Switch同名表任取版本。
-    auto officialTables=ReadOfficialModuleTables(game,home,out.diagnostics);
-    bool officialModuleTableReplaced=false;
-    for(const auto& root:roots) {
-        std::string reason;
-        if(ReadFarcEntry(root.path/"rom/gm_module_tbl.farc","gm_module_id.bin",reason)) {officialModuleTableReplaced=true;break;}
-    }
-    const OfficialModuleTable* pcBase=nullptr;const OfficialModuleTable* pcDlc=nullptr;
-    for(const auto& table:officialTables) {
-        if(table.internalPath=="rom_steam_region/rom/gm_module_tbl.farc!/gm_module_id.bin" && table.cpkPath.filename()=="diva_main_region.cpk") pcBase=&table;
-        if(table.internalPath=="rom_steam_region_dlc/rom/gm_module_tbl.farc!/gm_module_id.bin" && table.cpkPath.filename()=="diva_dlc00_region.cpk") pcDlc=&table;
-    }
-    for(const auto* table:{pcBase,pcDlc}) if(table) {
-        const std::string identity=table==pcBase?"official:pc-region":"official:pc-region-dlc";
-        out.sources.push_back({identity,table==pcBase?"官方PC基础地区表":"官方PC DLC地区表（含基础条目）","","",false});
-        out.configurationKey+=table->fingerprint+"\n";
-        if(officialModuleTableReplaced) continue;
-        auto items=ReadCustomizationText(table->tableText,CustomizationKind::Module,identity,out.diagnostics);
-        for(auto& item:items) {item.metadataState="官方PC地区实体表";Overlay(merged,std::move(item));}
-    }
-    if(officialModuleTableReplaced) out.diagnostics.push_back("启用Mod提供普通rom/gm_module_tbl.farc，官方同逻辑实体表整表退出，不保留其被删除的ID。");
-    if(!pcBase && !pcDlc && !officialTables.empty()) out.diagnostics.push_back("发现官方表，但未匹配已支持的PC地区路径；未任意合并其他平台表。");
+    // 模型表与定制表（发型KAMI及四部位道具）分别读取，按各自稳定ID空间合并，不硬编码条目数量。
+    if(official.modules) MergeOfficialRegionTables(official.modules(game,home,out.diagnostics),kOfficialModules,roots,merged,out);
+    if(official.customizeItems) MergeOfficialRegionTables(official.customizeItems(game,home,out.diagnostics),kOfficialCustomizeItems,roots,merged,out);
     // 最终清单是用户导入目录，不能通过自填优先级宣称游戏生效集合。
     if(valid) if(auto items=manifest["items"].as_array()) for(auto& node:*items) if(auto table=node.as_table()) {
         auto source=(*table)["source"].value_or<std::string>("");if(!sourceIds.contains(source)) {out.diagnostics.push_back("项目引用未登记来源，跳过");continue;}
@@ -356,12 +390,16 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
             }
         }
     }
+    size_t unknownParts=0;
     for(auto& [key,item]:merged) {
         if(out.stale) item.metadataState="来源配置已变化／导入目录过期";
         if(!named.contains(key)) {auto localized=item.namesByLanguage.find(out.language);if(localized!=item.namesByLanguage.end()) item.name=localized->second;}
-        if(item.name.empty()) item.name=std::string(key.kind==CustomizationKind::Module?"服装 #":"饰品 #")+std::to_string(key.id);
+        if(item.name.empty()) item.name=std::string(key.kind==CustomizationKind::Module?"服装 #":item.part==CustomizationPart::Hair?"发型 #":"道具 #")+std::to_string(key.id);
+        if(!CustomizationItemDomain(item)) ++unknownParts;
         PrepareCustomizationItem(item,out);out.items.push_back(std::move(item));
     }
+    // 未知部位保留在快照与诊断中，不自动当成发型或头部。
+    if(unknownParts) out.diagnostics.push_back("保留 "+std::to_string(unknownParts)+" 个未知部位定制实体；未归入发型或自定义道具检索。");
     // 图片替换也属于快照：只读索引元数据，刷新后失效旧定位，不能当成游戏已重载。
     for(const auto& root:roots) {
         auto directory=Inside(root.path,"rom/2d");if(!directory) continue;

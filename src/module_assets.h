@@ -20,14 +20,8 @@ struct OfficialCpkEntry {
     std::string fingerprint;
 };
 
-// 官方服装实体表的物理归档、内部条目、逻辑路径、UTF-8 文本和文件指纹。
-struct OfficialModuleTable {
-    fs::path cpkPath;
-    std::string internalPath;
-    std::string logicalPath;
-    std::string tableText;
-    std::string fingerprint;
-};
+// 官方服装实体表的物理归档、内部条目、逻辑路径、UTF-8 文本和文件指纹；与定制表共用同一结构。
+using OfficialModuleTable = OfficialEntityTable;
 
 // 已解码精灵的轻量视图；rgbaPixels 由 rgbaOwner 持有，调用方需保留 owner 到上传结束。
 struct ModuleAssetPreview {
@@ -44,6 +38,13 @@ enum class ModuleSpriteStyle : int { Unspecified = 0, Mega39 = 1, FutureTone = 2
 
 // 参数 gameRoot/pluginRoot 为游戏目录和插件目录；diagnostics 接收中文读取诊断。
 std::vector<OfficialModuleTable> ReadOfficialModuleTables(
+    const fs::path& gameRoot,
+    const fs::path& pluginRoot,
+    std::vector<std::string>& diagnostics);
+
+// 参数 gameRoot/pluginRoot 为游戏目录和插件目录；diagnostics 接收中文读取诊断。
+// 读取全部官方 gm_customize_item_tbl.farc 内的 gm_customize_item_id.bin（发型 KAMI 与四部位道具）。
+std::vector<OfficialEntityTable> ReadOfficialCustomizeItemTables(
     const fs::path& gameRoot,
     const fs::path& pluginRoot,
     std::vector<std::string>& diagnostics);

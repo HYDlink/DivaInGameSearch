@@ -1,0 +1,12 @@
+# 人工合成测试夹具：模型表与定制表故意共用数字 316/500，验证两种实体身份互不冲突；不是游戏数据。
+module.0.chara=MIKU
+module.0.cos=COS_001
+module.0.id=316
+module.0.name=合成服装三一六
+module.0.sort_index=1
+module.1.chara=RIN
+module.1.cos=COS_002
+module.1.id=500
+module.1.name=合成服装五百
+module.1.sort_index=2
+module.data_list.length=2

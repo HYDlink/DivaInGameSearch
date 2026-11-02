@@ -1,0 +1,12 @@
+# 人工合成测试夹具：Mod 追加定制表 mod_gm_customize_item_tbl.farc，整条覆盖 610 并新增 700；不是游戏数据。
+cstm_item.0.chara=RIN
+cstm_item.0.id=610
+cstm_item.0.name=Mod眼镜
+cstm_item.0.parts=FACE
+cstm_item.0.sort_index=11
+cstm_item.1.chara=HAKU
+cstm_item.1.id=700
+cstm_item.1.name=Modヘア
+cstm_item.1.parts=KAMI
+cstm_item.1.sort_index=200
+cstm_item.data_list.length=2
