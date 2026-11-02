@@ -44,9 +44,27 @@ __declspec(dllexport) void Init() {
     host.view.customization.actionCapability=[](const diva::CustomizationKey& key) {
         // 参数key为按钮所在卡片；目录人物仅提供切分类意图，原生目标与拥有状态仍在游戏帧重新核对。
         const auto catalog=diva::App().view.customization.catalog;
-        if(catalog) for(const auto& item:catalog->items) if(item.key==key) return diva::ReadCustomizationActionCapability(key,diva::ModuleSearchCharacter(item.character));
+        if(catalog) for(const auto& item:catalog->items) if(item.key==key) {
+            const auto domain=diva::CustomizationItemDomain(item);
+            // 发型与道具走独立执行器能力，不借用模型动作缓存。
+            if(domain && *domain!=diva::CustomizationDomain::Models) return diva::ReadCustomizationItemActionCapability(*domain);
+            if(!domain) return diva::CustomizationActionCapability{};
+            return diva::ReadCustomizationActionCapability(key,diva::ModuleSearchCharacter(item.character));
+        }
         return diva::ReadCustomizationActionCapability(key);
     };
+    // 参数key/fingerprint为请求稳定键与目录指纹；网关据最新目录重算领域、部位和人物，指纹不符即拒绝。
+    diva::ConfigureCustomizationTargetResolver([](const diva::CustomizationKey& key,const std::string& fingerprint) -> std::optional<diva::CustomizationTargetFacts> {
+        const auto catalog=diva::App().view.customization.catalog;
+        if(!catalog || catalog->catalogFingerprint!=fingerprint) return std::nullopt;
+        for(const auto& item:catalog->items) if(item.key==key) {
+            const auto domain=diva::CustomizationItemDomain(item);if(!domain) return std::nullopt;
+            diva::CustomizationTargetFacts facts;facts.domain=*domain;facts.part=item.part;
+            facts.character=*domain==diva::CustomizationDomain::Models?diva::ModuleSearchCharacter(item.character):item.character;
+            return facts;
+        }
+        return std::nullopt;
+    });
     host.view.customization.recommendationProvider=diva::ReadRecommendations;
     // 参数 request 为 UI 提交的稳定服装身份、角色分类及目录代数；原生上下文由定位器独立捕获。
     host.view.customization.submitModuleLocate=[](const diva::CustomizationLocateRequest& request) {
@@ -63,7 +81,7 @@ __declspec(dllexport) void Init() {
             if(request.action!=diva::CustomizationAction::Locate) pendingActionCloseSerial=request.serial;
         }
         diva::App().view.customization.status=message;
-        Log("服装原生定位提交：ID="+std::to_string(request.key.id)+"；"+message);
+        Log(std::string(diva::CustomizationDomainName(request.domain))+"原生请求提交：ID="+std::to_string(request.key.id)+"；"+message);
     };
     host.view.customization.submitModuleAction=host.view.customization.submitModuleLocate;
     // 发型与自定义道具使用独立注入口；同一网关按最新目录重算目标页，未认证能力明确拒绝。
@@ -82,7 +100,11 @@ __declspec(dllexport) void Init() {
     // 打开面板时沿用游戏当前的难度和风格。
     host.view.onOpen=[] {
         auto snapshot=diva::Game().Read(); auto& view=diva::App().view;
+        const auto page=diva::CurrentNativePage();
         if(auto context=diva::ReadModuleLocatorContext()) view.ApplyOpeningContext(diva::SearchMode::Modules,context);
+        // 在发型或自定义道具页打开时进入对应领域，保留各领域查询；只读页面，不改游戏状态。
+        else if(page==diva::NativePage::Hair) view.ApplyOpeningContext(diva::SearchMode::Hair);
+        else if(page==diva::NativePage::Accessory) view.ApplyOpeningContext(diva::SearchMode::Accessories);
         else if(diva::Game().IsSongSearchPage()) view.ApplyOpeningContext(diva::SearchMode::Songs);
         Log("打开搜索："+diva::DescribeSnapshot(snapshot)+"；"+diva::App().DescribeInputState());
         if(!diva::Game().inputReady) {
@@ -113,7 +135,7 @@ __declspec(dllexport) void PostInit() {
     if(diva::InitializeModuleLocator(diva::Game().ExecutableBase())) {
         diva::InitializeRecommendations(diva::Game().ExecutableBase());
         nativeRoutingAvailable=diva::InitializeNativePageRouter(diva::Game().ExecutableBase());
-        Log(nativeRoutingAvailable?"歌曲与服装原生双击跨页路由已初始化。":"原生路由初始化失败；已认证目标页内定位仍可用。");
+        Log(nativeRoutingAvailable?"歌曲、服装、发型与自定义道具原生双击跨页路由已初始化；发型／道具列表定位未登记证据Profile，到达后不改动原生高亮。":"原生路由初始化失败；已认证目标页内定位仍可用。");
     }
     Log(diva::PollModuleLocator().message);
 }

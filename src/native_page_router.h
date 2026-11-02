@@ -29,6 +29,18 @@ ModuleLocateStatus PollNativePageRouter();
 void CancelNativePageRouter();
 // 参数 key 为具体卡片；读取当前能力，未知范围、槽位与拥有状态保持关闭。
 CustomizationActionCapability ReadCustomizationActionCapability(const CustomizationKey& key,CustomizationCharacter targetCharacter=CustomizationCharacter::Unknown);
+// 参数 domain 为发型或自定义道具；返回 Profile 能力，并按缓存的当前原生页填写 targetPage，不在目标页时全部关闭。
+CustomizationActionCapability ReadCustomizationItemActionCapability(CustomizationDomain domain);
+// 返回缓存的当前空闲原生页（至多100毫秒刷新一次）；过渡中返回 Unknown，仅用于打开面板时选择领域与能力显示。
+NativePage CurrentNativePage();
+// 最新目录中的目标事实；网关据此重算领域、部位与人物分类，不信任界面传入的目标页。
+struct CustomizationTargetFacts {
+    CustomizationDomain domain=CustomizationDomain::Models;
+    CustomizationPart part=CustomizationPart::Unknown;
+    CustomizationCharacter character=CustomizationCharacter::Unknown;
+};
+// 参数 resolver 接收稳定键与目录指纹，返回最新目录事实；指纹不符或目标缺失时返回空。须在帧线程可安全读取的快照上实现。
+void ConfigureCustomizationTargetResolver(std::function<std::optional<CustomizationTargetFacts>(const CustomizationKey&,const std::string&)> resolver);
 // 歌曲路由进度只描述真实阶段；定位成功仍由原歌曲Selector独立读回。
 struct SongNavigationStatus {uint64_t serial=0;bool busy=false,completed=false,succeeded=false;std::string message;};
 // 参数submit/cancel为既有歌曲定位器的提交与取消接线，不在原生导航帧直接写选曲。
