@@ -39,6 +39,17 @@ struct Route {
 uint64_t currentUiGeneration=0,lastSerial=0;
 std::string lockedFingerprint;
 std::function<std::optional<CustomizationTargetFacts>(const CustomizationKey&,const std::string&)> targetResolver;
+std::function<std::optional<CustomizationCharacter>(const NativePageSnapshot&)> singerResolver;
+// 参数 s 为当前页面快照；只在自定义页内按来源歌曲与实际槽位解析歌者人物，其他页面返回空。
+std::optional<CustomizationCharacter> SingerOf(const NativePageSnapshot& s) {
+    if(!singerResolver || !(s.page==NativePage::Parent || s.page==NativePage::Module || s.page==NativePage::Hair || s.page==NativePage::Accessory)) return std::nullopt;
+    if(s.slot<0 || s.slotCount<1 || s.slot>=s.slotCount) return std::nullopt;
+    return singerResolver(s);
+}
+// 参数 itemCharacter/singer 为目标实体人物与当前歌者；共通 ALL 对任一歌者兼容，未知歌者不判定兼容。
+bool CompatibleWithSinger(CustomizationCharacter itemCharacter,const std::optional<CustomizationCharacter>& singer) {
+    return singer && (itemCharacter==CustomizationCharacter::All || itemCharacter==*singer);
+}
 // 原生导航调用表：生产绑定已核实构建的RVA；隔离测试替换为记录替身，避免跳入任何生产地址。
 struct NativeRouteCalls {
     // 参数 mode 为外层请求模式：7 进入自定义父页、2 进入普通选曲（RVA 0x2C4BB0）。
@@ -109,6 +120,7 @@ CustomizationItemFrame ItemFrame(const NativePageSnapshot& s) {
     frame.domain=s.page==NativePage::Accessory?CustomizationDomain::Accessories:CustomizationDomain::Hair;
     frame.scene=s.scene;frame.state=s.state;frame.controller=s.controller;frame.configuration=s.configuration;
     frame.slot=s.slot;frame.slotCount=s.slotCount;frame.nativeScope=s.nativeScope;frame.sourcePvid=s.sourcePvid;
+    frame.singer=SingerOf(s);
     frame.now=GetTickCount64();
     return frame;
 }
@@ -294,6 +306,10 @@ void OnSongBoundary(int boundary,uintptr_t object) {
 bool DispatchArrival(const NativePageSnapshot& s,std::string& message) {
     if(route.target==NativePage::Module) return SubmitModuleLocate(route.request,message);
     auto frame=ItemFrame(s);frame.thread=GetCurrentThreadId();
+    // 到达发型页后按实际歌者重验：其他角色的发型只到达页面、不定位，筛选不授予切换歌者的权限。
+    if(route.target==NativePage::Hair && frame.singer && !CompatibleWithSinger(route.request.character,frame.singer)) {
+        message=std::string("已进入")+PageName(route.target)+"；该发型属于其他角色，仅供浏览。";return false;
+    }
     if(SubmitCustomizationItemRequest(route.request,frame,message)) return true;
     // 页面到达不等于定位成功：未认证 Profile 时如实说明停留在原生列表当前位置。
     message=std::string("已进入")+PageName(route.target)+"；"+message;return false;
@@ -512,6 +528,13 @@ bool SubmitCustomizationRequest(const CustomizationLocateRequest& original,std::
     if(ModuleActionBusy()) {message="服装预览或换装仍在处理中，请先完成当前操作。";return false;}
     if(CustomizationItemLocatorBusy()) {message="发型／道具原生操作仍在处理中，请稍候。";return false;}
     if(route.phase!=RoutePhase::Idle && route.phase!=RoutePhase::Done && route.cancelled==cancellation.load()) {message="上一条跨页定位仍在处理中。";return false;}
+    // 发型：当前歌者已知时其他角色只读，任何入口（双击、Enter、底栏、按钮）都不跨页、不预览、不更换；
+    // 歌者未知时仍可浏览与跨页，预览和更换拒绝，到达后再按实际歌者重验。
+    if(request.domain==CustomizationDomain::Hair) {
+        const auto singer=SingerOf(page);
+        if(singer && !CompatibleWithSinger(request.character,singer)) {message="该发型属于其他角色，仅供浏览。";return false;}
+        if(!singer && request.action!=CustomizationAction::Locate) {message="未读取到当前歌者，暂不支持此操作。";return false;}
+    }
     // 发型／道具已在目标页：交给独立执行器；未知 Profile 明确 Unsupported，不照搬模型命令。
     if(!models && atTarget) {
         auto frame=ItemFrame(page);
@@ -624,6 +647,8 @@ CustomizationActionCapability ReadCustomizationItemActionCapability(Customizatio
     const auto page=CachedNativePage();
     capability.targetPage=page.idle && page.page==TargetPage(domain);
     capability.busy=capability.busy || CustomizationItemLocatorBusy();
+    // 实际歌者未知时预览与更换不开放；人物兼容性由界面只读规则与执行器再次核对。
+    if(!SingerOf(page)) {capability.preview=capability.equip=false;capability.previewReason=capability.equipReason="未读取到当前歌者，暂不支持此操作。";}
     // 不在目标页时任何能力都不开放；按钮与底栏只提示双击主体进入。
     if(!capability.targetPage) capability.locate=capability.preview=capability.equip=false;
     return capability;
@@ -631,6 +656,18 @@ CustomizationActionCapability ReadCustomizationItemActionCapability(Customizatio
 NativePage CurrentNativePage() {
     const auto page=CachedNativePage();
     return page.idle?page.page:NativePage::Unknown;
+}
+void ConfigureCustomizationSingerResolver(std::function<std::optional<CustomizationCharacter>(const NativePageSnapshot&)> resolver) {
+    std::lock_guard lock(routeMutex);singerResolver=std::move(resolver);
+}
+std::optional<CustomizationContext> ReadCustomizationSingerContext() {
+    const auto page=CachedNativePage();
+    const auto singer=SingerOf(page);
+    if(!singer) return std::nullopt;
+    // 代数取自控制器、配置、槽位、来源歌曲、范围与人物；任一变化都视为歌者上下文改变。
+    uint64_t generation=1469598103934665603ull;
+    for(uint64_t value:{uint64_t(page.controller),uint64_t(page.configuration),uint64_t(uint32_t(page.slot)),uint64_t(uint32_t(page.sourcePvid)),uint64_t(uint32_t(page.nativeScope)),uint64_t(*singer)}) {generation^=value;generation*=1099511628211ull;}
+    return CustomizationContext{*singer,page.slot,generation?generation:1,true};
 }
 void ConfigureCustomizationTargetResolver(std::function<std::optional<CustomizationTargetFacts>(const CustomizationKey&,const std::string&)> resolver) {
     std::lock_guard lock(routeMutex);targetResolver=std::move(resolver);

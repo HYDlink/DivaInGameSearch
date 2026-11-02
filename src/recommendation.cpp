@@ -3,6 +3,32 @@
 #include <charconv>
 
 namespace diva {
+namespace {
+constexpr CustomizationCharacter kPerformerCharacters[]={CustomizationCharacter::Miku,CustomizationCharacter::Rin,CustomizationCharacter::Len,CustomizationCharacter::Luka,CustomizationCharacter::Neru,CustomizationCharacter::Haku,CustomizationCharacter::Kaito,CustomizationCharacter::Meiko,CustomizationCharacter::Sakine,CustomizationCharacter::Teto};
+// 参数 performers/slot 为一首歌的演出角色及下标；按已核对的伪人物继承规则返回原始人物编号，无效返回-1。
+int PerformerCharacterIndex(const std::vector<RecommendedPerformer>& performers,size_t slot) {
+    const auto& performer=performers[slot];
+    int character=performer.character;
+    // 商业PC 4BCAB0/4BD200已核对：伪人物只继承引用项原始人物，不复制其推荐COS。
+    if(performer.type>=1 && performer.type<=5) {
+        int reference=-1;
+        if(performer.type==2 && performer.pseudoSameId!=-1) {
+            if(performer.pseudoSameId>=0 && static_cast<size_t>(performer.pseudoSameId)<slot) reference=performer.pseudoSameId;
+        } else for(int previous=static_cast<int>(slot)-1;previous>=0;--previous) if(performers[static_cast<size_t>(previous)].type==0) {reference=previous;break;}
+        if(reference>=0) character=performers[static_cast<size_t>(reference)].character;
+    }
+    if(performer.type<0 || performer.type>6 || character<0 || character>=10) return -1;
+    return character;
+}
+}
+std::optional<CustomizationCharacter> ResolvePerformerCharacter(const RecommendationSnapshot& snapshot,int pvid,int slot) {
+    if(!snapshot.ready || slot<0) return std::nullopt;
+    const auto song=snapshot.songs.find(pvid);
+    if(song==snapshot.songs.end() || static_cast<size_t>(slot)>=song->second.size()) return std::nullopt;
+    const int index=PerformerCharacterIndex(song->second,static_cast<size_t>(slot));
+    if(index<0) return std::nullopt;
+    return kPerformerCharacters[index];
+}
 // 参数 snapshot/pvid/catalog 为当前运行时值、目标歌曲及有效目录；未知关联保留具体原因。
 RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snapshot,int pvid,const CustomizationCatalog& catalog) {
     RecommendedModules result;
@@ -11,21 +37,13 @@ RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snaps
     if(song==snapshot.songs.end()) {result.unresolved.push_back("这首歌曲尚无已加载的推荐记录。");return result;}
     if(song->second.empty()) {result.unresolved.push_back("这首歌曲未提供演出角色推荐。");return result;}
     // PV人物编号与菜单分类不同，显式转换，禁止将未知人物回退为初音。
-    constexpr CustomizationCharacter characters[]={CustomizationCharacter::Miku,CustomizationCharacter::Rin,CustomizationCharacter::Len,CustomizationCharacter::Luka,CustomizationCharacter::Neru,CustomizationCharacter::Haku,CustomizationCharacter::Kaito,CustomizationCharacter::Meiko,CustomizationCharacter::Sakine,CustomizationCharacter::Teto};
+    const auto& characters=kPerformerCharacters;
     const char* difficulties[]={"EASY","NORMAL","HARD","EXTREME","ENCORE"};
     for(size_t slot=0;slot<song->second.size();++slot) {
         const auto& performer=song->second[slot];
         const auto prefix="演出角色 "+std::to_string(slot+1)+"：";
-        int character=performer.character;
-        // 商业PC 4BCAB0/4BD200已核对：伪人物只继承引用项原始人物，不复制其推荐COS。
-        if(performer.type>=1 && performer.type<=5) {
-            int reference=-1;
-            if(performer.type==2 && performer.pseudoSameId!=-1) {
-                if(performer.pseudoSameId>=0 && static_cast<size_t>(performer.pseudoSameId)<slot) reference=performer.pseudoSameId;
-            } else for(int previous=static_cast<int>(slot)-1;previous>=0;--previous) if(song->second[previous].type==0) {reference=previous;break;}
-            if(reference>=0) character=song->second[reference].character;
-        }
-        if(performer.type<0 || performer.type>6 || character<0 || character>=10) {
+        const int character=PerformerCharacterIndex(song->second,slot);
+        if(character<0) {
             result.unresolved.push_back(prefix+"人物或继承引用无效，未回退为默认人物。");continue;
         }
         if(performer.type==3 || performer.type==4) {

@@ -51,12 +51,12 @@ bool FakeEquip(const CustomizationItemFrame& frame,size_t index) {
 // 参数 domain 为目标领域；返回空闲且有效的模拟帧上下文。
 CustomizationItemFrame Frame(CustomizationDomain domain,uint64_t now=1000) {
     CustomizationItemFrame frame;frame.valid=frame.idle=true;frame.domain=domain;frame.scene=0x1000;frame.state=0x2000;
-    frame.controller=0x3000;frame.configuration=0x4000;frame.slot=0;frame.slotCount=1;frame.nativeScope=3;frame.sourcePvid=800;frame.now=now;frame.thread=7;return frame;
+    frame.controller=0x3000;frame.configuration=0x4000;frame.slot=0;frame.slotCount=1;frame.nativeScope=3;frame.sourcePvid=800;frame.singer=CustomizationCharacter::Miku;frame.now=now;frame.thread=7;return frame;
 }
 uint64_t serial=0;
 // 参数 domain/id/part/action 为请求目标；返回带合法序号、指纹和查询修订的请求。
 CustomizationLocateRequest Request(CustomizationDomain domain,int id,CustomizationPart part,CustomizationAction action=CustomizationAction::Locate) {
-    CustomizationLocateRequest request;request.key={CustomizationKind::Accessory,id};request.domain=domain;request.part=part;request.action=action;
+    CustomizationLocateRequest request;request.key={CustomizationKind::Accessory,id};request.domain=domain;request.part=part;request.action=action;request.character=CustomizationCharacter::Miku;
     request.catalogFingerprint="合成目录";request.uiGeneration=5;request.serial=++serial;request.queryRevision=3;return request;
 }
 // 参数 frames/frame 为推进帧数与上下文；逐帧调用执行器，模拟原生状态帧。
@@ -87,6 +87,14 @@ int main() {
         }
         Check(native.reads==0 && native.highlights==0,"未知Profile仍读取或写入原生列表");
         Check(!SubmitCustomizationItemRequest(Request(CustomizationDomain::Models,500,CustomizationPart::Hair),Frame(CustomizationDomain::Hair),message),"模型领域请求进入发型执行器");
+        // 实际歌者守卫：未知歌者拒绝预览与更换；发型属于其他角色时任何动作都拒绝；共通道具兼容任一歌者。
+        auto unknownSinger=Frame(CustomizationDomain::Hair);unknownSinger.singer.reset();
+        Check(!SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair,CustomizationAction::Preview),unknownSinger,message)
+            && message.find("歌者")!=std::string::npos,"未知歌者仍可预览发型");
+        auto otherHair=Request(CustomizationDomain::Hair,500,CustomizationPart::Hair);otherHair.character=CustomizationCharacter::Rin;
+        Check(!SubmitCustomizationItemRequest(otherHair,Frame(CustomizationDomain::Hair),message) && message.find("仅供浏览")!=std::string::npos,"其他角色发型仍可定位");
+        auto otherItem=Request(CustomizationDomain::Accessories,600,CustomizationPart::Head,CustomizationAction::Equip);otherItem.character=CustomizationCharacter::Kaito;
+        Check(!SubmitCustomizationItemRequest(otherItem,Frame(CustomizationDomain::Accessories),message),"当前歌者不能使用的道具仍可更换");
 
         CustomizationItemProfile hair;hair.evidence="隔离模拟，不是实机证据";hair.read=FakeRead;hair.highlight=FakeHighlight;
         RegisterCustomizationItemProfile(CustomizationDomain::Hair,hair);

@@ -350,6 +350,25 @@ int main() {
         nativeLog.clear();f.Customize(1);Put(f.controller+0x28,int32_t(0));Put(f.scene+0x19,uint8_t(0));
         Check(InvokeSongExit(ReadNativePage(f.base),true) && Calls(nativeLog,{"scene:8"}) && Get<int32_t>(f.controller+0x28)==1 && Get<uint8_t>(f.scene+0x19)==1,"父页→来源退出协议错误");
 
+        // 实际歌者守卫：歌者已知时其他角色发型任何入口都不跨页；未知时可跨页但不可预览／更换；到达后按实际歌者重验。
+        std::optional<CustomizationCharacter> testSinger=CustomizationCharacter::Rin;
+        // 参数page为隔离页面快照；返回测试控制的实际歌者。
+        ConfigureCustomizationSingerResolver([&](const NativePageSnapshot& page) {(void)page;return testSinger;});
+        route={};nativeLog.clear();f.Customize(2);Put(f.scene+0x310,panel);
+        Check(!SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,510,CustomizationPart::Hair),message) && message.find("仅供浏览")!=std::string::npos
+            && route.phase==RoutePhase::Idle && nativeLog.empty(),"其他角色发型的双击仍跨页");
+        auto ownHair=itemRequest(CustomizationDomain::Hair,511,CustomizationPart::Hair);ownHair.character=CustomizationCharacter::Rin;
+        Check(SubmitCustomizationRequest(ownHair,message) && route.target==NativePage::Hair,"当前歌者自己的发型双击未排队");
+        CancelNativePageRouter();OnBoundary(2,f.state);route={};nativeLog.clear();
+        testSinger.reset();
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,512,CustomizationPart::Hair),message),"歌者未知时双击发型未允许跨页");
+        OnBoundary(2,f.state);f.Customize(3);OnBoundary(2,f.state);
+        testSinger=CustomizationCharacter::Rin;OnBoundary(0,0);OnBoundary(0,0);
+        Check(route.phase==RoutePhase::Done && !route.status.succeeded && route.status.message.find("仅供浏览")!=std::string::npos,"到达后未按实际歌者重验发型");
+        testSinger.reset();f.Customize(3);
+        auto previewHair=itemRequest(CustomizationDomain::Hair,511,CustomizationPart::Hair);previewHair.action=CustomizationAction::Preview;previewHair.origin=CustomizationOrigin::HoverButton;
+        Check(!SubmitCustomizationRequest(previewHair,message) && message.find("歌者")!=std::string::npos,"歌者未知时仍可预览发型");
+        ConfigureCustomizationSingerResolver(nullptr);route={};nativeLog.clear();
         // 卡片能力：只在空闲目标页标记目标页；未登记Profile时定位、预览、更换全部关闭。
         cachedAt=0;f.Customize(3);auto itemCapability=ReadCustomizationItemActionCapability(CustomizationDomain::Hair);
         Check(itemCapability.targetPage && !itemCapability.locate && !itemCapability.preview && !itemCapability.equip && itemCapability.locateReason.find("尚未认证")!=std::string::npos && CurrentNativePage()==NativePage::Hair,"发型页能力或当前页缓存错误");

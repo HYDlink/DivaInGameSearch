@@ -53,6 +53,13 @@ __declspec(dllexport) void Init() {
         }
         return diva::ReadCustomizationActionCapability(key);
     };
+    // 参数page为自定义页快照；按来源歌曲PV演出角色与实际歌者槽位解析人物，只读推荐快照，不调用游戏函数。
+    diva::ConfigureCustomizationSingerResolver([](const diva::NativePageSnapshot& page) -> std::optional<diva::CustomizationCharacter> {
+        const auto recommendations=diva::ReadRecommendations();
+        if(!recommendations || page.sourcePvid<=0) return std::nullopt;
+        return diva::ResolvePerformerCharacter(*recommendations,page.sourcePvid,page.slot);
+    });
+    host.view.customization.singerProvider=diva::ReadCustomizationSingerContext;
     // 参数key/fingerprint为请求稳定键与目录指纹；网关据最新目录重算领域、部位和人物，指纹不符即拒绝。
     diva::ConfigureCustomizationTargetResolver([](const diva::CustomizationKey& key,const std::string& fingerprint) -> std::optional<diva::CustomizationTargetFacts> {
         const auto catalog=diva::App().view.customization.catalog;
@@ -148,7 +155,8 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
     diva::PerformanceFrameScope performance(*host.view.performance,true,callbackStart);
     host.view.performance->current.frameLock=diva::PerformanceNow()-callbackStart;
     const auto now=GetTickCount64();
-    diva::RequestRecommendations(host.view.open && host.view.mode==diva::SearchMode::Modules);
+    // 模型推荐与发型当前歌者都依赖已加载的 PV 演出角色快照。
+    diva::RequestRecommendations(host.view.open && (host.view.mode==diva::SearchMode::Modules || host.view.mode==diva::SearchMode::Hair));
     diva::TickModuleLocator(now,host.view.customization.generation);
     diva::TickNativePageRouter(now,host.view.customization.generation);
     diva::TickModuleAction(now,host.view.customization.generation);

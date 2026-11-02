@@ -481,11 +481,71 @@ void ItemDomainInteractions() {
     Check(moduleCalls==1 && backend.requests.size()==itemRequests,"模型请求进入了发型／道具后端");
     ImGui::DestroyContext(context);
 }
+// 验证发型默认展示实际歌者、手动浏览其他角色为只读、重新打开不沿用上次分类、歌者变化取消旧操作，且模型与道具不受影响。
+void HairSingerInteractions() {
+    using namespace diva;
+    auto* context=ImGui::CreateContext();
+    auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
+    io.DisplaySize={1280.0f,900.0f};io.DeltaTime=1.0f/60.0f;
+    unsigned char* pixels=nullptr;int width=0,height=0;io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
+    CustomizationView view;view.catalog=std::make_shared<CustomizationCatalog>(ItemDomainCatalog());++view.generation;
+    FakeItemBackend backend;backend.page=CustomizationDomain::Hair;backend.allowActions=true;int invalidated=0;
+    std::optional<CustomizationContext> current=CustomizationContext{CustomizationCharacter::Rin,0,11,true};
+    // 返回测试控制的实际歌者；只读，不访问游戏。
+    view.singerProvider=[&]{return current;};
+    view.submitItemRequest=[&](const CustomizationLocateRequest& request) {backend.Submit(request);};
+    view.invalidateModuleLocate=[&]{++invalidated;};
+    // 参数 key 为卡片；能力只依赖模拟页面。
+    view.actionCapability=[&](const CustomizationKey& key) {(void)key;return backend.Capability(CustomizationDomain::Hair);};
+    view.states[0].query.character=CustomizationCharacter::Kaito;
+    view.OnOpen(std::nullopt);view.SetDomain(CustomizationDomain::Hair);Complete(view);
+    // 参数 character 为预期人物；结果全部属于该人物。
+    auto only=[&](CustomizationCharacter character) {
+        return !view.State().results.empty() && std::all_of(view.State().results.begin(),view.State().results.end(),[&](size_t index){return view.catalog->items[index].character==character;});
+    };
+    Check(view.State().query.character==CustomizationCharacter::Rin && only(CustomizationCharacter::Rin),"发型未默认展示实际歌者的角色");
+    // 手动浏览其他角色：允许浏览，但所有入口只读。
+    view.SetCharacterFilter(CustomizationCharacter::Miku);Complete(view);
+    Check(only(CustomizationCharacter::Miku) && !view.hairFollowsSinger,"手动筛选其他角色未生效或仍跟随歌者");
+    const auto& other=view.catalog->items[view.State().results.front()];
+    Check(view.BrowseOnly(other),"其他角色发型未标为仅供浏览");
+    ImGui::ClearActiveID();view.State().focus=false;view.State().cursor={};view.State().scroll=true;Idle(view,3);
+    auto* grid=GridWindow();const ImVec2 first(grid->InnerRect.Min.x+30,grid->InnerRect.Min.y+30);
+    const auto before=backend.requests.size();
+    ClickAt(view,first);ClickAt(view,first,0);
+    view.RequestDetails();Idle(view,2);
+    view.RequestLocate(other.key);Idle(view,1);
+    view.RequestAction(other.key,CustomizationAction::Equip);view.RequestAction(other.key,CustomizationAction::Preview);
+    Check(backend.requests.size()==before && view.status.find("仅供浏览")!=std::string::npos,"其他角色发型的单击、双击、Enter、底栏或按钮提交了请求");
+    // 重新打开：回到实际歌者，不沿用上一次浏览分类。
+    view.OnOpen(std::nullopt);Complete(view);
+    Check(view.State().query.character==CustomizationCharacter::Rin && view.hairFollowsSinger && only(CustomizationCharacter::Rin),"重新打开沿用了上一次浏览分类");
+    const auto& own=view.catalog->items[view.State().results.front()];
+    Check(!view.BrowseOnly(own),"当前歌者自己的发型被标为只读");
+    ImGui::ClearActiveID();view.State().cursor={};view.State().scroll=true;Idle(view,40);grid=GridWindow();
+    ClickAt(view,ImVec2(grid->InnerRect.Min.x+30,grid->InnerRect.Min.y+30));
+    Check(backend.requests.size()==before+1 && backend.locates==1 && backend.requests.back().key==own.key,"当前歌者发型的原位定位未提交");
+    // 实际歌者变化：取消旧操作并在跟随状态下同步筛选。
+    const int beforeChange=invalidated;
+    current=CustomizationContext{CustomizationCharacter::Luka,0,12,true};view.Poll();
+    Check(invalidated>beforeChange && view.State().query.character==CustomizationCharacter::Luka,"实际歌者变化未取消旧操作或未同步发型筛选");
+    view.SetCharacterFilter(CustomizationCharacter::Miku);const int beforeManual=invalidated;
+    current=CustomizationContext{CustomizationCharacter::Rin,0,13,true};view.Poll();
+    Check(invalidated>beforeManual && view.State().query.character==CustomizationCharacter::Miku,"手动浏览被歌者变化覆盖或旧操作未取消");
+    // 歌者未知：展示全部发型，不标只读（跨页后由后端重验）。
+    current.reset();view.OnOpen(std::nullopt);Complete(view);
+    Check(!view.State().query.character && view.State().results.size()==30 && !view.BrowseOnly(other),"歌者未知时未回到全部或误标只读");
+    // 模型筛选不受发型歌者规则影响；道具不按人物区分。
+    Check(view.states[0].query.character==CustomizationCharacter::Kaito,"发型歌者规则改变了模型页筛选");
+    view.SetDomain(CustomizationDomain::Accessories);current=CustomizationContext{CustomizationCharacter::Rin,0,14,true};view.OnOpen(std::nullopt);Complete(view);
+    Check(!view.State().query.character && !view.BrowseOnly(view.catalog->items[view.State().results.front()]),"道具页出现人物筛选或只读限制");
+    ImGui::DestroyContext(context);
+}
 }
 // 参数 argc/argv 保留命令行兼容；测试只在系统临时隔离目录创建夹具。
 int main(int argc,char** argv) {
     (void)argc;(void)argv;auto root=diva::fs::temp_directory_path()/("diva-customization-check-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try {Parser(root);auto catalog=Catalog(root);
-        DefaultSearchLanguages();Navigation();Async(catalog);LocateRevision(catalog);ItemDomainInteractions();diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
+        DefaultSearchLanguages();Navigation();Async(catalog);LocateRevision(catalog);ItemDomainInteractions();HairSingerInteractions();diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
     catch(const std::exception& error) {std::cerr<<error.what()<<"\n";diva::fs::remove_all(root);return 1;}
 }

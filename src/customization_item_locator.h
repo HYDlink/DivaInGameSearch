@@ -26,6 +26,8 @@ struct CustomizationItemFrame {
     CustomizationDomain domain=CustomizationDomain::Hair;
     uintptr_t scene=0,state=0,controller=0,configuration=0;
     int slot=-1,slotCount=-1,nativeScope=-1,sourcePvid=-1;
+    // 当前实际歌者槽位所属人物；由路由器按来源歌曲与槽位解析，未知为空，此时预览与更换一律拒绝。
+    std::optional<CustomizationCharacter> singer;
     uint64_t now=0;
     uint32_t thread=0;
 };

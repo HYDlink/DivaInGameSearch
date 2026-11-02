@@ -39,6 +39,10 @@ struct CustomizationTargetFacts {
     CustomizationPart part=CustomizationPart::Unknown;
     CustomizationCharacter character=CustomizationCharacter::Unknown;
 };
+// 参数 resolver 接收当前自定义页快照，返回实际歌者槽位所属人物；未知返回空。网关、到达分发与执行器帧共用该结果。
+void ConfigureCustomizationSingerResolver(std::function<std::optional<CustomizationCharacter>(const NativePageSnapshot&)> resolver);
+// 返回缓存页面上当前实际歌者的人物、槽位与上下文代数；不在自定义页或无法解析时返回空。只读，不改变游戏状态。
+std::optional<CustomizationContext> ReadCustomizationSingerContext();
 // 参数 resolver 接收稳定键与目录指纹，返回最新目录事实；指纹不符或目标缺失时返回空。须在帧线程可安全读取的快照上实现。
 void ConfigureCustomizationTargetResolver(std::function<std::optional<CustomizationTargetFacts>(const CustomizationKey&,const std::string&)> resolver);
 // 歌曲路由进度只描述真实阶段；定位成功仍由原歌曲Selector独立读回。

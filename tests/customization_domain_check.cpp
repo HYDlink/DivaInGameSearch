@@ -1,6 +1,7 @@
 // 发型与自定义道具数据领域回归：官方定制表注入、Mod 覆盖、名称合并、三领域分流及罗马音检索。
 // 只读取仓库内人工合成 UTF-8 夹具并在系统临时目录构造隔离游戏目录，不访问真实游戏或 CPK。
 #include "customization.h"
+#include "recommendation.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -192,13 +193,29 @@ void Replacement(const diva::fs::path& root,const diva::fs::path& fixtures) {
     Check(Diagnosed(catalog,"官方同逻辑定制表整表退出"),"官方定制表退出没有诊断");
 }
 }
+// 验证按来源歌曲与实际槽位解析歌者人物：直接人物、伪人物继承、无效值、越界与未就绪都不猜测。
+void SingerCharacters() {
+    using namespace diva;
+    RecommendationSnapshot snapshot;snapshot.ready=true;
+    RecommendedPerformer rin;rin.type=0;rin.character=1;
+    RecommendedPerformer pseudo;pseudo.type=1;pseudo.character=0;
+    RecommendedPerformer teto;teto.type=0;teto.character=9;
+    RecommendedPerformer broken;broken.type=0;broken.character=12;
+    snapshot.songs[800]={rin,pseudo,teto,broken};
+    Check(ResolvePerformerCharacter(snapshot,800,0)==CustomizationCharacter::Rin,"直接演出人物解析错误");
+    Check(ResolvePerformerCharacter(snapshot,800,1)==CustomizationCharacter::Rin,"伪人物未继承前一实际人物");
+    Check(ResolvePerformerCharacter(snapshot,800,2)==CustomizationCharacter::Teto,"重音Teto人物解析错误");
+    Check(!ResolvePerformerCharacter(snapshot,800,3) && !ResolvePerformerCharacter(snapshot,800,4) && !ResolvePerformerCharacter(snapshot,800,-1),"无效人物或越界槽位被猜测为某人物");
+    Check(!ResolvePerformerCharacter(snapshot,801,0),"未加载歌曲被猜测人物");
+    snapshot.ready=false;Check(!ResolvePerformerCharacter(snapshot,800,0),"推荐快照未就绪仍返回人物");
+}
 // 参数 argc/argv 为测试入口；argv[1] 为仓库根目录，用于读取 tests/fixtures/customization。
 int main(int argc,char** argv) {
     const diva::fs::path repository=argc>1?diva::fs::path(argv[1]):diva::fs::current_path();
     const auto fixtures=repository/"tests/fixtures/customization";
     const auto root=diva::fs::temp_directory_path()/("diva-customization-domain-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try {
-        Domains(root/"domains",fixtures);Replacement(root/"replacement",fixtures);diva::fs::remove_all(root);
+        Domains(root/"domains",fixtures);Replacement(root/"replacement",fixtures);SingerCharacters();diva::fs::remove_all(root);
         std::cout<<"发型与自定义道具数据领域回归通过："<<checks<<" 项；只使用合成夹具，未读取真实游戏、CPK或实机列表。\n";return 0;
     } catch(const std::exception& error) {diva::fs::remove_all(root);std::cerr<<"发型／道具数据回归失败："<<error.what()<<"\n";return 1;}
 }

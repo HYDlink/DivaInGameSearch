@@ -118,6 +118,12 @@ struct CustomizationView {
     std::function<ImTextureID(const CustomizationKey&,const unsigned char*,int,int)> uploadPreviewPixels;
     // 参数 request 包含服装稳定键、角色映射、目录指纹和 UI 代数/序号；由原生适配器执行非阻塞提交。
     std::function<void(const CustomizationLocateRequest&)> submitModuleLocate;
+    // 返回当前实际歌者槽位所属人物与上下文代数；未知返回空。只用于发型浏览默认值与只读判定，不授予切换权限。
+    std::function<std::optional<CustomizationContext>()> singerProvider;
+    std::optional<CustomizationContext> singer;
+    uint64_t observedSingerGeneration=0;
+    // 每次打开时发型筛选跟随实际歌者；玩家手动选择其他角色后本次打开内不再自动覆盖。
+    bool hairFollowsSinger=true;
     // 参数 request 为发型或自定义道具的定位／动作请求；与模型定位器分开注入，后端须独立核对目标页与能力。
     std::function<void(const CustomizationLocateRequest&)> submitItemRequest;
     // 任一定制领域的搜索条件或选择变化时立即作废已提交请求；回调不得阻塞界面线程。
@@ -137,6 +143,12 @@ struct CustomizationView {
     void SetAccessoryPart(CustomizationPart part);
     // 返回当前领域与子标签对应的状态下标。
     size_t Slot() const;
+    // 参数 value 为玩家选择的人物筛选；发型的手动选择只是浏览意图，停止跟随实际歌者，不授予任何原生权限。
+    void SetCharacterFilter(std::optional<CustomizationCharacter> value);
+    // 参数 item 为卡片实体；当前歌者已知且发型属于其他角色时返回 true，此类卡片不提供跳转、预览与更换。
+    bool BrowseOnly(const CustomizationItem& item) const;
+    // 参数 opening 为是否由打开面板触发；同步实际歌者，变化时取消旧操作，并按跟随状态更新发型默认筛选。
+    void SyncSinger(bool opening);
     // 参数context仅更新游戏角色说明；不重置已选搜索筛选，首次默认全部角色。
     void OnOpen(std::optional<CustomizationContext> context);
     // 在外层现有窗口内绘制，不自行 Begin 主窗口。

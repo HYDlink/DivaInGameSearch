@@ -109,6 +109,11 @@ bool SubmitCustomizationItemRequest(const CustomizationLocateRequest& request,co
     if(request.domain==CustomizationDomain::Hair && request.part!=CustomizationPart::Hair) return reject("发型请求部位与发型领域不一致。");
     if(request.domain==CustomizationDomain::Accessories && PartOrder(request.part)<0) return reject("自定义道具请求缺少头／脸／胸口／背部之一。");
     if(!frame.valid || !frame.idle || frame.domain!=request.domain) return reject(std::string("当前不在空闲的")+CustomizationDomainPageName(request.domain)+"，未执行原生操作。");
+    // 实际歌者守卫：发型只允许当前歌者自己的发型；预览与更换要求歌者已知且与目标兼容（共通 ALL 兼容任一歌者）。
+    const bool compatible=frame.singer && (request.character==CustomizationCharacter::All || request.character==*frame.singer);
+    if(request.domain==CustomizationDomain::Hair && frame.singer && !compatible) return reject("该发型属于其他角色，仅供浏览。");
+    if(request.action!=CustomizationAction::Locate && !frame.singer) return reject("未读取到当前歌者，暂不支持此操作。");
+    if(request.action!=CustomizationAction::Locate && !compatible) return reject("当前歌者不能使用该项目，暂不支持此操作。");
     const auto& profile=profiles[*slot];
     // 未登记 Profile 一律 Unsupported：不写缓存、不写高亮序号、不返回成功。
     if(!profile || !profile->read) return reject(request.action==CustomizationAction::Locate?LocateGap(request.domain):ActionGap(request.domain,request.action));
@@ -132,7 +137,7 @@ void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
     if(active.cancelled!=cancellation.load()) {Finish("查询、目录或面板已变化，旧发型／道具操作已取消。");return;}
     if(frame.now>active.deadline) {Finish("等待原生列表超时，已停止发型／道具操作。");return;}
     if(!frame.valid || frame.domain!=active.request.domain) {Finish(std::string("已离开")+CustomizationDomainPageName(active.request.domain)+"，旧操作已取消。");return;}
-    if(!SameContext(active.submitted,frame)) {Finish("页面对象、歌者槽位、设置范围或来源歌曲已变化，旧操作已取消。");return;}
+    if(!SameContext(active.submitted,frame) || active.submitted.singer!=frame.singer) {Finish("页面对象、歌者、设置范围或来源歌曲已变化，旧操作已取消。");return;}
     // 界面线程提交时线程未知，首个原生帧锁定线程；之后换线程即取消。
     if(!active.submitted.thread) active.submitted.thread=frame.thread;
     else if(frame.thread!=active.submitted.thread) {Finish("原生帧线程已改变，已取消发型／道具操作。");return;}

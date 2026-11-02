@@ -234,6 +234,7 @@ void SubmitPendingLocate(CustomizationView& view,CustomizationView::ModeState& s
         target=*found;
     }
     const auto& item=view.catalog->items[target];
+    if(view.BrowseOnly(item)) {view.status="仅供浏览。";return;}
     // 模型请求只交给模型定位器；发型与道具交给独立后端，避免照搬模型命令或布局。
     const bool models=view.domain==CustomizationDomain::Models;
     const auto& submit=models?view.submitModuleLocate:view.submitItemRequest;
@@ -290,6 +291,7 @@ void CustomizationView::EnsureLoaded(const fs::path& h,const fs::path& g) {
 
 // 接收异步快照和查询结果，并调度最新修订；全过程不等待后台任务。
 void CustomizationView::Poll() {
+    SyncSinger(false);
     const auto recommendations=recommendationProvider?recommendationProvider():nullptr;
     const auto recommendationGeneration=recommendations?recommendations->generation:0;
     std::string criteriaKey=songCriteria.pack+"|"+std::to_string(songCriteria.style)+"|"+std::to_string(songCriteria.difficulty)+"|"+std::to_string(songCriteria.sort)+"|"+std::to_string(songCriteria.modMode)+"|"+std::to_string(songCriteria.favoritesOnly);
@@ -398,6 +400,37 @@ void CustomizationView::OnOpen(std::optional<CustomizationContext> context) {
     }
     textNavigation=true;gridNavigation=controlNavigation=false;
     ClearHoveredItem(*this);
+    // 每次打开都按当前实际歌者重设发型默认筛选，不沿用上一次浏览分类。
+    SyncSinger(true);
+}
+
+// 参数 opening 为是否由打开面板触发；只读同步，不调用游戏函数。
+void CustomizationView::SyncSinger(bool opening) {
+    auto next=singerProvider?singerProvider():std::nullopt;
+    const uint64_t nextGeneration=next?next->generation:0;
+    const bool changed=nextGeneration!=observedSingerGeneration;
+    singer=std::move(next);observedSingerGeneration=nextGeneration;
+    // 实际歌者改变时同步上下文并取消旧操作；旧首击也失效。
+    if(changed && !opening) {ResetBodyClick();if(invalidateModuleLocate) invalidateModuleLocate();}
+    if(opening) hairFollowsSinger=true;
+    if(!opening && !(changed && hairFollowsSinger)) return;
+    auto& hair=states[1];
+    const std::optional<CustomizationCharacter> wanted=singer?std::optional(singer->character):std::nullopt;
+    if(hair.query.character==wanted) return;
+    hair.query.character=wanted;++hair.revision;hair.due={};hair.locateRequested=hair.detailsRequested=false;hair.details=false;hair.scroll=true;
+    if(domain==CustomizationDomain::Hair) {ResetBodyClick();ClearHoveredItem(*this);}
+}
+
+// 参数 value 为人物筛选；发型手动选择后不再跟随实际歌者，直到下次打开。
+void CustomizationView::SetCharacterFilter(std::optional<CustomizationCharacter> value) {
+    if(domain==CustomizationDomain::Hair) hairFollowsSinger=false;
+    State().query.character=value;QueueSearch(false);
+}
+
+// 参数 item 为卡片实体；当前歌者未知时不判定为只读，跨页后由后端按实际歌者重验。
+bool CustomizationView::BrowseOnly(const CustomizationItem& item) const {
+    return domain==CustomizationDomain::Hair && singer && item.part==CustomizationPart::Hair
+        && item.character!=singer->character && item.character!=CustomizationCharacter::All;
 }
 
 // 参数 debounce 为是否等待连续输入停止300毫秒；新条件会取消旧Enter和旧悬浮详情。
@@ -458,6 +491,8 @@ void CustomizationView::RequestLocate(const CustomizationKey& key,CustomizationO
     auto selected=std::find_if(state.results.begin(),state.results.end(),[&](size_t index){return catalog->items[index].key==key;});
     if(selected==state.results.end()) {status=std::string("所选")+DomainNoun(domain)+"已不在最新结果中；未提交定位。";return;}
     state.cursor.selected=static_cast<size_t>(selected-state.results.begin());
+    // 其他角色发型只读：单击、双击、底栏与外部入口都只改变搜索选择。
+    if(BrowseOnly(catalog->items[*selected])) {status="仅供浏览。";ResetBodyClick();return;}
     pendingLocateKey=key;locateOrigin=origin;
     state.locateRequested=true;
     state.detailsRequested=true;
@@ -476,6 +511,7 @@ void CustomizationView::RequestAction(const CustomizationKey& key,CustomizationA
     if(composing || SearchPending() || catalogRequiresRestart || !catalog || action==CustomizationAction::Locate) return;
     const auto found=std::find_if(State().results.begin(),State().results.end(),[&](size_t index){return catalog->items[index].key==key;});
     if(found==State().results.end()) {status="动作目标已不在当前结果中。";return;}
+    if(BrowseOnly(catalog->items[*found])) {status="仅供浏览。";return;}
     const auto capability=actionCapability?actionCapability(key):CustomizationActionCapability{};
     // 按钮永远不跨页：不在目标原生页时只提示双击主体，既不排队导航也不改变搜索选择。
     if(!capability.targetPage) {status=std::string("双击卡片进入")+CustomizationDomainPageName(domain)+"后使用。";return;}
@@ -565,11 +601,16 @@ void CustomizationView::Draw() {
         ImGui::SetNextItemWidth(characterWidth);
         const char* character=state.query.character?CustomizationCharacterName(*state.query.character):"全部角色";
         if(ImGui::BeginCombo("##character",character)) {
-            if(ImGui::Selectable("全部角色",!state.query.character)) {state.query.character.reset();QueueSearch(false);}
+            if(ImGui::Selectable("全部角色",!state.query.character)) SetCharacterFilter(std::nullopt);
             std::vector<CustomizationCharacter> characters={CustomizationCharacter::Miku,CustomizationCharacter::Rin,CustomizationCharacter::Len,CustomizationCharacter::Luka,CustomizationCharacter::Kaito,CustomizationCharacter::Meiko,CustomizationCharacter::Derived,CustomizationCharacter::Random};
             // 发型按原始人物浏览，不套用模型页的衍生／随机分类。
             if(!models) {characters.clear();for(int n=0;n<10;++n) characters.push_back(static_cast<CustomizationCharacter>(n));}
-            for(auto value:characters) if(ImGui::Selectable(CustomizationCharacterName(value),state.query.character==value)) {state.query.character=value;QueueSearch(false);}
+            for(auto value:characters) {
+                // 发型列表标出当前实际歌者；选择其他角色只是浏览，不切换歌者或槽位。
+                const bool current=!models && singer && singer->character==value;
+                const std::string label=std::string(CustomizationCharacterName(value))+(current?"（当前歌者）":"")+"##character-"+std::to_string(static_cast<int>(value));
+                if(ImGui::Selectable(label.c_str(),state.query.character==value)) SetCharacterFilter(value);
+            }
             ImGui::EndCombo();
         }
         if(splitFilters) ImGui::NewLine(); else ImGui::SameLine();
@@ -636,6 +677,12 @@ void CustomizationView::Draw() {
     if(requestGridFocus) {ImGui::ClearActiveID();ImGui::SetFocusID(gridFocusId,parent);ImGui::FocusWindow(parent);gridNavigation=true;textNavigation=false;requestGridFocus=false;}
     if(clickedFocus) {ImGui::SetFocusID(gridFocusId,parent);ImGui::FocusWindow(parent);gridNavigation=true;textNavigation=false;}
     if(SearchPending() || composing) {ImGui::SameLine();ImGui::TextDisabled("%s",composing?"组词中…":"搜索中…");}
+    // 发型页一句话说明当前歌者；未知时只提示暂不支持预览与更换，不展开实现细节。
+    if(domain==CustomizationDomain::Hair) {
+        ImGui::SameLine();
+        if(singer) ImGui::TextDisabled("当前歌者：%s",CustomizationCharacterName(singer->character));
+        else ImGui::TextDisabled("未读取到当前歌者，暂不支持预览与更换");
+    }
     if(models && state.matchedSongs && !SearchPending()) {
         ImGui::SameLine();ImGui::TextDisabled("匹配 %zu 首歌曲 · 推荐显示全部角色",state.matchedSongs);
     }
@@ -710,7 +757,9 @@ void CustomizationView::Draw() {
                 const bool actionFocused=navigation.NavWindow==ImGui::GetCurrentWindow()
                     && (navigation.NavId==previewId || navigation.NavId==equipId);
                 // 三个领域都显示同构操作条；发型／道具能力未认证时按钮禁用并说明原因，悬浮本身不执行动作。
-                const bool showActions=hovered || selected || actionFocused;
+                // 其他角色发型只读：不显示更换／预览操作条，只在图片角标注一次“仅供浏览”。
+                const bool browseOnly=BrowseOnly(item);
+                const bool showActions=!browseOnly && (hovered || selected || actionFocused);
                 const float actionY=imageHeight-38.0f;
                 const float actionWidth=(cellWidth-22.0f)*0.5f;
                 const auto& io=ImGui::GetIO();
@@ -814,6 +863,11 @@ void CustomizationView::Draw() {
                     draw->AddRectFilled(ImVec2(origin.x+5,origin.y+5),ImVec2(origin.x+cellWidth-5,origin.y+34),IM_COL32(24,43,43,240),4);
                     draw->AddText(ImVec2(origin.x+10,origin.y+9),IM_COL32(137,229,207,255),badge.c_str());
                 }
+                if(browseOnly) {
+                    const char* badge="仅供浏览";const ImVec2 badgeSize=ImGui::CalcTextSize(badge);
+                    draw->AddRectFilled(ImVec2(imageMax.x-badgeSize.x-14.0f,imageMin.y+5.0f),ImVec2(imageMax.x-4.0f,imageMin.y+badgeSize.y+11.0f),IM_COL32(24,30,36,220),4.0f);
+                    draw->AddText(ImVec2(imageMax.x-badgeSize.x-9.0f,imageMin.y+8.0f),IM_COL32(150,165,175,255),badge);
+                }
                 const float textWidth=cellWidth-20.0f;
                 const std::string name=EllipsizeText(item.name,textWidth);
                 draw->PushClipRect(ImVec2(origin.x+8.0f,origin.y+nameOffset-2.0f),ImVec2(origin.x+cellWidth-6.0f,origin.y+detailOffset-2.0f),true);
@@ -916,8 +970,9 @@ void CustomizationView::Draw() {
         const bool targetPage=models?(!actionCapability || capability.targetPage):capability.targetPage;
         const bool certified=models || capability.locate;
         const bool connected=models?bool(submitModuleLocate):bool(submitItemRequest);
-        const bool canSubmit=connected && !catalogRequiresRestart && !SearchPending() && targetPage && certified;
-        const std::string footerLabel=!connected && !models?std::string("暂不支持定位")
+        const bool browseOnly=BrowseOnly(selected);
+        const bool canSubmit=connected && !catalogRequiresRestart && !SearchPending() && targetPage && certified && !browseOnly;
+        const std::string footerLabel=browseOnly?std::string("仅供浏览"):!connected && !models?std::string("暂不支持定位")
             :!targetPage?std::string("双击进入")+CustomizationDomainPageName(domain):!certified?std::string("暂不支持定位"):std::string("定位 · Enter");
         ImGui::BeginDisabled(!canSubmit);
         if(ImGui::Button((footerLabel+"###footer-locate").c_str(),ImVec2(buttonWidth,30.0f))) RequestLocate(selected.key);

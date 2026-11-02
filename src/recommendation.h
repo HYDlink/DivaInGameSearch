@@ -22,6 +22,9 @@ struct RecommendedModules {
     std::vector<std::string> unresolved;
     size_t matchedSongs=0;
 };
+// 参数 snapshot/pvid/slot 为游戏 PV 演出角色快照、来源歌曲与实际歌者槽位；按伪人物继承规则返回原始人物，未知返回空。
+// 槽位下标与 PV 演出角色下标一一对应是待本机核对的假设；结果只用于发型浏览默认值与动作守卫，不改写任何游戏状态。
+std::optional<CustomizationCharacter> ResolvePerformerCharacter(const RecommendationSnapshot& snapshot,int pvid,int slot);
 // 参数 snapshot/pvid/catalog 为游戏推荐值、歌曲编号及最终有效服装目录；按人物和零基COS唯一关联。
 RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snapshot,int pvid,const CustomizationCatalog& catalog);
 // 参数为服装条件、共用曲库及歌曲条件、收藏和推荐快照；同一输入同时检索服装名称和歌曲推荐。
