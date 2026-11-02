@@ -192,3 +192,15 @@ OnOpen不再写query.character或重置查询修订；首次默认全部角色�
 - 执行器：新增 `customization_item_locator.*`，提供 Submit／OnNativeFrame／Tick／Poll／Cancel／Capabilities 与证据 Profile 接口。生产未登记任何 Profile，发型／道具原位定位、预览、更换全部明确 Unsupported；到达目标页只报告“已进入”，不报告定位成功。
 
 自动检查：在 Linux 用临时 Win32 兼容层（未入库）编译运行 CustomizationDomainCheck、CustomizationItemLocatorCheck、CustomizationCheck、NativePageRouterCheck、ViewCheck、ModuleCatalogCheck、RecommendationCheck、SearchDispatchCheck、FarcCheck、ModuleCategoryCheck，全部通过，并做了变异检查确认关键断言有效。没有 MSVC 构建、没有 ctest、没有 ImGui DX11 预览截图、没有 InputCheck／ModuleActionCheck／ModuleLocatorCheck，也没有任何实际游戏验证；这些由本机接收后完成。
+
+### 2026-11-03 开发分支：PR #2 修订（缩略图、发型歌者、道具子标签、原生规格）
+
+按 PR #2 本机验收反馈修订，版本仍为 1.0.11，未部署：
+
+- 缩略图：新增可移植解析链 `sprite_resolver`，模型 `SPR_SEL_MD%03dCMN_MD_IMG[_FT]`、发型与四部位道具 `SPR_CMNITM_THMB%03d_ITM_IMG[_FT]`；DML 追加库按优先级、普通库整库替换、Mod 归档优先于官方 CPK；FT 专用图缺失或解码失败时回退同 ID 通用图并保留原因。发型／道具按透明边界等比显示。
+- 发型：按来源歌曲 PV 演出角色与实际歌者槽位解析当前歌者（槽位↔演出角色下标对应为待核对假设），每次打开默认该角色；其他角色只读，后端网关、到达后重验与执行器都拒绝跨页／预览／更换。
+- 道具：部位下拉改为头｜脸｜胸口｜背部子标签（各自独立状态），删除人物筛选与“共通ALL”显示。
+- 卡片：发型图片约 0.78 倍宽（限制在 0.70～0.85），道具约 0.58 倍宽（0.50～0.65）；精简卡片、悬浮与底栏文字，开发细节只进日志。
+- 原生：执行器明确区分进入页面、目标高亮、临时预览、预览已恢复、实际装备；新增 `customization_item_profiles` 规格构造器，生产规格表为空，因此发型／道具原生定位、预览、更换仍为“暂不支持”。规格填写说明见 [research/HAIR_ACCESSORY_PROFILE_SPEC.md](research/HAIR_ACCESSORY_PROFILE_SPEC.md)。
+
+自动检查在 Linux 临时兼容层下运行（同上次方式），未做 MSVC 构建、ctest、Preview 截图或实机验证。
