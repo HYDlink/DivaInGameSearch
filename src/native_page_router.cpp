@@ -1,5 +1,6 @@
 #include "native_page_router.h"
 #include "customization_item_locator.h"
+#include "customization_item_profiles.h"
 #include "module_action.h"
 #include "performance_trace.h"
 #include <Windows.h>
@@ -193,9 +194,10 @@ bool SameConfiguration(const NativePageSnapshot& a,const NativePageSnapshot& b) 
         && a.slot==b.slot && a.slotCount==b.slotCount && a.nativeScope==b.nativeScope && a.sourcePvid==b.sourcePvid;
 }
 // 参数 text/success 为最终反馈与结果；不在失败后自动恢复或再发导航。
-void Finish(const std::string& text,bool success=false) {
+void Finish(const std::string& text,bool success=false,CustomizationStage stage=CustomizationStage::None,const std::string& detail={}) {
     route.phase=RoutePhase::Done;route.status.message=text;route.status.completed=true;route.status.succeeded=success;
     route.status.phase=success?ModuleLocatePhase::Succeeded:ModuleLocatePhase::Rejected;
+    route.status.stage=stage;route.status.detail=detail;
 }
 // 参数 phase/text 为预期下一阶段与中文进度，每阶段重新计算超时。
 void Advance(RoutePhase phase,const std::string& text) {
@@ -392,7 +394,8 @@ void OnBoundary(int boundary,uintptr_t object) {
         if(route.target==NativePage::Module && !ReadModuleLocatorContext()) {route.stable=0;return;}
         if(++route.stable<2) return;
         std::string message;
-        if(!DispatchArrival(s,message)) {Finish(message);return;}
+        // 未能交给定位器时只确认“已进入页面”，不显示定位成功；开发原因只写日志细节。
+        if(!DispatchArrival(s,message)) {Finish(message,false,CustomizationStage::PageEntered,route.target==NativePage::Module?std::string{}:PollCustomizationItemLocator().detail);return;}
         Advance(RoutePhase::Locating,std::string("已进入")+PageName(route.target)+"，正在定位"+(route.target==NativePage::Module?"服装":route.target==NativePage::Hair?"发型":"道具")+"……");
     }
 }
@@ -467,7 +470,9 @@ bool InitializeNativePageRouter(uintptr_t base) {
     if(result==NO_ERROR) result=DetourAttach(reinterpret_cast<PVOID*>(&originalState),reinterpret_cast<void*>(&StateHook));
     if(result!=NO_ERROR) {DetourTransactionAbort();return false;}
     if(DetourTransactionCommit()!=NO_ERROR) return false;
-    installed=true;InitializeModuleActions(base);return true;
+    installed=true;InitializeModuleActions(base);
+    // 发型／道具原生 Profile 只按已认证规格登记；规格为空时不开放任何定位、预览或更换。
+    InitializeCustomizationItemProfiles(base);return true;
 }
 
 namespace {
@@ -526,6 +531,11 @@ bool SubmitCustomizationRequest(const CustomizationLocateRequest& original,std::
         previewContinuation.status.action=request.action;route.phase=RoutePhase::Idle;message=previewContinuation.status.message;return true;
     }
     if(ModuleActionBusy()) {message="服装预览或换装仍在处理中，请先完成当前操作。";return false;}
+    // 发型／道具临时预览期间不接受新操作；Profile 提供退出入口时先请求退出，核对原装备后再允许下一步。
+    if(CustomizationItemPreviewActive()) {
+        std::string exitMessage;
+        message=RequestCustomizationItemPreviewExit(exitMessage)?"正在退出临时预览，请稍后再试。":"正在临时预览，请先在游戏中退出预览。";return false;
+    }
     if(CustomizationItemLocatorBusy()) {message="发型／道具原生操作仍在处理中，请稍候。";return false;}
     if(route.phase!=RoutePhase::Idle && route.phase!=RoutePhase::Done && route.cancelled==cancellation.load()) {message="上一条跨页定位仍在处理中。";return false;}
     // 发型：当前歌者已知时其他角色只读，任何入口（双击、Enter、底栏、按钮）都不跨页、不预览、不更换；

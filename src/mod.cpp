@@ -3,6 +3,7 @@
 #include "module_locator.h"
 #include "native_page_router.h"
 #include "module_action.h"
+#include "customization_item_profiles.h"
 #include <fstream>
 #include <atomic>
 
@@ -89,6 +90,8 @@ __declspec(dllexport) void Init() {
         }
         diva::App().view.customization.status=message;
         Log(std::string(diva::CustomizationDomainName(request.domain))+"原生请求提交：ID="+std::to_string(request.key.id)+"；"+message);
+        // 开发原因（缺失的原生证据等）只进入诊断日志，界面保持短句。
+        if(status.serial==request.serial && !status.detail.empty()) Log("原生能力细节："+status.detail);
     };
     host.view.customization.submitModuleAction=host.view.customization.submitModuleLocate;
     // 发型与自定义道具使用独立注入口；同一网关按最新目录重算目标页，未认证能力明确拒绝。
@@ -142,6 +145,7 @@ __declspec(dllexport) void PostInit() {
     if(diva::InitializeModuleLocator(diva::Game().ExecutableBase())) {
         diva::InitializeRecommendations(diva::Game().ExecutableBase());
         nativeRoutingAvailable=diva::InitializeNativePageRouter(diva::Game().ExecutableBase());
+        if(nativeRoutingAvailable) Log(diva::CustomizationItemProfileDiagnostics());
         Log(nativeRoutingAvailable?"歌曲、服装、发型与自定义道具原生双击跨页路由已初始化；发型／道具列表定位未登记证据Profile，到达后不改动原生高亮。":"原生路由初始化失败；已认证目标页内定位仍可用。");
     }
     Log(diva::PollModuleLocator().message);
@@ -200,7 +204,7 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
         if(reportedModuleSerial!=moduleSerial || reportedModuleMessage!=moduleStatus.message) {
             reportedModuleSerial=moduleSerial;reportedModuleMessage=moduleStatus.message;
             host.view.customization.status=moduleStatus.message;
-            if(moduleStatus.completed || moduleStatus.phase==diva::ModuleLocatePhase::Confirming) Log("服装定位阶段："+moduleStatus.message);
+            if(moduleStatus.completed || moduleStatus.phase==diva::ModuleLocatePhase::Confirming) Log("定制原生阶段："+moduleStatus.message+(moduleStatus.detail.empty()?"":"；细节："+moduleStatus.detail));
             if(moduleStatus.action==diva::CustomizationAction::Locate && moduleStatus.completed && moduleStatus.succeeded && host.view.closeOnSuccess) {
                 host.view.open=false;host.view.ClearActions();host.releaseUntil=GetTickCount64()+120;
                 diva::CancelModuleLocate();

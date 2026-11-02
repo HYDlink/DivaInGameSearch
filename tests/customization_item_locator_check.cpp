@@ -17,9 +17,11 @@ struct FakeList {uintptr_t identity=0;std::vector<int> ids;int highlight=0;};
 struct FakeNative {
     std::map<CustomizationPart,FakeList> lists;
     CustomizationPart current=CustomizationPart::Hair;
-    bool ready=true,forge=false,refresh=false;
-    std::optional<int> equipped;
-    int reads=0,switches=0,highlights=0,equips=0;
+    bool ready=true,forge=false,refresh=false,previewActive=false,changeOtherSlot=false;
+    std::optional<int> equipped,previewId,otherSlot;
+    // 未列出的ID视为已拥有；显式 false 为未拥有，nullopt 为拥有状态未知。
+    std::map<int,std::optional<bool>> owned;
+    int loadingFrames=0,reads=0,switches=0,highlights=0,steps=0,equips=0,previews=0,exits=0;
     size_t lastIndex=~size_t(0);
 };
 FakeNative native;
@@ -27,8 +29,11 @@ FakeNative native;
 bool FakeRead(const CustomizationItemFrame& frame,CustomizationItemSnapshot& out) {
     (void)frame;++native.reads;auto& list=native.lists[native.current];
     out.pageReady=true;out.listReady=native.ready;out.part=native.current;out.listIdentity=list.identity;out.recordIds=list.ids;
-    if(list.highlight>=0 && list.highlight<static_cast<int>(list.ids.size())) out.highlightedId=list.ids[static_cast<size_t>(list.highlight)];
-    out.equippedId=native.equipped;return true;
+    if(list.highlight>=0 && list.highlight<static_cast<int>(list.ids.size())) {out.highlightedId=list.ids[static_cast<size_t>(list.highlight)];out.highlightIndex=static_cast<size_t>(list.highlight);}
+    for(int id:list.ids) {auto found=native.owned.find(id);out.owned.push_back(found==native.owned.end()?std::optional<bool>(true):found->second);}
+    out.loading=native.loadingFrames>0;if(native.loadingFrames>0) --native.loadingFrames;
+    out.previewActive=native.previewActive;out.previewId=native.previewId;
+    out.equippedId=native.equipped;out.slotEquipped[0]=native.equipped;out.slotEquipped[1]=native.otherSlot;return true;
 }
 // 参数 frame/direction 为上下文与方向；按头→脸→胸口→背部顺序移动一步。
 bool FakeSwitch(const CustomizationItemFrame& frame,int direction) {
@@ -44,10 +49,18 @@ bool FakeHighlight(const CustomizationItemFrame& frame,size_t index) {
     if(native.refresh) ++list.identity;
     return true;
 }
-// 参数 frame/index 为上下文与列表序号；模拟更换后写入实际装备读回。
+// 参数 frame/index 为上下文与列表序号；模拟更换后写入实际装备读回，changeOtherSlot 模拟误改其他槽位。
 bool FakeEquip(const CustomizationItemFrame& frame,size_t index) {
-    (void)frame;++native.equips;native.equipped=native.lists[native.current].ids[index];return true;
+    (void)frame;++native.equips;native.equipped=native.lists[native.current].ids[index];if(native.changeOtherSlot) native.otherSlot=-7;return true;
 }
+// 参数 frame/direction 为上下文与方向；模拟逐步移动高亮一格。
+bool FakeStep(const CustomizationItemFrame& frame,int direction) {(void)frame;++native.steps;native.lists[native.current].highlight+=direction;return true;}
+// 参数 frame/index 为上下文与列表序号；模拟进入临时预览并加载两帧。
+bool FakePreview(const CustomizationItemFrame& frame,size_t index) {
+    (void)frame;++native.previews;native.previewActive=true;native.previewId=native.lists[native.current].ids[index];native.loadingFrames=2;return true;
+}
+// 参数 frame 为上下文；模拟原生退出临时预览。
+bool FakeExit(const CustomizationItemFrame& frame) {(void)frame;++native.exits;native.previewActive=false;native.previewId.reset();return true;}
 // 参数 domain 为目标领域；返回空闲且有效的模拟帧上下文。
 CustomizationItemFrame Frame(CustomizationDomain domain,uint64_t now=1000) {
     CustomizationItemFrame frame;frame.valid=frame.idle=true;frame.domain=domain;frame.scene=0x1000;frame.state=0x2000;
@@ -67,6 +80,7 @@ void Reset() {
     native.lists[CustomizationPart::Hair]={10,{500,501,502,503},0};
     native.lists[CustomizationPart::Head]={20,{600,601},0};native.lists[CustomizationPart::Face]={21,{610},0};
     native.lists[CustomizationPart::Neck]={22,{620},0};native.lists[CustomizationPart::Back]={23,{630,631},0};
+    native.equipped=999;native.otherSlot=888;
 }
 }
 
@@ -77,13 +91,14 @@ int main() {
         // 生产默认：没有任何 Profile，定位、预览、更换全部拒绝且不报告成功。
         for(auto domain:{CustomizationDomain::Hair,CustomizationDomain::Accessories}) {
             const auto c=CustomizationItemCapabilities(domain);
-            Check(!c.locate && !c.preview && !c.equip && c.locateReason.find("尚未认证")!=std::string::npos,"未知Profile意外开放能力或缺少原因");
+            Check(!c.locate && !c.preview && !c.equip && c.locateReason.find("暂不支持")!=std::string::npos && c.previewReason=="暂不支持此操作。","未知Profile意外开放能力或原因不是短句");
         }
         for(auto action:{CustomizationAction::Locate,CustomizationAction::Preview,CustomizationAction::Equip}) {
             Check(!SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair,action),Frame(CustomizationDomain::Hair),message)
-                && message.find("尚未认证")!=std::string::npos,"未知Profile没有明确拒绝");
+                && message.find("暂不支持")!=std::string::npos && message.find("0x")==std::string::npos,"未知Profile没有用短句明确拒绝");
             const auto status=PollCustomizationItemLocator();
-            Check(status.completed && !status.succeeded && status.phase==ModuleLocatePhase::Rejected && !CustomizationItemLocatorBusy(),"未知Profile拒绝没有发布失败状态");
+            Check(status.completed && !status.succeeded && status.phase==ModuleLocatePhase::Rejected && !CustomizationItemLocatorBusy()
+                && status.stage==CustomizationStage::None && status.detail.find("Profile")!=std::string::npos,"未知Profile拒绝没有发布失败状态或缺少日志细节");
         }
         Check(native.reads==0 && native.highlights==0,"未知Profile仍读取或写入原生列表");
         Check(!SubmitCustomizationItemRequest(Request(CustomizationDomain::Models,500,CustomizationPart::Hair),Frame(CustomizationDomain::Hair),message),"模型领域请求进入发型执行器");
@@ -105,7 +120,7 @@ int main() {
         auto notIdle=Frame(CustomizationDomain::Hair);notIdle.idle=false;
         Check(!SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair),notIdle,message),"过渡帧仍受理定位");
         Check(!SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair,CustomizationAction::Equip),Frame(CustomizationDomain::Hair),message)
-            && message.find("更换")!=std::string::npos,"Profile缺少更换入口仍受理换装");
+            && message=="暂不支持此操作。","Profile缺少更换入口仍受理换装");
 
         // 正常定位：唯一查找、一次高亮调用、跨两帧读回后成功。
         const auto first=Request(CustomizationDomain::Hair,502,CustomizationPart::Hair);
@@ -117,7 +132,8 @@ int main() {
         Frames(1,Frame(CustomizationDomain::Hair));Check(!PollCustomizationItemLocator().completed,"仅一帧读回即报告成功");
         Frames(1,Frame(CustomizationDomain::Hair));
         auto status=PollCustomizationItemLocator();
-        Check(status.completed && status.succeeded && status.phase==ModuleLocatePhase::Succeeded && native.highlights==1 && !CustomizationItemLocatorBusy(),"跨帧读回一致后未报告成功或重复调用");
+        Check(status.completed && status.succeeded && status.phase==ModuleLocatePhase::Succeeded && native.highlights==1 && !CustomizationItemLocatorBusy()
+            && status.stage==CustomizationStage::Highlighted,"跨帧读回一致后未报告高亮成功或重复调用");
         Check(!SubmitCustomizationItemRequest(first,Frame(CustomizationDomain::Hair),message),"重复序号被再次受理");
 
         // 伪造成功：原生调用返回受理但高亮未变，不能报告成功。
@@ -171,7 +187,7 @@ int main() {
         Reset();native.current=CustomizationPart::Head;
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,630,CustomizationPart::Back),Frame(CustomizationDomain::Accessories),message),"道具跨部位场景未受理");
         Frames(2,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
-        Check(status.completed && !status.succeeded && status.message.find("部位切换")!=std::string::npos && native.highlights==0,"未认证部位协议仍跨部位定位");
+        Check(status.completed && !status.succeeded && status.message.find("跨部位")!=std::string::npos && status.detail.find("部位切换")!=std::string::npos && native.highlights==0,"未认证部位协议仍跨部位定位");
         items.switchPart=FakeSwitch;items.equip=FakeEquip;RegisterCustomizationItemProfile(CustomizationDomain::Accessories,items);
         Reset();native.current=CustomizationPart::Head;
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,631,CustomizationPart::Back),Frame(CustomizationDomain::Accessories),message),"道具定位未受理");
@@ -187,7 +203,45 @@ int main() {
         Reset();native.current=CustomizationPart::Face;
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,610,CustomizationPart::Face,CustomizationAction::Equip),Frame(CustomizationDomain::Accessories),message),"更换未受理");
         Frames(3,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
-        Check(status.succeeded && native.equips==1 && native.highlights==0 && status.action==CustomizationAction::Equip,"更换读回或调用次数错误");
+        Check(status.succeeded && native.equips==1 && native.highlights==0 && status.action==CustomizationAction::Equip && status.stage==CustomizationStage::Equipped,"更换读回或调用次数错误");
+        // 更换：拥有状态未知或未拥有一律不调用；误改其他槽位不报告成功。
+        for(auto ownership:{std::optional<bool>{},std::optional<bool>(false)}) {
+            Reset();native.current=CustomizationPart::Face;native.owned[610]=ownership;
+            Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,610,CustomizationPart::Face,CustomizationAction::Equip),Frame(CustomizationDomain::Accessories),message),"拥有守卫场景未受理");
+            Frames(2,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
+            Check(status.completed && !status.succeeded && native.equips==0,"未拥有或拥有状态未知仍调用更换");
+        }
+        Reset();native.current=CustomizationPart::Face;native.changeOtherSlot=true;
+        Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,610,CustomizationPart::Face,CustomizationAction::Equip),Frame(CustomizationDomain::Accessories),message),"其他槽位场景未受理");
+        Frames(3,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
+        Check(status.completed && !status.succeeded && status.stage==CustomizationStage::None,"更换误改其他槽位仍报告成功");
+        // 预览：等待加载，确认后保持进行中（Previewing），原生退出并核对原装备后才完成。
+        items.preview=FakePreview;items.exitPreview=FakeExit;RegisterCustomizationItemProfile(CustomizationDomain::Accessories,items);
+        Reset();native.current=CustomizationPart::Back;
+        Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,631,CustomizationPart::Back,CustomizationAction::Preview),Frame(CustomizationDomain::Accessories),message),"预览未受理");
+        Frames(1,Frame(CustomizationDomain::Accessories));Check(native.previews==1 && !PollCustomizationItemLocator().previewReady,"预览调用次数错误或加载中即报告就绪");
+        Frames(4,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
+        Check(status.previewReady && !status.completed && status.stage==CustomizationStage::Previewing && CustomizationItemPreviewActive() && CustomizationItemLocatorBusy(),"预览确认后未进入临时预览阶段");
+        Check(!SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,630,CustomizationPart::Back),Frame(CustomizationDomain::Accessories),message) && message.find("预览")!=std::string::npos,"预览期间受理了新操作");
+        CancelCustomizationItemLocator();Frames(2,Frame(CustomizationDomain::Accessories));
+        Check(CustomizationItemPreviewActive(),"取消中断了预览核对");
+        Check(RequestCustomizationItemPreviewExit(message),"退出预览请求未受理");
+        Frames(1,Frame(CustomizationDomain::Accessories));Check(native.exits==1,"退出预览入口未调用或重复调用");
+        Frames(2,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
+        Check(status.completed && status.succeeded && status.previewRestored && status.stage==CustomizationStage::PreviewRestored && native.exits==1 && !CustomizationItemLocatorBusy(),"退出预览后未核对原装备或未完成");
+        Reset();native.current=CustomizationPart::Back;
+        Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,631,CustomizationPart::Back,CustomizationAction::Preview),Frame(CustomizationDomain::Accessories),message),"预览变装场景未受理");
+        Frames(6,Frame(CustomizationDomain::Accessories));Check(CustomizationItemPreviewActive(),"预览变装场景未进入预览");
+        native.previewActive=false;native.equipped=631;Frames(2,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
+        Check(status.completed && !status.succeeded && !status.previewRestored,"退出预览后装备改变仍报告恢复");
+        // 逐步移动模式：每帧一步，读回高亮到达后才确认。
+        CustomizationItemProfile stepping;stepping.read=FakeRead;stepping.step=FakeStep;RegisterCustomizationItemProfile(CustomizationDomain::Hair,stepping);
+        Reset();
+        Check(CustomizationItemCapabilities(CustomizationDomain::Hair).locate,"逐步移动Profile未开放定位");
+        Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,503,CustomizationPart::Hair),Frame(CustomizationDomain::Hair),message),"逐步定位未受理");
+        Frames(3,Frame(CustomizationDomain::Hair));Check(native.steps==3 && !PollCustomizationItemLocator().completed,"逐步移动不是每帧一步");
+        Frames(3,Frame(CustomizationDomain::Hair));status=PollCustomizationItemLocator();
+        Check(status.succeeded && status.stage==CustomizationStage::Highlighted && native.steps==3,"逐步移动到达后未确认或继续移动");
         RegisterCustomizationItemProfile(CustomizationDomain::Hair,std::nullopt);RegisterCustomizationItemProfile(CustomizationDomain::Accessories,std::nullopt);
         Check(!CustomizationItemCapabilities(CustomizationDomain::Hair).locate,"撤销Profile后仍开放能力");
         std::cout<<"发型／道具执行器隔离回归通过："<<checks<<" 项；只使用模拟Profile，未认证任何原生发型或道具协议。\n";return 0;
