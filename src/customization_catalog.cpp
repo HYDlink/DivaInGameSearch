@@ -377,7 +377,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
     if(out.items.empty()) out.diagnostics.push_back("未检测到可读取的服装／饰品实体。请查看来源诊断。");
     if(out.unimportedArchives) out.diagnostics.push_back("发现 "+std::to_string(out.unimportedArchives)+" 个实体归档读取失败；详见来源诊断。");
     if(out.orphanNames) out.diagnostics.push_back("忽略 "+std::to_string(out.orphanNames)+" 个孤立名称补丁；名称不会创建实体。");
-    out.diagnostics.push_back("当前为磁盘元数据快照；磁盘刷新不等于游戏重载。官方PC地区表自动读取，未读取已购买或解锁状态。显示语言："+out.language+" → Mod通用名称 → 实体表原名；游戏内优先跟随当前语言。");
+    out.diagnostics.push_back("当前为磁盘元数据快照；磁盘刷新不等于游戏重载。官方PC地区表自动读取，未读取已购买或解锁状态。显示语言："+out.language+" → Mod通用名称 → 实体表原名；玩家界面默认使用简体中文。");
     return out;
 }
 }

@@ -52,8 +52,6 @@ struct CustomizationView {
     uint64_t observedRecommendationGeneration=0;
     // 无游戏的共用预览可以不注入读取器；实际DLL注入只读快照函数。
     std::function<std::shared_ptr<const RecommendationSnapshot>()> recommendationProvider;
-    // 在启动后台目录任务前读取游戏当前语言，后台任务只持有其字符串副本。
-    std::function<std::string()> languageProvider;
     struct GridCell {
         size_t resultIndex=0;
         int row=0,startColumn=0,span=1;

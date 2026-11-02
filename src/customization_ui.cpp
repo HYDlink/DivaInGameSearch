@@ -213,7 +213,8 @@ void CustomizationView::Refresh(const fs::path& h,const fs::path& g) {
     home=h;game=g;
     if(pending.valid()) return;
     status="正在后台读取启用Mod与兼容导入元数据……";
-    const auto language=languageProvider?languageProvider():std::string{};
+    // 玩家界面固定优先简体中文，显示与检索使用同一份中文目录，不跟随游戏语言覆盖。
+    const std::string language="cn";
     pending=std::async(std::launch::async,[h,g,language]{return LoadCustomizationCatalog(h,g,language);});
 }
 

@@ -107,8 +107,6 @@ __declspec(dllexport) void Init() {
 // 所有 Mod 完成 Init 后再安装链式输入隔离。
 __declspec(dllexport) void PostInit() {
     diva::Game().Initialize();
-    // 获取器只在目录刷新时读取原生语言，不在后台线程调用游戏函数。
-    diva::App().view.customization.languageProvider=[] {return diva::Game().CurrentLanguage();};
     Log(diva::Game().diagnostic);
     if(diva::InitializeModuleLocator(diva::Game().ExecutableBase())) {
         diva::InitializeRecommendations(diva::Game().ExecutableBase());
