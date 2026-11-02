@@ -28,6 +28,11 @@ struct ModuleAssetPreview {
     int width = 0;
     int height = 0;
     std::string source;
+    // 专用图不可用时回退同 ID 通用图；fallbackReason 保留专用图失败原因。
+    bool fallback = false;
+    std::string fallbackReason;
+    // 有效内容的透明边界；宽高为 0 表示未知，按整张画布显示。
+    int contentX = 0, contentY = 0, contentWidth = 0, contentHeight = 0;
     void* texture = nullptr;
     const unsigned char* rgbaPixels = nullptr;
     std::shared_ptr<const std::vector<unsigned char>> rgbaOwner;
@@ -73,8 +78,8 @@ public:
     ModuleAssets(const ModuleAssets&) = delete;
     ModuleAssets& operator=(const ModuleAssets&) = delete;
 
-    // 参数 item/requestVisible/style 为稳定服装项、是否排队请求可见资源和专用 sprite 风格令牌；false 只返回元数据和缓存。
-    // style=1 查 MD_IMG（MEGA39/MM），style=2 查 MD_IMG_FT；style=0 或其他值明确返回风格未确认，不猜测图片。
+    // 参数 item/requestVisible/style 为稳定实体、是否排队请求可见资源和专用 sprite 风格令牌；false 只返回元数据和缓存。
+    // 模型查 MD_IMG[_FT]，发型与道具查 CMNITM_THMB ITM_IMG[_FT]；style=1 为 MEGA39/MM，style=2 为 Future Tone（缺专用图回退同 ID 通用图）。
     ModuleAssetPreview Peek(const CustomizationItem& item, bool requestVisible, int style = 0);
 
     // 参数 maxImages/maxDecodedBytes 为缓存精灵数和RGBA字节上限；会淘汰最久未访问项。

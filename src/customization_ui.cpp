@@ -695,7 +695,7 @@ void CustomizationView::Draw() {
                 const ImVec2 imageMax(origin.x+cellWidth-1.0f,origin.y+kPreviewHeight+1.0f);
                 draw->AddRectFilled(imageMin,imageMax,IM_COL32(35,40,47,255),7.0f);
                 CustomizationPreview preview;
-                if(models && previewProvider) preview=previewProvider(item,true);
+                if(previewProvider) preview=previewProvider(item,true);
                 else if(index<previewFacts.size()) preview=previewFacts[index];
                 // 首次解码或轻量查询碰到try-lock时，按可见项补齐尺寸，下一帧仅重建几何。
                 if(preview.width>0 && preview.height>0 && index<layoutPreviews.size()
@@ -708,15 +708,32 @@ void CustomizationView::Draw() {
                     texture=uploadPreviewPixels(item.key,pixels,preview.width,preview.height);
                 }
                 if(texture && preview.width>0 && preview.height>0) {
-                    const float scale=std::min((imageMax.x-imageMin.x)/preview.width,(imageMax.y-imageMin.y)/preview.height);
-                    const ImVec2 size(preview.width*scale,preview.height*scale);
-                    const ImVec2 pos(imageMin.x+((imageMax.x-imageMin.x)-size.x)*0.5f,imageMin.y+((imageMax.y-imageMin.y)-size.y)*0.5f);
+                    // 模型沿用整张画布；发型与道具按有效透明边界外扩少量内边距显示，等比缩放，不拉伸、不裁掉轮廓。
+                    float sourceX=0,sourceY=0,sourceW=static_cast<float>(preview.width),sourceH=static_cast<float>(preview.height);
+                    ImVec2 boxMin=imageMin,boxMax=imageMax;
+                    if(!models && preview.contentWidth>0 && preview.contentHeight>0) {
+                        const float pad=std::max(2.0f,0.04f*std::max(preview.contentWidth,preview.contentHeight));
+                        sourceX=std::max(0.0f,preview.contentX-pad);sourceY=std::max(0.0f,preview.contentY-pad);
+                        sourceW=std::min(static_cast<float>(preview.width),preview.contentX+preview.contentWidth+pad)-sourceX;
+                        sourceH=std::min(static_cast<float>(preview.height),preview.contentY+preview.contentHeight+pad)-sourceY;
+                        boxMin={imageMin.x+6.0f,imageMin.y+6.0f};boxMax={imageMax.x-6.0f,imageMax.y-6.0f};
+                    }
+                    const float boxW=boxMax.x-boxMin.x,boxH=boxMax.y-boxMin.y;
+                    float scale=std::min(boxW/sourceW,boxH/sourceH);
+                    if(!models) scale=std::min(scale,2.0f);
+                    const ImVec2 size(sourceW*scale,sourceH*scale);
+                    const ImVec2 pos(boxMin.x+(boxW-size.x)*0.5f,boxMin.y+(boxH-size.y)*0.5f);
+                    const ImVec2 uv0(sourceX/preview.width,sourceY/preview.height),uv1((sourceX+sourceW)/preview.width,(sourceY+sourceH)/preview.height);
                     draw->PushClipRect(imageMin,imageMax,true);
-                    draw->AddImage(texture,pos,ImVec2(pos.x+size.x,pos.y+size.y));
+                    draw->AddImage(texture,pos,ImVec2(pos.x+size.x,pos.y+size.y),uv0,uv1);
                     draw->PopClipRect();
+                    if(preview.fallback && previewStyle==2) {
+                        const char* badge="通用图";const ImVec2 badgeSize=ImGui::CalcTextSize(badge);
+                        draw->AddText(ImVec2(imageMax.x-badgeSize.x-8.0f,imageMax.y-badgeSize.y-6.0f),IM_COL32(120,143,154,255),badge);
+                    }
                 } else {
-                    // 缺图时显示明确的本领域占位，不显示其他种类图片，也不冒充原生 3D 预览。
-                    const char* missing=models?"暂无预览":domain==CustomizationDomain::Hair?"暂无发型图片":"暂无道具图片";
+                    // 资源读取中或确实缺图时显示简短占位，不显示其他种类图片，也不冒充原生 3D 预览。
+                    const char* missing=preview.source=="图片读取中。"?"读取中…":"暂无图片";
                     const ImVec2 labelSize=ImGui::CalcTextSize(missing);
                     draw->AddText(ImVec2(imageMin.x+(cellWidth-labelSize.x)*0.5f,imageMin.y+kPreviewHeight*0.5f-labelSize.y*0.5f),IM_COL32(141,163,174,255),missing);
                     if(preview.width>0 && preview.height>0) {
@@ -807,7 +824,7 @@ void CustomizationView::Draw() {
     if(hoveredKey && std::chrono::steady_clock::now()-hoverSince>=kHoverDelay && !detailItem) ClearHoveredItem(*this);
     if(detailItem) DrawItemDetails(*this,*detailItem,detailPreview);
 
-    if(previewProvider && models && !gridRows.empty()) {
+    if(previewProvider && !gridRows.empty()) {
         for(int row:{firstRendered-1,lastRendered}) {
             if(row<0 || row>=static_cast<int>(gridRows.size()) || (row>=firstRendered && row<lastRendered)) continue;
             for(size_t cellIndex:gridRows[static_cast<size_t>(row)]) {

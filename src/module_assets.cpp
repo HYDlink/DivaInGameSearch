@@ -1,5 +1,6 @@
 #include "module_assets.h"
 #include "farc.h"
+#include "sprite_resolver.h"
 #include <Windows.h>
 #include <toml.hpp>
 #include <algorithm>
@@ -352,38 +353,15 @@ std::vector<OfficialCpkEntry> ReadEntriesInternal(const fs::path& gameRoot,const
 // 参数 data 为 RGBA 字节；返回内容摘要以识别跨 CPK 的相同候选资源。
 std::string DataFingerprint(const std::string& data) { return HashText(data); }
 
-// 参数 api/database/name 为桥接、精灵数据库和目标 sprite 名；返回文件名与实际精灵索引。
-std::optional<std::pair<std::string,int>> FindSprite(CpkApi& api,const std::string& database,const std::string& name) {
-    std::lock_guard nativeLock(api.nativeCallMutex);
-    int index=-1;
-    int length=api.spriteDatabaseFind(reinterpret_cast<const unsigned char*>(database.data()),database.size(),name.c_str(),nullptr,0,&index);
-    if(length<0 || length>32768) return {};
-    std::string fileName(static_cast<size_t>(length)+1,'\0');
-    const int result=api.spriteDatabaseFind(reinterpret_cast<const unsigned char*>(database.data()),database.size(),name.c_str(),fileName.data(),static_cast<int>(fileName.size()),&index);
-    if(result!=length || index<0) return {};
-    fileName.resize(static_cast<size_t>(length));
-    return std::pair{std::move(fileName),index};
-}
-
-// 参数 fileName 为数据库保存的集合文件名；返回 FARC 逻辑路径及其内部 BIN 条目名。
-std::pair<std::string,std::string> ArchiveNames(const std::string& fileName) {
-    std::string value=FoldPath(fileName);
-    const auto slash=value.find_last_of('/');
-    std::string base=slash==std::string::npos?value:value.substr(slash+1);
-    if(base.ends_with(".farc")) base.resize(base.size()-5);
-    else if(base.ends_with(".bin")) base.resize(base.size()-4);
-    std::string relative=value;
-    if(relative.ends_with(".farc")) relative.resize(relative.size()-5);
-    else if(relative.ends_with(".bin")) relative.resize(relative.size()-4);
-    if(relative.find('/')==std::string::npos) relative="rom/2d/"+relative;
-    return {relative+".farc",base+".bin"};
-}
-
 // 参数 data/index/api/width/height/source 为 sprite BIN、真实索引、桥接、输出大小和来源。
 struct DecodedImage {
     std::shared_ptr<const std::vector<unsigned char>> pixels;
     int width=0,height=0;
     std::string source;
+    // 有效内容透明边界与通用图回退标记；回退原因只进入来源诊断，不冒充专用图成功。
+    SpriteBounds bounds;
+    bool fallback=false;
+    std::string fallbackReason;
 };
 
 // 参数 api/spriteBinary/index/source 为桥接、MML SpriteSet BIN、SpriteDatabase 实际索引和资源来源。
@@ -459,35 +437,21 @@ std::optional<std::string> ReadSmallFile(const fs::path& relative,size_t limit=k
     return data;
 }
 
-// 参数 api/database/name 为 MML 接口、候选数据库文本和目标名；检查名字唯一性后返回已验证索引。
-std::optional<std::pair<std::string,int>> LookupSprite(CpkApi& api,const std::string& database,const std::string& name,
-                                                       std::vector<std::string>* diagnostics,const std::string& dbSource,
-                                                       std::string* failureReason=nullptr) {
+// 参数 api/database/name 为 MML 接口、候选数据库文本和目标名；检查名字唯一性后返回已验证集合文件与索引。
+SpriteLookup LookupSprite(CpkApi& api,const std::string& database,const std::string& name) {
     std::lock_guard nativeLock(api.nativeCallMutex);
+    SpriteLookup lookup;
     int index=-1;
     int length=api.spriteDatabaseFind(reinterpret_cast<const unsigned char*>(database.data()),database.size(),name.c_str(),nullptr,0,&index);
-    if(length==-2) {
-        if(failureReason) *failureReason="SpriteDatabaseFind 返回 -2（目标精灵名不存在）";
-        return {};
-    }
-    if(length==-4) {
-        if(failureReason) *failureReason="SpriteDatabaseFind 返回 -4（目标精灵名重复，拒绝猜测）";
-        if(diagnostics) diagnostics->push_back("精灵数据库存在重复名称，拒绝猜测索引："+name+" / "+dbSource);
-        return {};
-    }
-    if(length<0 || length>32768) {
-        if(failureReason) *failureReason="SpriteDatabaseFind 返回 "+std::to_string(length)+"（数据库读取或解析失败）";
-        if(diagnostics) diagnostics->push_back("精灵数据库解析失败："+dbSource);
-        return {};
-    }
+    if(length==-2) {lookup.status=SpriteLookupStatus::Missing;lookup.reason="SpriteDatabaseFind 返回 -2（目标精灵名不存在）";return lookup;}
+    if(length==-4) {lookup.status=SpriteLookupStatus::Duplicate;lookup.reason="SpriteDatabaseFind 返回 -4（目标精灵名重复，拒绝猜测）";return lookup;}
+    if(length<0 || length>32768) {lookup.reason="SpriteDatabaseFind 返回 "+std::to_string(length)+"（数据库读取或解析失败）";return lookup;}
     std::string fileName(static_cast<size_t>(length)+1,'\0');
     const int result=api.spriteDatabaseFind(reinterpret_cast<const unsigned char*>(database.data()),database.size(),name.c_str(),fileName.data(),static_cast<int>(fileName.size()),&index);
-    if(result!=length || index<0) {
-        if(failureReason) *failureReason="SpriteDatabaseFind 输出阶段返回 "+std::to_string(result)+"，预期 "+std::to_string(length)+"，索引 "+std::to_string(index);
-        return {};
-    }
+    if(result!=length || index<0) {lookup.reason="SpriteDatabaseFind 输出阶段返回 "+std::to_string(result)+"，预期 "+std::to_string(length)+"，索引 "+std::to_string(index);return lookup;}
     fileName.resize(static_cast<size_t>(length));
-    return std::pair{std::move(fileName),index};
+    lookup.status=SpriteLookupStatus::Found;lookup.file=std::move(fileName);lookup.index=index;
+    return lookup;
 }
 
 using OfficialModuleFields = std::map<std::string,std::string>;
@@ -705,12 +669,12 @@ struct ModuleAssets::Impl {
                 const auto folded=FoldPath(name);
                 if(EndsWith(folded,"spr_db.bin") && folded.find("rom_steam")!=std::string::npos) {
                     spriteDatabases.push_back({cpk,name,name,Fingerprint(cpk,name)});++dbCount;
-                } else if(folded.find("spr_sel_md")!=std::string::npos && EndsWith(folded,".farc")) {
+                } else if((folded.find("spr_sel_md")!=std::string::npos || folded.find("spr_cmnitm_thmb")!=std::string::npos) && EndsWith(folded,".farc")) {
                     archives.push_back({cpk,name,name,Fingerprint(cpk,name)});++archiveCount;
                 }
             }
             if(dbCount || archiveCount)
-                diagnostics.push_back("官方预览索引："+PathText(cpk.filename())+" / sprite DB "+std::to_string(dbCount)+" 个 / 服装归档 "+std::to_string(archiveCount)+" 个");
+                diagnostics.push_back("官方预览索引："+PathText(cpk.filename())+" / sprite DB "+std::to_string(dbCount)+" 个 / 模型与定制缩略图归档 "+std::to_string(archiveCount)+" 个");
         }
     }
 
@@ -724,137 +688,92 @@ struct ModuleAssets::Impl {
         }
     }
 
-    // 参数 item/style 为稳定服装与图片专用样式；资源选择严格依赖 SpriteDatabase 名称及索引。
+    // 参数 item/style 为稳定实体与图片专用样式；资源选择严格依赖 SpriteDatabase 精确名称及真实索引。
+    // 模型、发型 KAMI 与四部位道具共用同一解析链：DML 数据库优先级 → 集合文件 → 生效 FARC → 解码。
     std::shared_ptr<const DecodedImage> Build(const CustomizationItem& item,int style) {
         lastFailure="精灵数据库没有可用映射。";
         if(!bridgeReady || !api || !api->open || !api->readEntry || !api->free || !api->close ||
            !api->spriteDatabaseFind || !api->spriteDecode)
             return {};
-        if(style!=static_cast<int>(ModuleSpriteStyle::Mega39) && style!=static_cast<int>(ModuleSpriteStyle::FutureTone)) return {};
-        std::ostringstream spriteName;
-        spriteName<<"SPR_SEL_MD"<<std::setw(3)<<std::setfill('0')<<item.key.id<<"CMN_";
-        spriteName<<(style==static_cast<int>(ModuleSpriteStyle::Mega39)?"MD_IMG":"MD_IMG_FT");
-        std::string targetName=spriteName.str();
-        // FT专用精灵缺失时查同一数据库中的通用精灵，保留实际命中名称用于来源说明。
-        auto lookupDatabase=[&](const std::string& bytes,const std::string& source) {
-            auto match=LookupSprite(*api,bytes,targetName,nullptr,source,&lastFailure);
-            if(!match && style==static_cast<int>(ModuleSpriteStyle::FutureTone) && targetName.ends_with("_FT")) {
-                auto common=targetName.substr(0,targetName.size()-3);
-                match=LookupSprite(*api,bytes,common,nullptr,source,&lastFailure);
-                if(match) targetName=std::move(common);
+        const auto names=CustomizationSpriteNames(item,style);
+        if(names.empty()) {lastFailure="图片样式未确认或实体领域未知。";return {};}
+        SpriteBackend backend;
+        // 参数 database/name 为数据库字节与精确名；交给随包桥接解析。
+        backend.find=[this](const std::string& database,const std::string& name) {return LookupSprite(*api,database,name);};
+        // 参数 farc/entry/reason 为归档字节、内部集合名与失败原因；普通 FArc 先用内置读取，再试桥接扩展格式。
+        backend.farcEntry=[this](const std::string& farc,const std::string& entry,std::string& reason) {
+            auto binary=ReadFarcEntryMemory(farc,entry,reason);
+            if(!binary && api->farcRead) {
+                std::lock_guard nativeLock(api->nativeCallMutex);
+                unsigned char* bytes=nullptr;size_t length=0;
+                const auto result=api->farcRead(reinterpret_cast<const unsigned char*>(farc.data()),farc.size(),entry.c_str(),&bytes,&length);
+                if(result==0 && bytes && length<=kMaximumReadBytes) binary=std::string(reinterpret_cast<const char*>(bytes),length);
+                if(bytes) api->free(bytes);
+                if(!binary) reason="MML扩展FARC读取返回 "+std::to_string(result);
             }
-            return match;
+            return binary;
         };
-
-        std::optional<std::pair<std::string,int>> resolved;
-        std::string databaseSource;
-        std::string databaseBytes;
-        bool ordinaryDatabaseReplaced=false;
-        if(catalog) {
-            // DML追加数据库在普通数据库之后合并；普通同逻辑文件只接受最高优先来源。
-            for(const char* dbName:{"rom/2d/mod_spr_db.bin","rom/2d/spr_db.bin"}) {
-            for(const auto& source:catalog->sources) {
-                if(!source.currentMod) continue;
-                auto include=ModInclude(modsRoot,source);if(!include) continue;
-                auto path=Inside(*include,NativePath(dbName));
-                if(!path) continue;
-                std::error_code error;if(!fs::is_regular_file(*path,error)) continue;
-                const bool ordinary=std::string(dbName)=="rom/2d/spr_db.bin";
-                if(ordinary) ordinaryDatabaseReplaced=true;
-                auto data=ReadSmallFile(*path,16*1024*1024);if(!data) {if(ordinary) break;continue;}
-                auto match=lookupDatabase(*data,source.name);
-                if(!match) {if(ordinary) break;continue;}
-                resolved=std::move(match);databaseBytes=std::move(*data);
-                databaseSource="Mod / "+source.name+" / "+dbName;
-                break;
-            }
-            if(resolved) break;
-            }
+        // 参数 binary/index/reason 为集合 BIN、真实索引与失败原因。
+        backend.decode=[this](const std::string& binary,int index,std::string& reason) -> std::optional<SpritePixels> {
+            auto image=DecodeSprite(*api,binary,index,{},reason);
+            if(!image) return std::nullopt;
+            return SpritePixels{image->pixels,image->width,image->height};
+        };
+        SpriteEnvironment environment;
+        if(catalog) for(const auto& source:catalog->sources) {
+            if(!source.currentMod) continue;
+            auto include=ModInclude(modsRoot,source);if(!include) continue;
+            // 参数 logical/exists 为 include 内逻辑路径与存在标记；数据库限制 16MB，归档沿用单条目上限。
+            environment.mods.push_back({source.name,[root=*include](const std::string& logical,bool& exists) -> std::optional<std::string> {
+                exists=false;auto path=Inside(root,NativePath(logical));if(!path) return std::nullopt;
+                std::error_code error;if(!fs::is_regular_file(*path,error)) return std::nullopt;
+                exists=true;return ReadSmallFile(*path,logical.ends_with(".bin")?16*1024*1024:kMaximumReadBytes);
+            }});
         }
-
-        if(!resolved && !ordinaryDatabaseReplaced) {
-            const std::string locale=catalog?FoldPath(catalog->language):"cn";
-            const std::string localizedSuffix="rom_steam_"+locale+"/rom/2d/spr_db.bin";
-            auto lookupOfficialDatabase=[&](const std::string& suffix)->bool {
-                std::string candidateBytes,candidateSource;
-                for(const auto& ref:spriteDatabases) {
-                    if(!EndsWith(ref.internalPath,suffix)) continue;
-                    auto data=ReadCpkData(*api,ref.path,ref.internalPath,nullptr);if(!data) continue;
-                    if(!candidateBytes.empty() && DataFingerprint(candidateBytes)!=DataFingerprint(*data))
-                        return false;
-                    if(candidateBytes.empty()) {
-                        candidateBytes=std::move(*data);
-                        candidateSource="官方 CPK / "+PathText(ref.path.filename())+" / "+ref.internalPath;
-                    }
-                }
-                if(candidateBytes.empty()) return false;
-                auto match=lookupDatabase(candidateBytes,candidateSource);
-                if(!match) return false;
-                databaseBytes=std::move(candidateBytes);
-                databaseSource=std::move(candidateSource);
-                resolved=std::move(match);
-                return true;
-            };
-            if(!lookupOfficialDatabase(localizedSuffix))
-                lookupOfficialDatabase("rom_steam/rom/2d/spr_db.bin");
-        }
-
-        if(!resolved) return {};
-        lastFailure="精灵已映射，但资源归档未匹配："+resolved->first;
-        const auto [farcPath,internalBin]=ArchiveNames(resolved->first);
-        std::string farcData,assetSource;
-
-        if(catalog) {
-            for(const auto& source:catalog->sources) {
-                if(!source.currentMod) continue;
-                auto include=ModInclude(modsRoot,source);if(!include) continue;
-                auto archivePath=Inside(*include,NativePath(farcPath));
-                if(!archivePath) continue;
-                std::error_code error;if(!fs::is_regular_file(*archivePath,error)) continue;
-                auto bytes=ReadSmallFile(*archivePath);if(!bytes) continue;
-                farcData=std::move(*bytes);assetSource="Mod / "+source.name+" / "+farcPath;break;
+        const std::string locale=catalog?FoldPath(catalog->language):"cn";
+        environment.officialDatabaseSuffixes={"rom_steam_"+locale+"/rom/2d/spr_db.bin","rom_steam/rom/2d/spr_db.bin"};
+        // 参数 suffix/label 为数据库后缀与来源说明；同后缀候选内容不同即拒绝，不任意挑选。
+        environment.officialDatabase=[this](const std::string& suffix,std::string& label) -> std::optional<std::string> {
+            std::string bytes;
+            for(const auto& ref:spriteDatabases) {
+                if(!EndsWith(ref.internalPath,suffix)) continue;
+                auto data=ReadCpkData(*api,ref.path,ref.internalPath,nullptr);if(!data) continue;
+                if(!bytes.empty() && DataFingerprint(bytes)!=DataFingerprint(*data)) return std::nullopt;
+                if(bytes.empty()) {bytes=std::move(*data);label="官方 CPK / "+PathText(ref.path.filename())+" / "+ref.internalPath;}
             }
-        }
-
-        if(farcData.empty()) {
+            if(bytes.empty()) return std::nullopt;
+            return bytes;
+        };
+        // 参数 farcPath/style/label/reason 为归档逻辑路径、风格、来源说明与失败原因；平台目录过滤沿用模型图片已核对规则。
+        environment.officialArchive=[this](const std::string& farcPath,int imageStyle,std::string& label,std::string& reason) -> std::optional<std::string> {
             std::vector<CpkRef> candidates;
             for(const auto& ref:archives) {
                 const auto platform=FoldPath(ref.internalPath);
-                if(style==static_cast<int>(ModuleSpriteStyle::FutureTone) && !platform.starts_with("rom_ps4/" ) && !platform.starts_with("rom_ps4_dlc/") && !platform.starts_with("rom_ps4_patch/") && !platform.starts_with("rom_ps4_fix/") && !platform.starts_with("rom_steam/")) continue;
-                if(style==static_cast<int>(ModuleSpriteStyle::Mega39) && !platform.starts_with("rom_switch/") && !platform.starts_with("rom_steam/")) continue;
+                if(imageStyle==static_cast<int>(ModuleSpriteStyle::FutureTone) && !platform.starts_with("rom_ps4/" ) && !platform.starts_with("rom_ps4_dlc/") && !platform.starts_with("rom_ps4_patch/") && !platform.starts_with("rom_ps4_fix/") && !platform.starts_with("rom_steam/")) continue;
+                if(imageStyle==static_cast<int>(ModuleSpriteStyle::Mega39) && !platform.starts_with("rom_switch/") && !platform.starts_with("rom_steam/")) continue;
                 if(EndsWith(ref.internalPath,farcPath)) candidates.push_back(ref);
                 else if(farcPath.find('/')!=std::string::npos &&
                         FoldPath(ref.internalPath).find("/rom_ps4/")!=std::string::npos &&
                         EndsWith(ref.internalPath,fs::path(NativePath(farcPath)).filename().string())) candidates.push_back(ref);
             }
-            if(candidates.empty()) return {};
-
+            if(candidates.empty()) return std::nullopt;
             std::vector<std::pair<CpkRef,std::string>> loaded;
             for(const auto& ref:candidates) {
                 auto bytes=ReadCpkData(*api,ref.path,ref.internalPath,nullptr);
                 if(bytes) loaded.emplace_back(ref,std::move(*bytes));
             }
-            if(loaded.empty()) return {};
+            if(loaded.empty()) return std::nullopt;
             const auto canonicalHash=DataFingerprint(loaded.front().second);
-            for(size_t i=1;i<loaded.size();++i) if(DataFingerprint(loaded[i].second)!=canonicalHash) {lastFailure="图片资源存在不同内容的同优先候选，拒绝猜测。";return {};}
-            farcData=std::move(loaded.front().second);
-            assetSource="官方 CPK / "+PathText(loaded.front().first.path.filename())+" / "+loaded.front().first.internalPath;
-        }
-
-        std::string reason;
-        auto spriteBinary=ReadFarcEntryMemory(farcData,internalBin,reason);
-        if(!spriteBinary && api->farcRead) {
-            std::lock_guard nativeLock(api->nativeCallMutex);
-            unsigned char* bytes=nullptr;size_t length=0;
-            const auto result=api->farcRead(reinterpret_cast<const unsigned char*>(farcData.data()),farcData.size(),internalBin.c_str(),&bytes,&length);
-            if(result==0 && bytes && length<=kMaximumReadBytes) spriteBinary=std::string(reinterpret_cast<const char*>(bytes),length);
-            if(bytes) api->free(bytes);
-            if(!spriteBinary) reason="MML扩展FARC读取返回 "+std::to_string(result);
-        }
-        if(!spriteBinary) {lastFailure="图片归档读取失败："+reason+" / "+assetSource;return {};}
-        assetSource+=" / sprite "+targetName+" / "+std::to_string(resolved->second);
-        auto image=DecodeSprite(*api,*spriteBinary,resolved->second,assetSource,reason);
-        if(!image) lastFailure="图片像素解码失败："+reason+" / "+assetSource;
+            for(size_t i=1;i<loaded.size();++i) if(DataFingerprint(loaded[i].second)!=canonicalHash) {reason="图片资源存在不同内容的同优先候选，拒绝猜测。";return std::nullopt;}
+            label="官方 CPK / "+PathText(loaded.front().first.path.filename())+" / "+loaded.front().first.internalPath;
+            return std::move(loaded.front().second);
+        };
+        auto result=ResolveSprite(backend,environment,names,style);
+        if(!result.ok()) {lastFailure=result.failure;return {};}
+        auto image=std::make_shared<DecodedImage>();
+        image->pixels=result.pixels.rgba;image->width=result.pixels.width;image->height=result.pixels.height;
+        image->bounds=result.bounds;image->fallback=result.fallback;image->fallbackReason=result.fallbackReason;
+        image->source=result.source+(result.fallback?" / 专用图不可用，已回退同ID通用图："+result.fallbackReason:"");
         return image;
     }
 
@@ -911,6 +830,9 @@ struct ModuleAssets::Impl {
             preview.width=cached->second.image->width;
             preview.height=cached->second.image->height;
             preview.source=cached->second.image->source;
+            preview.fallback=cached->second.image->fallback;preview.fallbackReason=cached->second.image->fallbackReason;
+            const auto& bounds=cached->second.image->bounds;
+            preview.contentX=bounds.x;preview.contentY=bounds.y;preview.contentWidth=bounds.width;preview.contentHeight=bounds.height;
             preview.rgbaOwner=cached->second.image->pixels;
             preview.rgbaPixels=preview.rgbaOwner?preview.rgbaOwner->data():nullptr;
             return preview;
