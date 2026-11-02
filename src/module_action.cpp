@@ -413,7 +413,7 @@ CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey&
     CustomizationActionCapability c;
     std::unique_lock lock(mutex,std::try_to_lock);if(!lock.owns_lock() || key.kind!=CustomizationKind::Module) return c;
     capabilityDemandUntil=GetTickCount64()+1500;
-    c.modelPage=latest.page.page==NativePage::Module && GetTickCount64()-lastFrame<=500;
+    c.targetPage=latest.page.page==NativePage::Module && GetTickCount64()-lastFrame<=500;
     c.busy=active.phase!=Phase::Idle && active.phase!=Phase::Done && active.phase!=Phase::Preview;
     c.contextGeneration=generation;c.slot=latest.page.slot;c.nativeScope=latest.page.nativeScope;
     c.scope=c.nativeScope==3?CustomizationScope::Song:c.nativeScope>=0 && c.nativeScope<3?CustomizationScope::Common:CustomizationScope::Unknown;

@@ -10,7 +10,10 @@
 #include <chrono>
 
 namespace diva {
-enum class SearchMode { Songs,Modules,Accessories };
+// 顶部四个独立领域：歌曲｜模型｜发型｜自定义道具；切换领域只改变插件界面，不操作游戏页面。
+enum class SearchMode { Songs,Modules,Hair,Accessories };
+// 参数 mode 为非歌曲领域，返回对应定制检索领域。
+CustomizationDomain SearchModeDomain(SearchMode mode);
 struct View {
     // 共用后台查询执行器，声明在视图状态之前以保证最后销毁。
     std::shared_ptr<SearchExecutor> searchExecutor=std::make_shared<SearchExecutor>();

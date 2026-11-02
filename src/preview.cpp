@@ -29,23 +29,30 @@ static std::shared_ptr<const diva::RecommendationSnapshot> DemoRecommendations()
     return snapshot;
 }
 // 仅在显式传入 --customization-demo 时生成测试卡片，不属于游戏或发行元数据。
+// 覆盖模型、发型（不同人物）与四部位道具（含共通 ALL）、超长名称、多来源及缺图占位。
 static diva::CustomizationCatalog DemoCustomizationCatalog() {
-    diva::CustomizationCatalog catalog;
+    diva::CustomizationCatalog catalog;catalog.catalogFingerprint="演示目录";
     catalog.sources={{"demo:a","演示来源 A","DemoA",".",false},{"demo:b","演示来源 B","DemoB",".",false}};
-    for(auto kind:{diva::CustomizationKind::Module,diva::CustomizationKind::Accessory}) for(int n=0;n<42;++n) {
-        diva::CustomizationItem item; item.key={kind,900000+n};
-        item.name=(kind==diva::CustomizationKind::Module?"演示服装 ":"演示饰品 ")+std::to_string(n+1);
+    const diva::CustomizationCharacter characters[]={diva::CustomizationCharacter::Miku,diva::CustomizationCharacter::Rin,diva::CustomizationCharacter::Len,
+        diva::CustomizationCharacter::Luka,diva::CustomizationCharacter::Kaito,diva::CustomizationCharacter::Meiko,diva::CustomizationCharacter::Teto};
+    const diva::CustomizationPart parts[]={diva::CustomizationPart::Head,diva::CustomizationPart::Face,diva::CustomizationPart::Neck,diva::CustomizationPart::Back};
+    for(int domain=0;domain<3;++domain) for(int n=0;n<42;++n) {
+        diva::CustomizationItem item; item.key={domain==0?diva::CustomizationKind::Module:diva::CustomizationKind::Accessory,900000+domain*1000+n};
+        item.name=std::string(domain==0?"演示服装 ":domain==1?"演示发型 ":"演示道具 ")+std::to_string(n+1);
         if(n%7==0) item.name+=" · 超长名称、角色与来源裁剪测试";
-        item.character=n%6==5?diva::CustomizationCharacter::Rin:diva::CustomizationCharacter::Miku;
-        if(kind==diva::CustomizationKind::Accessory) {
-            item.part=static_cast<diva::CustomizationPart>(n%4);
+        item.character=domain==0?(n%6==5?diva::CustomizationCharacter::Rin:diva::CustomizationCharacter::Miku):characters[n%7];
+        if(domain==1) {item.part=diva::CustomizationPart::Hair;item.partToken="KAMI";}
+        if(domain==2) {
+            item.part=parts[n%4];item.partToken=n%4==0?"ZUJO":n%4==1?"FACE":n%4==2?"NECK":"BACK";
             if(n%4==0) item.character=diva::CustomizationCharacter::All;
         }
         item.definitionSource=item.nameSource=n%2?"demo:a":"demo:b";
-        item.sources.push_back({item.definitionSource,"演示定义",true}); item.sortIndex=n;
+        item.sources.push_back({item.definitionSource,"演示定义",true});
+        if(n%3==0) item.sources.push_back({n%2?"demo:b":"demo:a","名称",false});
+        item.sortIndex=n;
         diva::PrepareCustomizationItem(item,catalog); catalog.items.push_back(std::move(item));
     }
-    catalog.diagnostics={"显式演示数据：不来自游戏，不定位、不装备，卡片仅使用占位预览。"};
+    catalog.diagnostics={"显式演示数据：不来自游戏，不定位、不装备；发型与道具卡片只显示占位，不是原生预览。"};
     return catalog;
 }
 // 保存真实原生 DX11 后缓冲为 PNG；参数 chain/device/context/path 为图形对象和输出文件。
@@ -106,6 +113,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         else if(arg==L"--query" && i+1<argc) initialQuery=diva::Utf8(argv[++i]);
         else if(arg==L"--recommendation-demo") {recommendationDemo=true;searchMode=diva::SearchMode::Modules;}
         else if(arg==L"--accessories") searchMode=diva::SearchMode::Accessories;
+        else if(arg==L"--hair") searchMode=diva::SearchMode::Hair;
         else if(arg==L"--home" && i+1<argc) home=argv[++i];
         else if(arg==L"--game" && i+1<argc) game=argv[++i];
         else if(arg==L"--output" && i+1<argc) output=argv[++i];
@@ -117,6 +125,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         auto& view=host.view.customization;
         view.catalog=std::make_shared<diva::CustomizationCatalog>(DemoCustomizationCatalog()); ++view.generation;
         view.status="演示数据：仅用于检查格子与键盘，不是游戏物品；原生定位和模型预览尚未接入。";
+        // 参数 request 为共用界面实际提交的发型／道具请求；预览只显示请求摘要，不判定或执行原生导航。
+        view.submitItemRequest=[&host](const diva::CustomizationLocateRequest& request) {
+            const char* origins[]={"单击","双击","按钮","Enter","底栏"};
+            host.view.customization.status=std::string("预览演示请求：")+diva::CustomizationDomainName(request.domain)+" ID "+std::to_string(request.key.id)
+                +" / "+origins[static_cast<int>(request.origin)]+"；独立预览不执行原生跳页或定位。";
+        };
     }
     // 预览动作只记录请求，参数 request/available 为共享界面实际提交的动作。
     host.view.submit=[&](diva::Request request,bool available) {
@@ -172,8 +186,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         if(readyFrames>5) { totalFrameMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-frameStart).count();++measuredFrames; }
         // 服装截图等待真实目录和至少一张解码上传的图片，不能以歌曲目录就绪冒充图片通过。
         bool previewReady=host.view.catalog!=nullptr;
+        // 发型与道具图片映射尚未认证，只显示占位；它们的截图只等待目录与查询完成，不等待模型纹理。
         if(searchMode!=diva::SearchMode::Songs && !customizationDemo)
-            previewReady=previewReady && host.view.customization.catalog && !host.view.customization.SearchPending() && !host.modulePreviewTextures.empty() && GetTickCount64()-start>5000;
+            previewReady=previewReady && host.view.customization.catalog && !host.view.customization.SearchPending()
+                && (searchMode!=diva::SearchMode::Modules || !host.modulePreviewTextures.empty()) && GetTickCount64()-start>5000;
         if(previewReady) ++readyFrames;
         // 自动截图包含选中行，用于检查难度按钮与行底色的辨识度；只影响独立预览。
         if(smoke && readyFrames==1 && !host.view.results.empty()) host.view.selectedId=host.view.catalog->songs[host.view.results.front().index].id;
@@ -182,7 +198,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
             std::ofstream log(home/(stress?"artifacts/stress-preview.log":"artifacts/preview-verification.log"));
             PROCESS_MEMORY_COUNTERS memory{};GetProcessMemoryInfo(GetCurrentProcess(),&memory,sizeof(memory));
             log<<"原生 DX11 共用界面已运行。\n曲库歌曲："<<host.view.catalog->songs.size()<<"\n可见查询结果："<<host.view.results.size()<<"\n截图保存："<<(saved?"成功":"失败")<<"\n";
-            if(searchMode!=diva::SearchMode::Songs) log<<"当前领域："<<(searchMode==diva::SearchMode::Modules?"服装":"饰品")<<"\n定制可见结果："<<host.view.customization.State().results.size()<<"\n显式演示数据："<<customizationDemo<<"\n";
+            if(searchMode!=diva::SearchMode::Songs) log<<"当前领域："<<diva::CustomizationDomainName(diva::SearchModeDomain(searchMode))<<"\n定制可见结果："<<host.view.customization.State().results.size()<<"\n显式演示数据："<<customizationDemo<<"\n";
             if(recommendationDemo) log<<"歌曲推荐关系：离线637六角色样例，不是当前游戏快照。\n";
             log<<"截图图形设备：Windows WARP 软件 DX11。\n";
             log<<"可见界面 CPU 平均帧耗时（不含 Present 等待）："<<(measuredFrames?totalFrameMs/measuredFrames:0)<<" 毫秒\n工作集："<<memory.WorkingSetSize/1048576.0<<" MiB\n以上为独立预览测量，不代表真实游戏帧耗时。\n";

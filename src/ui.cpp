@@ -99,14 +99,17 @@ void View::Navigate() {
     }
     move=difficultyMove=0;
 }
-// 模式互切只影响当前领域，不会把定制详情请求交给歌曲定位器。
+CustomizationDomain SearchModeDomain(SearchMode mode) {
+    return mode==SearchMode::Hair?CustomizationDomain::Hair:mode==SearchMode::Accessories?CustomizationDomain::Accessories:CustomizationDomain::Models;
+}
+// 模式互切只影响当前领域，不会把定制详情请求交给歌曲定位器，也不触发原生跳页。
 void View::SetMode(SearchMode next) {
     if(mode==next) return;
     ResetSongBodyClick();if(invalidateSongNavigation) invalidateSongNavigation();
     customization.HandleEscape();
     mode=next; ClearActions(); focus=true; listNavigation=true;
     horizontalNavigation=mode==SearchMode::Songs;
-    if(mode!=SearchMode::Songs) customization.SetKind(mode==SearchMode::Modules?CustomizationKind::Module:CustomizationKind::Accessory);
+    if(mode!=SearchMode::Songs) customization.SetDomain(SearchModeDomain(mode));
 }
 // 输入宿主在打开时调用，角色未知与已验证读取保持不同语义。
 void View::OnOpened() {
@@ -258,9 +261,11 @@ void View::Draw() {
         open=false;ResetSongBodyClick();customization.ResetBodyClick();ClearActions();ImGui::End();return;
     }
     EnableControlTabNavigation();
+    // 模型、发型、自定义道具是原生自定义父页下的三个同级入口，搜索面板分别保存条件；性能诊断不面向玩家开放。
     if(SearchSegment("歌曲##领域",mode==SearchMode::Songs,100)) SetMode(SearchMode::Songs);
-    ImGui::SameLine(0,4); if(SearchSegment("服装##领域",mode==SearchMode::Modules,100)) SetMode(SearchMode::Modules);
-    // 饰品与性能诊断尚不面向玩家开放；保留底层实现，不提供界面入口。
+    ImGui::SameLine(0,4); if(SearchSegment("模型##领域",mode==SearchMode::Modules,100)) SetMode(SearchMode::Modules);
+    ImGui::SameLine(0,4); if(SearchSegment("发型##领域",mode==SearchMode::Hair,100)) SetMode(SearchMode::Hair);
+    ImGui::SameLine(0,4); if(SearchSegment("自定义道具##领域",mode==SearchMode::Accessories,128)) SetMode(SearchMode::Accessories);
     if(ImGui::BeginPopup("搜索性能监测")) {
         const auto& f=performance->last;
         ImGui::Text("当前防抖：%lld 毫秒",static_cast<long long>(kSearchDebounce.count()));

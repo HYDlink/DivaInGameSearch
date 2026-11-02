@@ -445,7 +445,8 @@ void CancelNativePageRouter() {cancellation.fetch_add(1);CancelModuleLocate();Ca
 
 CustomizationActionCapability ReadCustomizationActionCapability(const CustomizationKey& key,CustomizationCharacter targetCharacter) {
     auto capability=ReadModuleActionCapability(key,targetCharacter);
-    if(!capability.modelPage && key.kind==CustomizationKind::Module && ReadModuleLocatorContext()) capability.modelPage=true;
+    if(!capability.targetPage && key.kind==CustomizationKind::Module && ReadModuleLocatorContext()) capability.targetPage=true;
+    capability.locate=capability.targetPage;
     return capability;
 }
 // 参数submit/cancel只连接既有Selector，原生页面调用继续由共享帧Hook负责。

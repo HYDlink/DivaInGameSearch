@@ -24,7 +24,7 @@ struct CustomizationPreview {
     std::string source;
 };
 
-// 两种定制模式分别保留搜索、筛选、选择与滚动状态；不调用歌曲定位器。
+// 模型、发型、自定义道具三个领域分别保留搜索、筛选、选择与滚动状态；不调用歌曲定位器。
 struct CustomizationView {
     // 共用后台查询执行器，声明在视图状态之前以保证最后销毁。
     std::shared_ptr<SearchExecutor> searchExecutor=std::make_shared<SearchExecutor>();
@@ -61,8 +61,9 @@ struct CustomizationView {
     std::shared_ptr<const CustomizationCatalog> catalog;
     std::future<CustomizationCatalog> pending;
     std::future<SearchReply> searching;
-    std::array<ModeState,2> states;
-    CustomizationKind kind=CustomizationKind::Module;
+    // 下标见 CustomizationDomainIndex：0 模型、1 发型、2 自定义道具。
+    std::array<ModeState,3> states;
+    CustomizationDomain domain=CustomizationDomain::Models;
     uint64_t generation=0,runningRevision=0,runningGeneration=0,locateSerial=0,drawFrame=0,locateRequestFrame=0,locateRequestRevision=0;
     size_t runningMode=0;
     bool composing=false;
@@ -82,16 +83,17 @@ struct CustomizationView {
     std::vector<CustomizationPreview> layoutPreviews;
     uint64_t previewMetadataGeneration=0,layoutMetadataGeneration=~uint64_t(0),layoutRevision=~uint64_t(0),layoutCatalogGeneration=~uint64_t(0);
     int layoutStyle=-1;
-    CustomizationKind layoutKind=CustomizationKind::Accessory;
+    CustomizationDomain layoutDomain=CustomizationDomain::Accessories;
     float layoutWidth=-1;
-    std::array<std::map<std::string,size_t>,2> sourceAssociationCounts;
+    std::array<std::map<std::string,size_t>,3> sourceAssociationCounts;
     std::optional<CustomizationKey> hoveredKey;
     std::chrono::steady_clock::time_point hoverSince{};
     bool textNavigation=false,gridNavigation=false,controlNavigation=false;
     // 从文本框使用上下浏览后转入卡片焦点，使随后的左右键能移动卡片。
     bool requestGridFocus=false;
-    // 首击只绑定真实主体及当前查询；滚动、失焦、重排或按钮输入立即作废。
+    // 首击只绑定真实主体、领域及当前查询；滚动、失焦、重排或按钮输入立即作废。
     std::optional<CustomizationKey> bodyClickKey,pendingLocateKey;
+    CustomizationDomain bodyClickDomain=CustomizationDomain::Models;
     uint64_t bodyClickRevision=0,bodyClickGeneration=0;
     double bodyClickTime=-1;
     ImVec2 bodyClickPosition{};
@@ -107,7 +109,9 @@ struct CustomizationView {
     std::function<ImTextureID(const CustomizationKey&,const unsigned char*,int,int)> uploadPreviewPixels;
     // 参数 request 包含服装稳定键、角色映射、目录指纹和 UI 代数/序号；由原生适配器执行非阻塞提交。
     std::function<void(const CustomizationLocateRequest&)> submitModuleLocate;
-    // 搜索条件或选择变化时立即作废已提交请求；回调不得阻塞界面线程。
+    // 参数 request 为发型或自定义道具的定位／动作请求；与模型定位器分开注入，后端须独立核对目标页与能力。
+    std::function<void(const CustomizationLocateRequest&)> submitItemRequest;
+    // 任一定制领域的搜索条件或选择变化时立即作废已提交请求；回调不得阻塞界面线程。
     std::function<void()> invalidateModuleLocate;
 
     // 初始化模式种类，默认不插入任何演示数据。
@@ -118,8 +122,8 @@ struct CustomizationView {
     void EnsureLoaded(const fs::path& home,const fs::path& game);
     // 接收已完成任务，启动到期搜索，不等待后台任务。
     void Poll();
-    // 参数 kind 为当前模式；模式切换保留各自条件。
-    void SetKind(CustomizationKind kind);
+    // 参数 domain 为当前领域；切换只保留各自条件，不操作游戏页面。
+    void SetDomain(CustomizationDomain domain);
     // 参数context仅更新游戏角色说明；不重置已选搜索筛选，首次默认全部角色。
     void OnOpen(std::optional<CustomizationContext> context);
     // 在外层现有窗口内绘制，不自行 Begin 主窗口。
@@ -130,9 +134,9 @@ struct CustomizationView {
     bool WantsListNavigation() const;
     // 文本和卡片焦点均支持左右浏览结果，与歌曲搜索一致。
     bool WantsHorizontalNavigation() const;
-    // Enter 在最新查询完成后提交所选服装定位。
+    // Enter 在最新查询完成后提交当前领域所选项目的原位定位。
     void RequestDetails();
-    // 参数 key 为所选服装；在最新结果有效后调用注入的定位适配器。
+    // 参数 key/origin 为所选项目与输入来源；在最新结果有效后调用当前领域注入的定位适配器。
     void RequestLocate(const CustomizationKey& key,CustomizationOrigin origin=CustomizationOrigin::Footer);
     // 参数 key/action 为按钮所在卡片的稳定身份与原生动作，不改变搜索选择。
     void RequestAction(const CustomizationKey& key,CustomizationAction action);

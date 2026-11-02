@@ -207,7 +207,7 @@ void Navigation() {
 void Async(const diva::CustomizationCatalog& catalog) {
     using namespace diva;CustomizationView view;view.catalog=std::make_shared<CustomizationCatalog>(catalog);view.OnOpen(std::nullopt);Complete(view);
     Check(!view.State().query.character && view.contextReason.find("保持")!=std::string::npos,"首次打开没有使用全部角色或误填当前人物");
-    std::strcpy(view.State().input,"English Alias");view.QueueSearch(true);view.Poll();Check(!view.searching.valid() || view.runningMode==1,"防抖期间提前启动当前模式任务");
+    std::strcpy(view.State().input,"English Alias");view.QueueSearch(true);view.Poll();Check(!view.searching.valid() || view.runningMode!=CustomizationDomainIndex(view.domain),"防抖期间提前启动当前模式任务");
     view.State().due={};Complete(view);Check(view.State().results.size()==1,"最终防抖查询未生效");
     // 人工Promise仅控制异步任务时序，返回越界索引证明旧结果未被发布。
     if(view.searching.valid()) {view.searching.wait();view.Poll();}
@@ -228,7 +228,7 @@ void Async(const diva::CustomizationCatalog& catalog) {
     view.textNavigation=true;view.controlNavigation=false;view.RequestDetails();view.drawFrame=view.locateRequestFrame;
     std::strcpy(view.State().input,"High General");view.QueueSearch(true);
     Check(view.State().locateRequested && view.State().detailsRequested && view.locateRequestRevision==view.State().revision,"同帧输入未绑定到已排队Enter");
-    view.SetKind(CustomizationKind::Accessory);Check(!view.states[0].detailsRequested,"模式切换遗留待确认");
+    view.SetDomain(CustomizationDomain::Accessories);Check(!view.states[0].detailsRequested,"模式切换遗留待确认");
     Check(!view.WantsHorizontalNavigation(),"无文本或卡片焦点时意外接管左右");
     view.OnOpen(std::nullopt);Check(!TryReadCustomizationContext() && !GetCustomizationCapabilities().canLocate && !GetCustomizationCapabilities().canPreviewNative,"安全stub意外启用原生能力");
     view.states[0].query.character=CustomizationCharacter::Kaito;view.states[0].query.source="保留来源";view.states[0].query.sort=2;
@@ -284,11 +284,179 @@ void LocateRevision(const diva::CustomizationCatalog& catalog) {
     Check(view.State().cursor.selected!=beforeRight,"卡片焦点的右方向键没有移动选择");
     ImGui::DestroyContext(context);
 }
+// 人工合成三领域目录：30 个发型、8 个道具（四部位循环）与 4 个模型，名称和 ID 均为虚构。
+diva::CustomizationCatalog ItemDomainCatalog() {
+    using namespace diva;CustomizationCatalog catalog;catalog.catalogFingerprint="合成三领域";
+    catalog.sources={{"synthetic:a","合成来源A","","",false},{"synthetic:b","合成来源B","","",false}};
+    auto add=[&](CustomizationKind kind,int id,CustomizationPart part,CustomizationCharacter character,const std::string& name) {
+        CustomizationItem item;item.key={kind,id};item.part=part;item.character=character;item.name=name;item.sortIndex=id;
+        item.definitionSource=item.nameSource=id%2?"synthetic:a":"synthetic:b";item.sources.push_back({item.definitionSource,"定义",true});
+        if(id%5==0) item.sources.push_back({"synthetic:a","名称",false});
+        PrepareCustomizationItem(item,catalog);catalog.items.push_back(std::move(item));
+    };
+    for(int n=0;n<30;++n) add(CustomizationKind::Accessory,100+n,CustomizationPart::Hair,n%3?CustomizationCharacter::Miku:CustomizationCharacter::Rin,"合成发型"+std::to_string(n));
+    const CustomizationPart parts[]={CustomizationPart::Head,CustomizationPart::Face,CustomizationPart::Neck,CustomizationPart::Back};
+    for(int n=0;n<8;++n) add(CustomizationKind::Accessory,200+n,parts[n%4],n%2?CustomizationCharacter::All:CustomizationCharacter::Kaito,"合成道具"+std::to_string(n));
+    for(int n=0;n<4;++n) add(CustomizationKind::Module,100+n,CustomizationPart::Unknown,CustomizationCharacter::Miku,"合成模型"+std::to_string(n));
+    return catalog;
+}
+// 记录型 Fake 后端：按模拟原生页独立计算跨页需求并复用生产权限网关，统计导航、原位定位和动作次数。
+struct FakeItemBackend {
+    std::optional<diva::CustomizationDomain> page;
+    bool allowActions=false;
+    std::vector<diva::CustomizationLocateRequest> requests;
+    int navigations=0,locates=0,actions=0,rejections=0;
+    // 参数 request 为界面提交的发型／道具请求；目标页由 Fake 自行计算，不信任界面。
+    void Submit(const diva::CustomizationLocateRequest& request) {
+        requests.push_back(request);
+        const bool atTarget=page && *page==request.domain;
+        if(!diva::CheckCustomizationNavigation(request,!atTarget).empty()) {++rejections;return;}
+        if(!atTarget) ++navigations;
+        else if(request.action==diva::CustomizationAction::Locate) ++locates;
+        else ++actions;
+    }
+    // 参数 domain 为卡片领域；返回只依赖模拟页面的能力，按钮能力仍需在目标页。
+    diva::CustomizationActionCapability Capability(diva::CustomizationDomain domain) const {
+        diva::CustomizationActionCapability c;c.targetPage=page && *page==domain;c.preview=c.equip=allowActions;
+        c.locateReason="合成后端未认证定位。";c.previewReason=c.equipReason="合成后端未认证动作。";return c;
+    }
+};
+// 参数 view 为测试视图；返回网格子窗口，测试据此计算卡片坐标。
+ImGuiWindow* GridWindow() {
+    for(auto* window:GImGui->Windows) if(std::strstr(window->Name,"module-grid")) return window;
+    throw std::runtime_error("缺少定制网格窗口");
+}
+// 参数 view/point/frames 为视图、屏幕坐标与左键按下前的悬浮帧数；执行一次真实 ImGui 左键单击。
+void ClickAt(diva::CustomizationView& view,ImVec2 point,int frames=1) {
+    auto& io=ImGui::GetIO();io.AddMousePosEvent(point.x,point.y);for(int n=0;n<frames;++n) DrawCustomization(view);
+    io.AddMouseButtonEvent(0,true);DrawCustomization(view);io.AddMouseButtonEvent(0,false);DrawCustomization(view);
+}
+// 参数 view/frames 为视图与空闲帧数；推进 ImGui 时钟使旧首击超出双击时限。
+void Idle(diva::CustomizationView& view,int frames) {for(int n=0;n<frames;++n) DrawCustomization(view);}
+// 验证发型／道具 Tab 独立状态、Fake 后端隔离、主体双击唯一跨页及按钮、Enter、底栏、悬浮、排序和滚动守卫。
+void ItemDomainInteractions() {
+    using namespace diva;
+    auto* context=ImGui::CreateContext();
+    auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
+    io.DisplaySize={1280.0f,900.0f};io.DeltaTime=1.0f/60.0f;
+    unsigned char* pixels=nullptr;int width=0,height=0;io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
+
+    CustomizationView view;view.catalog=std::make_shared<CustomizationCatalog>(ItemDomainCatalog());++view.generation;view.OnOpen(std::nullopt);
+    FakeItemBackend backend;int moduleCalls=0,moduleActions=0;
+    view.submitItemRequest=[&](const CustomizationLocateRequest& request) {backend.Submit(request);};
+    // 参数 request 为模型请求；发型与道具请求不得进入模型定位器。
+    view.submitModuleLocate=[&](const CustomizationLocateRequest& request) {(void)request;++moduleCalls;};
+    view.submitModuleAction=[&](const CustomizationLocateRequest& request) {(void)request;++moduleActions;};
+    // 参数 key 为按钮所在卡片；按卡片自身领域计算能力。
+    view.actionCapability=[&](const CustomizationKey& key) {
+        for(const auto& item:view.catalog->items) if(item.key==key) {auto domain=CustomizationItemDomain(item);if(domain) return backend.Capability(*domain);}
+        return CustomizationActionCapability{};
+    };
+
+    // 三个领域首次人物均为全部，并且切换领域不提交任何请求。
+    for(auto& state:view.states) Check(!state.query.character,"定制领域首次人物不是全部");
+    view.SetDomain(CustomizationDomain::Hair);Complete(view);DrawCustomization(view);DrawCustomization(view);
+    Check(view.State().results.size()==30 && backend.requests.empty() && moduleCalls==0,"发型领域结果错误或切Tab提交了请求");
+    std::strcpy(view.State().input,"合成发型1");view.QueueSearch(false);view.State().query.character=CustomizationCharacter::Rin;view.QueueSearch(false);Complete(view);
+    const auto hairRevision=view.State().revision;const auto hairResults=view.State().results;
+    view.SetDomain(CustomizationDomain::Accessories);Complete(view);
+    Check(view.State().input[0]==0 && !view.State().query.character && view.State().results.size()==8,"道具领域继承了发型查询或人物筛选");
+    view.State().query.part=CustomizationPart::Face;view.QueueSearch(false);Complete(view);
+    Check(view.State().results.size()==2,"道具部位筛选错误");
+    view.SetDomain(CustomizationDomain::Models);Complete(view);
+    Check(view.State().results.size()==4 && !view.State().query.part,"模型领域混入定制结果或继承部位");
+    view.SetDomain(CustomizationDomain::Hair);
+    Check(std::string(view.State().input)=="合成发型1" && view.State().query.character==CustomizationCharacter::Rin && view.State().revision==hairRevision
+        && view.State().results==hairResults,"切回发型丢失独立查询、筛选或修订");
+    view.SetDomain(CustomizationDomain::Accessories);Check(view.State().query.part==CustomizationPart::Face,"切回道具丢失部位筛选");
+    Check(backend.requests.empty() && moduleCalls==0,"切换搜索Tab触发了原生请求");
+
+    // 恢复发型全部结果，模拟当前原生页为模型页（发型目标不在当前页）。
+    view.SetDomain(CustomizationDomain::Hair);view.State().input[0]=0;view.State().query.character.reset();view.QueueSearch(false);Complete(view);
+    // 恢复时保留了旧选择并滚动到它；测试显式回到首项并滚到顶部，使坐标与稳定ID对应。
+    ImGui::ClearActiveID();view.State().focus=false;view.State().cursor={};view.State().scroll=true;Idle(view,3);
+    Check(GridWindow()->Scroll.y<1.0f,"网格未回到顶部");
+    backend.page=CustomizationDomain::Models;
+    auto* grid=GridWindow();
+    const ImVec2 first(grid->InnerRect.Min.x+30,grid->InnerRect.Min.y+30);
+    const ImVec2 second(first.x+view.cardWidth+12.0f,first.y);
+    // 悬浮卡片只显示操作条，不提交请求。
+    io.AddMousePosEvent(first.x,first.y);Idle(view,30);
+    Check(backend.requests.empty(),"悬浮卡片提交了请求");
+    ClickAt(view,first);
+    Check(backend.requests.size()==1 && backend.requests.back().origin==CustomizationOrigin::CardSingleClick && backend.navigations==0
+        && backend.requests.back().domain==CustomizationDomain::Hair && backend.requests.back().part==CustomizationPart::Hair && backend.requests.back().key.id==100,"发型单击来源、领域或部位错误，或单击跨页");
+    ClickAt(view,first,0);
+    const auto doubleClick=backend.requests.back();
+    Check(backend.requests.size()==2 && doubleClick.origin==CustomizationOrigin::CardDoubleClick && doubleClick.firstClickKey==doubleClick.key
+        && doubleClick.firstClickDomain==CustomizationDomain::Hair && doubleClick.firstClickRevision==doubleClick.queryRevision && backend.navigations==1,"同一发型主体双击未恰好产生一次跨页");
+    Check(moduleCalls==0 && moduleActions==0,"发型请求进入了模型定位器");
+    // 跨两张卡片、过期首击都不能构成双击。
+    Idle(view,40);ClickAt(view,first,0);ClickAt(view,second,0);
+    Check(backend.requests.back().origin==CustomizationOrigin::CardSingleClick && backend.requests.back().key.id==101 && backend.navigations==1,"跨卡片点击被当作双击");
+    // 首击后排序变化（同位置仍是同一稳定ID）使旧首击失效。
+    Idle(view,40);ClickAt(view,first,0);
+    view.State().query.sort=2;view.QueueSearch(false);Complete(view);Idle(view,1);
+    Check(view.catalog->items[view.State().results.front()].key.id==100,"排序夹具未保持首项");
+    ClickAt(view,first,0);
+    Check(backend.requests.back().origin==CustomizationOrigin::CardSingleClick && backend.navigations==1,"排序后旧首击仍授予跨页");
+    // 首击后滚动再回到原位使旧首击失效。
+    Idle(view,40);ClickAt(view,first,0);
+    io.AddMouseWheelEvent(0,-1);Idle(view,2);io.AddMouseWheelEvent(0,1);Idle(view,2);
+    Check(grid->Scroll.y<1.0f,"滚动夹具未回到顶部");
+    ClickAt(view,first,0);
+    Check(backend.requests.back().origin==CustomizationOrigin::CardSingleClick && backend.navigations==1,"滚动后旧首击仍授予跨页");
+    // Enter 与底栏定位不跨页；输入法组词期间 Enter 不提交。
+    Idle(view,40);const auto beforeKeyboard=backend.requests.size();
+    view.composing=true;view.RequestDetails();Idle(view,2);view.composing=false;
+    Check(backend.requests.size()==beforeKeyboard,"输入法组词期间Enter提交了定位");
+    view.RequestDetails();Idle(view,2);
+    Check(backend.requests.size()==beforeKeyboard+1 && backend.requests.back().origin==CustomizationOrigin::Keyboard && !backend.requests.back().firstClickKey && backend.navigations==1,"Enter获得跨页权限");
+    view.RequestLocate(view.catalog->items[view.State().results.front()].key);Idle(view,2);
+    Check(backend.requests.back().origin==CustomizationOrigin::Footer && backend.navigations==1,"底栏定位获得跨页权限");
+    // 不在目标页时按钮禁用；即使能力误报可执行，也只提示双击而不提交、不冒泡成主体点击。
+    backend.allowActions=true;const auto beforeButtons=backend.requests.size();
+    const ImVec2 equip(grid->DC.CursorStartPos.x+35,grid->DC.CursorStartPos.y+258);
+    Idle(view,40);ClickAt(view,equip);ClickAt(view,equip,0);
+    Check(backend.requests.size()==beforeButtons && backend.navigations==1 && moduleActions==0,"不在发型页时更换按钮提交请求、跨页或冒泡");
+    view.RequestAction(view.catalog->items[view.State().results.front()].key,CustomizationAction::Preview);
+    Check(backend.requests.size()==beforeButtons && view.status.find("发型页")!=std::string::npos,"非目标页预览按钮未提示双击进入发型页");
+    // 在目标页时按钮只执行一次动作，双击按钮不冒泡成主体定位或导航。
+    backend.page=CustomizationDomain::Hair;Idle(view,40);
+    ClickAt(view,equip);ClickAt(view,equip,0);
+    Check(backend.actions==1 && backend.locates==0 && backend.navigations==1 && backend.requests.back().origin==CustomizationOrigin::HoverButton
+        && backend.requests.back().action==CustomizationAction::Equip && backend.requests.back().key.id==100,"目标页按钮双击重复动作、冒泡或借用了其他目标");
+    // 目标页内单击／Enter 是原位定位，不是跨页。
+    Idle(view,40);ClickAt(view,second,0);
+    Check(backend.locates==1 && backend.navigations==1,"目标页内单击未原位定位或误跨页");
+    // 伪造按钮请求携带双击首击也不能跨页；首击领域不符的双击被网关拒绝。
+    auto forged=doubleClick;forged.action=CustomizationAction::Preview;forged.origin=CustomizationOrigin::CardDoubleClick;
+    Check(!CheckCustomizationNavigation(forged,true).empty(),"伪造双击的预览按钮获得跨页权限");
+    forged=doubleClick;forged.firstClickDomain=CustomizationDomain::Accessories;
+    Check(!CheckCustomizationNavigation(forged,true).empty() && CheckCustomizationNavigation(doubleClick,true).empty(),"首击领域不符的双击通过网关");
+    Check(CheckCustomizationNavigation(doubleClick,true).find("发型页")==std::string::npos && CheckCustomizationNavigation(forged,true).find("发型页")!=std::string::npos,"跨页提示未使用发型页文案");
+
+    // 道具领域双击携带真实部位，并与发型状态各自独立。
+    backend.page=CustomizationDomain::Hair;const auto navigationsBefore=backend.navigations;
+    view.SetDomain(CustomizationDomain::Accessories);view.State().query.part.reset();view.QueueSearch(false);Complete(view);Idle(view,40);
+    grid=GridWindow();
+    ClickAt(view,first);ClickAt(view,first,0);
+    const auto item=backend.requests.back();
+    Check(backend.navigations==navigationsBefore+1 && item.domain==CustomizationDomain::Accessories && item.part==CustomizationPart::Head && item.key.id==200
+        && item.firstClickDomain==CustomizationDomain::Accessories,"道具双击未携带领域与部位或未跨页");
+    Check(moduleCalls==0,"道具请求进入了模型定位器");
+    // 模型领域仍走原模型定位入口，不经发型／道具后端。
+    const auto itemRequests=backend.requests.size();
+    view.SetDomain(CustomizationDomain::Models);Complete(view);Idle(view,40);grid=GridWindow();
+    ClickAt(view,first);
+    Check(moduleCalls==1 && backend.requests.size()==itemRequests,"模型请求进入了发型／道具后端");
+    ImGui::DestroyContext(context);
+}
 }
 // 参数 argc/argv 保留命令行兼容；测试只在系统临时隔离目录创建夹具。
 int main(int argc,char** argv) {
     (void)argc;(void)argv;auto root=diva::fs::temp_directory_path()/("diva-customization-check-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try {Parser(root);auto catalog=Catalog(root);
-        DefaultSearchLanguages();Navigation();Async(catalog);LocateRevision(catalog);diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
+        DefaultSearchLanguages();Navigation();Async(catalog);LocateRevision(catalog);ItemDomainInteractions();diva::fs::remove_all(root);std::cout<<"服装饰品基础回归通过："<<checks<<" 项；未验证Windows原生DX11与实际游戏。\n";return 0;}
     catch(const std::exception& error) {std::cerr<<error.what()<<"\n";diva::fs::remove_all(root);return 1;}
 }

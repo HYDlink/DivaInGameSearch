@@ -51,12 +51,49 @@ std::string EllipsizeText(const std::string& text,float width) {
     return clipped.empty()?suffix:clipped+suffix;
 }
 
+// 参数 domain 为当前领域，返回状态提示中的项目名词。
+const char* DomainNoun(CustomizationDomain domain) {
+    return domain==CustomizationDomain::Models?"服装":domain==CustomizationDomain::Hair?"发型":"道具";
+}
+
+// 参数 domain 为当前领域；返回卡片人物列，模型沿用原生模型页分类，发型与道具显示原始人物。
+CustomizationCharacter DisplayCharacter(CustomizationDomain domain,const CustomizationItem& item) {
+    return domain==CustomizationDomain::Models?ModuleSearchCharacter(item.character):item.character;
+}
+
+// 参数 catalog/item 为目录与实体，返回定义来源短名；多来源时附带其余贡献数量。
+std::string SourceShortLabel(const CustomizationCatalog& catalog,const CustomizationItem& item) {
+    auto source=std::find_if(catalog.sources.begin(),catalog.sources.end(),[&](const auto& value){return value.id==item.definitionSource;});
+    std::string text=source==catalog.sources.end()?item.definitionSource:source->name;
+    std::set<std::string> unique;for(const auto& contribution:item.sources) unique.insert(contribution.source);
+    if(unique.size()>1) text+=" 等 "+std::to_string(unique.size())+" 个来源";
+    return text;
+}
+
+// 参数 view/state/item/action/origin 为当前领域、结果状态、目标实体、动作及输入来源；领域与部位由实体推导。
+CustomizationLocateRequest MakeRequest(CustomizationView& view,const CustomizationView::ModeState& state,const CustomizationItem& item,CustomizationAction action,CustomizationOrigin origin) {
+    CustomizationLocateRequest request;
+    request.key=item.key;request.domain=view.domain;request.part=item.part;
+    request.character=DisplayCharacter(view.domain,item);
+    request.catalogFingerprint=view.catalog->catalogFingerprint;
+    request.uiGeneration=view.generation;
+    request.serial=++view.locateSerial;
+    request.queryRevision=state.revision;request.action=action;request.origin=origin;
+    return request;
+}
+
 // 参数 view/item/preview 为悬浮详情绘制对象与当前图片快照。
 void DrawItemDetails(CustomizationView& view,const CustomizationItem& item,const CustomizationPreview& preview) {
-    (void)view;(void)preview;
+    (void)preview;
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(ImGui::GetFontSize()*24);
     ImGui::TextUnformatted(item.name.c_str());
+    std::string facts=std::string(CustomizationDomainName(view.domain))+" · "+CustomizationCharacterName(DisplayCharacter(view.domain,item));
+    if(view.domain==CustomizationDomain::Accessories) facts+=" · "+std::string(CustomizationPartName(item.part));
+    facts+=" · 稳定ID "+std::to_string(item.key.id);
+    ImGui::TextDisabled("%s",facts.c_str());
+    if(view.domain!=CustomizationDomain::Models && view.catalog) for(const auto& contribution:item.sources)
+        ImGui::TextDisabled("%s：%s%s",contribution.role.c_str(),SourceLabel(*view.catalog,contribution.source).c_str(),contribution.effective?"":"（已被覆盖）");
     const auto reasons=view.State().recommendationReasons.find(item.key);
     if(reasons!=view.State().recommendationReasons.end()) for(const auto& reason:reasons->second) ImGui::TextWrapped("推荐歌曲：%s",reason.c_str());
     ImGui::PopTextWrapPos();
@@ -157,8 +194,7 @@ void SubmitPendingLocate(CustomizationView& view,CustomizationView::ModeState& s
     if(view.locateRequestRevision!=state.revision) {state.locateRequested=false;state.detailsRequested=false;state.details=false;return;}
     if(view.composing || view.SearchPending()) return;
     state.locateRequested=false;state.detailsRequested=false;
-    if(view.kind!=CustomizationKind::Module) {view.status="饰品浏览可用，饰品原生定位尚未接入。";return;}
-    if(!view.catalog || state.results.empty()) {state.details=false;view.status="没有匹配的服装，未提交定位。";return;}
+    if(!view.catalog || state.results.empty()) {state.details=false;view.status=std::string("没有匹配的")+DomainNoun(view.domain)+"，未提交定位。";return;}
     if(view.catalogRequiresRestart) {view.status="服装目录快照已变化；请重启游戏后定位，当前仍可浏览筛选结果。";return;}
     state.cursor.selected=std::min(state.cursor.selected,state.results.size()-1);
     auto target=state.results[state.cursor.selected];
@@ -169,19 +205,16 @@ void SubmitPendingLocate(CustomizationView& view,CustomizationView::ModeState& s
         target=*found;
     }
     const auto& item=view.catalog->items[target];
-    if(!view.submitModuleLocate) {view.status="原生服装定位接口尚未接入。";return;}
-    CustomizationLocateRequest request;
-    request.key=item.key;
-    request.character=ModuleSearchCharacter(item.character);
-    request.catalogFingerprint=view.catalog->catalogFingerprint;
-    request.uiGeneration=view.generation;
-    request.serial=++view.locateSerial;
-    request.queryRevision=state.revision;request.origin=view.locateOrigin;
+    // 模型请求只交给模型定位器；发型与道具交给独立后端，避免照搬模型命令或布局。
+    const bool models=view.domain==CustomizationDomain::Models;
+    const auto& submit=models?view.submitModuleLocate:view.submitItemRequest;
+    if(!submit) {view.status=models?"原生服装定位接口尚未接入。":std::string(CustomizationDomainName(view.domain))+"原生定位尚未接入；仅更新搜索选择。";return;}
+    auto request=MakeRequest(view,state,item,CustomizationAction::Locate,view.locateOrigin);
     if(request.origin==CustomizationOrigin::CardDoubleClick) {
-        request.firstClickKey=view.bodyClickKey;request.firstClickRevision=view.bodyClickRevision;
+        request.firstClickKey=view.bodyClickKey;request.firstClickDomain=view.bodyClickDomain;request.firstClickRevision=view.bodyClickRevision;
     }
     view.status="定位请求已提交，正在等待游戏上下文确认。";
-    try {view.submitModuleLocate(request);}
+    try {submit(request);}
     catch(...) {view.status="定位请求提交失败，请检查当前游戏页面后重试。";}
 }
 
@@ -190,7 +223,8 @@ void BuildSourceAssociationCounts(CustomizationView& view) {
     for(auto& counts:view.sourceAssociationCounts) counts.clear();
     if(!view.catalog) return;
     for(const auto& item:view.catalog->items) {
-        const size_t mode=item.key.kind==CustomizationKind::Module?0:1;
+        const auto domain=CustomizationItemDomain(item);if(!domain) continue;
+        const size_t mode=CustomizationDomainIndex(*domain);
         std::set<std::string> uniqueSources;
         for(const auto& contribution:item.sources) uniqueSources.insert(contribution.source);
         for(const auto& source:uniqueSources) ++view.sourceAssociationCounts[mode][source];
@@ -198,11 +232,11 @@ void BuildSourceAssociationCounts(CustomizationView& view) {
 }
 }
 
-// 参数无；初始化服装和饰品各自的查询领域。
+// 参数无；初始化模型、发型与自定义道具各自的查询领域，首次人物均为全部。
 CustomizationView::CustomizationView() {
-    states[0].query.domain=CustomizationDomain::Models;
-    states[1].query.domain=CustomizationDomain::Accessories;
-    states[0].query.character.reset();states[1].query.character.reset();
+    for(auto value:{CustomizationDomain::Models,CustomizationDomain::Hair,CustomizationDomain::Accessories}) {
+        auto& state=states[CustomizationDomainIndex(value)];state.query.domain=value;state.query.character.reset();
+    }
     status="尚未读取服装目录。";
 }
 
@@ -275,9 +309,9 @@ void CustomizationView::Poll() {
                 }
                 state.scroll=true;state.locateRequested=state.locateRequested && !state.results.empty();
                 if(!state.locateRequested) {state.detailsRequested=false;state.details=false;}
-                if(reply.mode==(kind==CustomizationKind::Module?0u:1u)) {gridCells.clear();gridRows.clear();}
+                if(reply.mode==CustomizationDomainIndex(domain)) {gridCells.clear();gridRows.clear();}
                 ClearHoveredItem(*this);
-                performance->Query(reply.mode==0?"服装":"饰品",reply.revision,reply.timing,PerformanceNow()-publishStart);
+                performance->Query(reply.mode==0?"服装":reply.mode==1?"发型":"道具",reply.revision,reply.timing,PerformanceNow()-publishStart);
             }
     },[&] {
             auto& state=states[runningMode];
@@ -285,14 +319,14 @@ void CustomizationView::Poll() {
                 status="定制物品后台搜索失败，请修改条件重试。";
                 state.recommendationReasons.clear();state.recommendationWarnings.clear();state.matchedSongs=0;
                 state.applied=state.revision;state.results.clear();state.cursor={};state.locateRequested=false;state.detailsRequested=false;
-                if(runningMode==(kind==CustomizationKind::Module?0u:1u)) {gridCells.clear();gridRows.clear();}
+                if(runningMode==CustomizationDomainIndex(domain)) {gridCells.clear();gridRows.clear();}
                 ClearHoveredItem(*this);
             }
     });
     if(catalog && !searching.valid() && !composing) {
-        const size_t active=kind==CustomizationKind::Module?0:1;
-        for(size_t n=0;n<2;++n) {
-            const size_t mode=(active+n)%2;
+        const size_t active=CustomizationDomainIndex(domain);
+        for(size_t n=0;n<states.size();++n) {
+            const size_t mode=(active+n)%states.size();
             const auto& state=states[mode];
             if(!SearchDue(state.revision,state.applied,state.due,composing)) continue;
             auto snapshot=catalog;auto criteria=state.query;auto revision=state.revision,snapshotGeneration=generation;
@@ -309,13 +343,13 @@ void CustomizationView::Poll() {
     }
 }
 
-// 参数 value 为服装或饰品模式；切换时保留各自查询并清理旧悬浮与待提交动作。
-void CustomizationView::SetKind(CustomizationKind value) {
-    if(value==kind) return;
+// 参数 value 为模型、发型或自定义道具领域；切换时保留各自查询并清理旧悬浮与待提交动作，不操作游戏页面。
+void CustomizationView::SetDomain(CustomizationDomain value) {
+    if(value==domain) return;
     ResetBodyClick();
     if(invalidateModuleLocate) invalidateModuleLocate();
     State().locateRequested=false;State().detailsRequested=false;State().details=false;
-    kind=value;
+    domain=value;
     State().focus=true;
     textNavigation=gridNavigation=controlNavigation=false;
     gridCells.clear();gridRows.clear();previousLayoutColumns=0;previousLayoutSpans.clear();
@@ -377,11 +411,10 @@ bool CustomizationView::WantsHorizontalNavigation() const {
     return WantsListNavigation();
 }
 
-// Enter 在文本或单一卡片焦点下，等待最新搜索修订后提交所选服装。
+// Enter 在文本或单一卡片焦点下，等待最新搜索修订后提交当前领域所选项目；Enter 永远不获得跨页权限。
 void CustomizationView::RequestDetails() {
     if(composing) return;
     auto& state=State();
-    if(kind!=CustomizationKind::Module) {state.detailsRequested=false;status="饰品浏览可用，饰品原生定位尚未接入。";return;}
     pendingLocateKey.reset();locateOrigin=CustomizationOrigin::Keyboard;ResetBodyClick();
     state.detailsRequested=true;state.locateRequested=true;locateRequestRevision=state.revision;locateRequestFrame=drawFrame+1;
     state.due=std::chrono::steady_clock::now();
@@ -390,9 +423,9 @@ void CustomizationView::RequestDetails() {
 // 参数 key 为点击卡片或定位按钮时的稳定身份，所有点击入口共用同一请求路径。
 void CustomizationView::RequestLocate(const CustomizationKey& key,CustomizationOrigin origin) {
     auto& state=State();
-    if(composing || kind!=CustomizationKind::Module || !catalog || SearchPending()) return;
+    if(composing || !catalog || SearchPending()) return;
     auto selected=std::find_if(state.results.begin(),state.results.end(),[&](size_t index){return catalog->items[index].key==key;});
-    if(selected==state.results.end()) {status="所选服装已不在最新结果中；未提交定位。";return;}
+    if(selected==state.results.end()) {status=std::string("所选")+DomainNoun(domain)+"已不在最新结果中；未提交定位。";return;}
     state.cursor.selected=static_cast<size_t>(selected-state.results.begin());
     pendingLocateKey=key;locateOrigin=origin;
     state.locateRequested=true;
@@ -413,19 +446,18 @@ void CustomizationView::RequestAction(const CustomizationKey& key,CustomizationA
     const auto found=std::find_if(State().results.begin(),State().results.end(),[&](size_t index){return catalog->items[index].key==key;});
     if(found==State().results.end()) {status="动作目标已不在当前结果中。";return;}
     const auto capability=actionCapability?actionCapability(key):CustomizationActionCapability{};
-    if(!capability.modelPage) {status="双击卡片进入模型页后使用。";return;}
+    // 按钮永远不跨页：不在目标原生页时只提示双击主体，既不排队导航也不改变搜索选择。
+    if(!capability.targetPage) {status=std::string("双击卡片进入")+CustomizationDomainPageName(domain)+"后使用。";return;}
     if(capability.busy || (action==CustomizationAction::Preview?!capability.preview:!capability.equip)) {
         status=action==CustomizationAction::Preview?capability.previewReason:capability.equipReason;return;
     }
-    if(!submitModuleAction) {status="原生服装动作尚未接入。";return;}
-    CustomizationLocateRequest request;
-    request.key=key;request.character=ModuleSearchCharacter(catalog->items[*found].character);
-    request.catalogFingerprint=catalog->catalogFingerprint;request.uiGeneration=generation;
-    request.queryRevision=State().revision;request.serial=++locateSerial;
-    request.action=action;request.origin=CustomizationOrigin::HoverButton;
+    const bool models=domain==CustomizationDomain::Models;
+    const auto& submit=models?submitModuleAction:submitItemRequest;
+    if(!submit) {status=models?"原生服装动作尚未接入。":std::string(CustomizationDomainName(domain))+"原生动作尚未接入。";return;}
+    auto request=MakeRequest(*this,State(),catalog->items[*found],action,CustomizationOrigin::HoverButton);
     request.contextGeneration=capability.contextGeneration;request.slot=capability.slot;
     request.scope=capability.scope;request.nativeScope=capability.nativeScope;
-    submitModuleAction(request);
+    submit(request);
 }
 
 // Esc 优先取消尚未提交的定位请求；否则交由共享搜索窗口关闭。
@@ -434,17 +466,17 @@ bool CustomizationView::HandleEscape() {
     if(state.locateRequested || state.detailsRequested || state.details) {
         const bool pendingRequest=state.locateRequested || state.detailsRequested;
         state.locateRequested=false;state.detailsRequested=false;state.details=false;
-        status=pendingRequest?"已取消等待中的服装定位。":"已关闭服装详情。";
+        status=pendingRequest?std::string("已取消等待中的")+DomainNoun(domain)+"定位。":std::string("已关闭")+DomainNoun(domain)+"详情。";
         return true;
     }
     return false;
 }
 
 // 返回当前模式的可变状态，供桥接和绘制逻辑使用。
-CustomizationView::ModeState& CustomizationView::State() {return states[kind==CustomizationKind::Module?0:1];}
+CustomizationView::ModeState& CustomizationView::State() {return states[CustomizationDomainIndex(domain)];}
 
 // 返回当前模式的只读状态。
-const CustomizationView::ModeState& CustomizationView::State() const {return states[kind==CustomizationKind::Module?0:1];}
+const CustomizationView::ModeState& CustomizationView::State() const {return states[CustomizationDomainIndex(domain)];}
 
 // 在共享搜索窗口内绘制紧凑条件栏、可换行预览网格、悬浮详情与底部定位区。
 void CustomizationView::Draw() {
@@ -454,12 +486,14 @@ void CustomizationView::Draw() {
     if(ImGui::IsMouseClicked(ImGuiMouseButton_Left)) suppressActionRelease=false;
     if(ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) ResetBodyClick();
     if(composing) ResetBodyClick();
-    ImGui::PushID(kind==CustomizationKind::Module?"custom-module":"custom-accessory");
+    const bool models=domain==CustomizationDomain::Models;
+    ImGui::PushID(models?"custom-module":domain==CustomizationDomain::Hair?"custom-hair":"custom-accessory");
     const float availableWidth=ImGui::GetContentRegionAvail().x;
     const bool splitFilters=availableWidth<680.0f;
     ImGui::SetNextItemWidth(-1);
     if(state.focus) {ImGui::SetKeyboardFocusHere();state.focus=false;}
-    if(ImGui::InputTextWithHint("##item-search",kind==CustomizationKind::Module?"服装名称、歌曲名称或 ID":"名称、英文、假名或 ID",state.input,sizeof(state.input))) QueueSearch(true);
+    const char* hint=models?"服装名称、歌曲名称或 ID":domain==CustomizationDomain::Hair?"发型名称、别名、假名、罗马音或 ID":"道具名称、别名、假名、罗马音或 ID";
+    if(ImGui::InputTextWithHint("##item-search",hint,state.input,sizeof(state.input))) QueueSearch(true);
     textNavigation=ImGui::IsItemActive() || ImGui::IsItemFocused();
     DrawSearchGroupLabel("角色：");
     const float characterWidth=std::min(142.0f,std::max(90.0f,availableWidth-110.0f));
@@ -469,7 +503,8 @@ void CustomizationView::Draw() {
         if(ImGui::Selectable("全部角色",!state.query.character)) {state.query.character.reset();QueueSearch(false);}
         const std::vector<CustomizationCharacter> moduleCharacters={CustomizationCharacter::Miku,CustomizationCharacter::Rin,CustomizationCharacter::Len,CustomizationCharacter::Luka,CustomizationCharacter::Kaito,CustomizationCharacter::Meiko,CustomizationCharacter::Derived,CustomizationCharacter::Random};
         std::vector<CustomizationCharacter> characters=moduleCharacters;
-        if(kind==CustomizationKind::Accessory) {characters.clear();for(int n=0;n<12;++n) characters.push_back(static_cast<CustomizationCharacter>(n));}
+        // 发型与道具按原始人物筛选，不套用模型页的衍生／随机分类。
+        if(!models) {characters.clear();for(int n=0;n<12;++n) characters.push_back(static_cast<CustomizationCharacter>(n));}
         for(auto value:characters) if(ImGui::Selectable(CustomizationCharacterName(value),state.query.character==value)) {state.query.character=value;QueueSearch(false);}
         ImGui::EndCombo();
     }
@@ -478,7 +513,7 @@ void CustomizationView::Draw() {
     const float sourceAvailable=ImGui::GetContentRegionAvail().x;
     const float sourceWidth=splitFilters?std::max(130.0f,sourceAvailable-75.0f):std::clamp(sourceAvailable-280.0f,120.0f,390.0f);
     ImGui::SetNextItemWidth(sourceWidth);
-    const auto& activeSourceCounts=sourceAssociationCounts[kind==CustomizationKind::Module?0:1];
+    const auto& activeSourceCounts=sourceAssociationCounts[CustomizationDomainIndex(domain)];
     std::string selectedSource=state.query.source.empty()?"全部来源":state.query.source=="official"?"官方":catalog?SourceFilterLabel(*catalog,state.query.source,activeSourceCounts):state.query.source;
     if(ImGui::BeginCombo("##source",selectedSource.c_str())) {
         if(ImGui::Selectable("全部来源",state.query.source.empty())) {state.query.source.clear();QueueSearch(false);}
@@ -496,11 +531,12 @@ void CustomizationView::Draw() {
     DrawSearchGroupLabel("排序：");ImGui::SetNextItemWidth(std::min(130.0f,std::max(90.0f,availableWidth*0.34f)));
     const char* sorts[]={"默认顺序","名称","ID"};
     if(ImGui::Combo("##sort",&state.query.sort,sorts,3)) QueueSearch(false);
-    if(kind==CustomizationKind::Accessory) {
-        ImGui::SameLine();ImGui::TextUnformatted("部位");ImGui::SameLine();ImGui::SetNextItemWidth(100.0f);
+    // 头／脸／胸口／背部只属于自定义道具领域；筛选只改变插件结果，不切换原生部位。
+    if(domain==CustomizationDomain::Accessories) {
+        ImGui::SameLine();DrawSearchGroupLabel("部位：");ImGui::SetNextItemWidth(100.0f);
         if(ImGui::BeginCombo("##part",state.query.part?CustomizationPartName(*state.query.part):"全部部位")) {
             if(ImGui::Selectable("全部部位",!state.query.part)) {state.query.part.reset();QueueSearch(false);}
-            for(int n=0;n<5;++n) {auto part=static_cast<CustomizationPart>(n);if(ImGui::Selectable(CustomizationPartName(part),state.query.part==part)) {state.query.part=part;QueueSearch(false);}}
+            for(auto part:{CustomizationPart::Head,CustomizationPart::Face,CustomizationPart::Neck,CustomizationPart::Back}) if(ImGui::Selectable(CustomizationPartName(part),state.query.part==part)) {state.query.part=part;QueueSearch(false);}
             ImGui::EndCombo();
         }
     }
@@ -515,7 +551,7 @@ void CustomizationView::Draw() {
         if(ImGui::Button("刷新目录")) Refresh(home,game);
         ImGui::TextDisabled("%s",contextReason.c_str());
         ImGui::Separator();
-        ImGui::TextUnformatted("单击选择 · Enter 定位 · Esc 关闭");
+        ImGui::TextUnformatted("单击选择 · Enter 原位定位 · 双击跨页 · Esc 关闭");
         ImGui::TextUnformatted("方向键浏览 · Tab 切换焦点");
         ImGui::TextUnformatted("Home / End 首尾 · PageUp / PageDown 翻页");
         ImGui::Separator();
@@ -536,7 +572,7 @@ void CustomizationView::Draw() {
     if(requestGridFocus) {ImGui::ClearActiveID();ImGui::SetFocusID(gridFocusId,parent);ImGui::FocusWindow(parent);gridNavigation=true;textNavigation=false;requestGridFocus=false;}
     if(clickedFocus) {ImGui::SetFocusID(gridFocusId,parent);ImGui::FocusWindow(parent);gridNavigation=true;textNavigation=false;}
     if(SearchPending() || composing) {ImGui::SameLine();ImGui::TextDisabled("%s",composing?"组词中…":"搜索中…");}
-    if(kind==CustomizationKind::Module && state.matchedSongs && !SearchPending()) {
+    if(models && state.matchedSongs && !SearchPending()) {
         ImGui::SameLine();ImGui::TextDisabled("匹配 %zu 首歌曲 · 推荐显示全部角色",state.matchedSongs);
     }
     if(!state.recommendationWarnings.empty() && !SearchPending()) {
@@ -558,16 +594,17 @@ void CustomizationView::Draw() {
     previousGridWidth=gridWidth;
 
     const bool metadataChanged=layoutRevision!=state.applied || layoutCatalogGeneration!=generation
-        || layoutMetadataGeneration!=previewMetadataGeneration || layoutKind!=kind || layoutStyle!=previewStyle;
+        || layoutMetadataGeneration!=previewMetadataGeneration || layoutDomain!=domain || layoutStyle!=previewStyle;
     if(metadataChanged) {
         ResetBodyClick();
         layoutPreviews.assign(state.results.size(),{});
-        if(kind==CustomizationKind::Module && previewProvider && catalog) for(size_t i=0;i<state.results.size();++i) {
+        // 图片资源只认证了模型 SPR_SEL_MD；发型与道具不借用模型图片规则，统一显示占位。
+        if(models && previewProvider && catalog) for(size_t i=0;i<state.results.size();++i) {
             const auto facts=previewProvider(catalog->items[state.results[i]],false);
             layoutPreviews[i].width=facts.width;layoutPreviews[i].height=facts.height;
         }
         layoutRevision=state.applied;layoutCatalogGeneration=generation;layoutMetadataGeneration=previewMetadataGeneration;
-        layoutKind=kind;layoutStyle=previewStyle;
+        layoutDomain=domain;layoutStyle=previewStyle;
     }
     const auto& previewFacts=layoutPreviews;
     if(metadataChanged || layoutWidth!=gridWidth || gridCells.size()!=state.results.size()) {
@@ -605,10 +642,11 @@ void CustomizationView::Draw() {
                 const bool hovered=ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)
                     && ImGui::IsMouseHoveringRect(origin,ImVec2(origin.x+cellWidth,origin.y+cardHeight));
                 const auto& navigation=*ImGui::GetCurrentContext();
-                const auto previewId=ImGui::GetID("预览"),equipId=ImGui::GetID("换装"),equippedId=ImGui::GetID("已装备");
+                const auto previewId=ImGui::GetID("###card-preview"),equipId=ImGui::GetID("###card-equip");
                 const bool actionFocused=navigation.NavWindow==ImGui::GetCurrentWindow()
-                    && (navigation.NavId==previewId || navigation.NavId==equipId || navigation.NavId==equippedId);
-                const bool showActions=kind==CustomizationKind::Module && (hovered || selected || actionFocused);
+                    && (navigation.NavId==previewId || navigation.NavId==equipId);
+                // 三个领域都显示同构操作条；发型／道具能力未认证时按钮禁用并说明原因，悬浮本身不执行动作。
+                const bool showActions=hovered || selected || actionFocused;
                 const float actionY=kPreviewHeight-38.0f;
                 const float actionWidth=(cellWidth-22.0f)*0.5f;
                 const auto& io=ImGui::GetIO();
@@ -620,11 +658,12 @@ void CustomizationView::Draw() {
                 if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) && bodyHovered && !composing && !SearchPending()) {
                     bodyPressedThisFrame=true;
                     const float dx=io.MousePos.x-bodyClickPosition.x,dy=io.MousePos.y-bodyClickPosition.y;
-                    const bool same=bodyClickKey && *bodyClickKey==item.key && bodyClickRevision==state.revision
+                    // 双击锁定 {种类,ID,领域,查询修订,目录代数}；任一变化都只算新的首击。
+                    const bool same=bodyClickKey && *bodyClickKey==item.key && bodyClickDomain==domain && bodyClickRevision==state.revision
                         && bodyClickGeneration==generation && ImGui::GetTime()-bodyClickTime<io.MouseDoubleClickTime
                         && dx*dx+dy*dy<io.MouseDoubleClickMaxDist*io.MouseDoubleClickMaxDist;
                     bodyDoubleClick=same && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-                    bodyClickKey=item.key;bodyClickRevision=state.revision;bodyClickGeneration=generation;
+                    bodyClickKey=item.key;bodyClickDomain=domain;bodyClickRevision=state.revision;bodyClickGeneration=generation;
                     bodyClickTime=ImGui::GetTime();bodyClickPosition=io.MousePos;
                 }
                 ImGui::PushItemFlag(ImGuiItemFlags_NoNav,true);
@@ -656,7 +695,7 @@ void CustomizationView::Draw() {
                 const ImVec2 imageMax(origin.x+cellWidth-1.0f,origin.y+kPreviewHeight+1.0f);
                 draw->AddRectFilled(imageMin,imageMax,IM_COL32(35,40,47,255),7.0f);
                 CustomizationPreview preview;
-                if(kind==CustomizationKind::Module && previewProvider) preview=previewProvider(item,true);
+                if(models && previewProvider) preview=previewProvider(item,true);
                 else if(index<previewFacts.size()) preview=previewFacts[index];
                 // 首次解码或轻量查询碰到try-lock时，按可见项补齐尺寸，下一帧仅重建几何。
                 if(preview.width>0 && preview.height>0 && index<layoutPreviews.size()
@@ -676,7 +715,8 @@ void CustomizationView::Draw() {
                     draw->AddImage(texture,pos,ImVec2(pos.x+size.x,pos.y+size.y));
                     draw->PopClipRect();
                 } else {
-                    const char* missing="暂无预览";
+                    // 缺图时显示明确的本领域占位，不显示其他种类图片，也不冒充原生 3D 预览。
+                    const char* missing=models?"暂无预览":domain==CustomizationDomain::Hair?"暂无发型图片":"暂无道具图片";
                     const ImVec2 labelSize=ImGui::CalcTextSize(missing);
                     draw->AddText(ImVec2(imageMin.x+(cellWidth-labelSize.x)*0.5f,imageMin.y+kPreviewHeight*0.5f-labelSize.y*0.5f),IM_COL32(141,163,174,255),missing);
                     if(preview.width>0 && preview.height>0) {
@@ -698,8 +738,13 @@ void CustomizationView::Draw() {
                 draw->PushClipRect(ImVec2(origin.x+8.0f,origin.y+288.0f),ImVec2(origin.x+cellWidth-6.0f,origin.y+313.0f),true);
                 draw->AddText(ImVec2(origin.x+10.0f,origin.y+290.0f),ImGui::GetColorU32(ImGuiCol_Text),name.c_str());
                 draw->PopClipRect();
-                std::string secondLine=CustomizationCharacterName(kind==CustomizationKind::Module?ModuleSearchCharacter(item.character):item.character);
-                if(kind==CustomizationKind::Accessory) secondLine+=" / "+std::string(CustomizationPartName(item.part));
+                if(!models && catalog) {
+                    // 发型与道具卡片在占位图区底部标出来源；完整贡献列表见悬浮详情。
+                    const auto source=EllipsizeText("来源："+SourceShortLabel(*catalog,item),cellWidth-24.0f);
+                    draw->AddText(ImVec2(origin.x+10.0f,origin.y+kPreviewHeight-62.0f),IM_COL32(120,143,154,255),source.c_str());
+                }
+                std::string secondLine=CustomizationCharacterName(DisplayCharacter(domain,item));
+                if(domain==CustomizationDomain::Accessories) secondLine+=" / "+std::string(CustomizationPartName(item.part));
                 secondLine+=" · ID "+std::to_string(item.key.id);
                 secondLine=EllipsizeText(secondLine,textWidth);
                 draw->PushClipRect(ImVec2(origin.x+8.0f,origin.y+313.0f),ImVec2(origin.x+cellWidth-6.0f,origin.y+337.0f),true);
@@ -721,15 +766,17 @@ void CustomizationView::Draw() {
                     ImGui::BeginDisabled(unavailable || !capability.equip);
                     ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0.15f,0.28f,0.25f,1));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,ImVec4(0.21f,0.39f,0.34f,1));
-                    const bool equip=ImGui::Button(capability.equipped?"已装备":"换装",ImVec2(actionWidth,32));
+                    const char* equipLabel=capability.equipped?"已装备###card-equip":models?"换装###card-equip":"更换###card-equip";
+                    const bool equip=ImGui::Button(equipLabel,ImVec2(actionWidth,32));
                     ImGui::PopStyleColor(2);
                     ImGui::EndDisabled();
-                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",!capability.modelPage?"双击卡片进入模型页后使用":capability.equipReason.c_str());
+                    const std::string pageHint=std::string("双击卡片进入")+CustomizationDomainPageName(domain)+"后使用";
+                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",!capability.targetPage?pageHint.c_str():capability.equipReason.c_str());
                     ImGui::SetCursorPos(ImVec2(x+14+actionWidth,rowY+actionY));
                     ImGui::BeginDisabled(unavailable || !capability.preview);
-                    const bool previewClicked=ImGui::Button("预览",ImVec2(actionWidth,32));
+                    const bool previewClicked=ImGui::Button("预览###card-preview",ImVec2(actionWidth,32));
                     ImGui::EndDisabled();
-                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",!capability.modelPage?"双击卡片进入模型页后使用":capability.previewReason.c_str());
+                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",!capability.targetPage?pageHint.c_str():capability.previewReason.c_str());
                     if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) && inButton) {
                         suppressActionRelease=ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && actionPressKey && *actionPressKey==item.key;
                         actionPressKey=item.key;ResetBodyClick();
@@ -760,7 +807,7 @@ void CustomizationView::Draw() {
     if(hoveredKey && std::chrono::steady_clock::now()-hoverSince>=kHoverDelay && !detailItem) ClearHoveredItem(*this);
     if(detailItem) DrawItemDetails(*this,*detailItem,detailPreview);
 
-    if(previewProvider && kind==CustomizationKind::Module && !gridRows.empty()) {
+    if(previewProvider && models && !gridRows.empty()) {
         for(int row:{firstRendered-1,lastRendered}) {
             if(row<0 || row>=static_cast<int>(gridRows.size()) || (row>=firstRendered && row<lastRendered)) continue;
             for(size_t cellIndex:gridRows[static_cast<size_t>(row)]) {
@@ -778,7 +825,7 @@ void CustomizationView::Draw() {
         const std::string selectedText=selected.name+" · ID "+std::to_string(selected.key.id);
         const float footerWidth=ImGui::GetContentRegionAvail().x;
         const bool compactFooter=footerWidth>=400.0f;
-        const float buttonWidth=kind==CustomizationKind::Module?150.0f:190.0f;
+        const float buttonWidth=models?150.0f:190.0f;
         const std::string footerText=status.empty()?selectedText:status;
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(EllipsizeText(footerText,compactFooter?footerWidth-buttonWidth-16.0f:footerWidth).c_str());
@@ -786,19 +833,28 @@ void CustomizationView::Draw() {
             ImGui::BeginTooltip();ImGui::PushTextWrapPos(ImGui::GetFontSize()*30);ImGui::TextUnformatted(footerText.c_str());ImGui::PopTextWrapPos();ImGui::EndTooltip();
         }
         if(compactFooter) ImGui::SameLine(footerWidth-buttonWidth+ImGui::GetWindowContentRegionMin().x);
-        const bool targetPage=!actionCapability || actionCapability(selected.key).modelPage;
-        const bool canSubmit=kind==CustomizationKind::Module && bool(submitModuleLocate) && !catalogRequiresRestart && !SearchPending() && targetPage;
+        // 底栏只做原位定位：不在目标页时禁用并提示双击；发型／道具还需已认证的定位 Profile。
+        const auto capability=actionCapability?actionCapability(selected.key):CustomizationActionCapability{};
+        const bool targetPage=models?(!actionCapability || capability.targetPage):capability.targetPage;
+        const bool certified=models || capability.locate;
+        const bool connected=models?bool(submitModuleLocate):bool(submitItemRequest);
+        const bool canSubmit=connected && !catalogRequiresRestart && !SearchPending() && targetPage && certified;
+        const std::string footerLabel=!connected && !models?std::string(CustomizationDomainName(domain))+"定位尚未接入"
+            :!targetPage?std::string("双击进入")+CustomizationDomainPageName(domain):!certified?std::string("定位尚未认证"):std::string("定位 · Enter");
         ImGui::BeginDisabled(!canSubmit);
-        if(ImGui::Button(kind==CustomizationKind::Module?(targetPage?"定位 · Enter":"双击进入模型页"):"饰品定位尚未接入",ImVec2(buttonWidth,30.0f))) RequestLocate(selected.key);
+        if(ImGui::Button((footerLabel+"###footer-locate").c_str(),ImVec2(buttonWidth,30.0f))) RequestLocate(selected.key);
         ImGui::EndDisabled();
+        if(!canSubmit && !models && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s",!targetPage?(std::string("双击结果卡片进入")+CustomizationDomainPageName(domain)+"；单击、Enter与底栏不跨页。").c_str():capability.locateReason.c_str());
     } else if(!catalog) {
-        ImGui::TextWrapped("%s",status.empty()?"正在读取服装目录……":status.c_str());
+        ImGui::TextWrapped("%s",status.empty()?"正在读取定制目录……":status.c_str());
     } else if(SearchPending()) {
         ImGui::TextUnformatted("正在搜索当前条件……");
     } else if(catalog->items.empty()) {
-        ImGui::TextWrapped("没有检测到服装，请在选项中检查来源诊断。");
+        ImGui::TextWrapped("没有检测到定制实体，请在选项中检查来源诊断。");
     } else {
-        ImGui::TextWrapped("%s",status.empty()?"没有匹配的服装，请调整筛选条件。":status.c_str());
+        const std::string empty=std::string("没有匹配的")+DomainNoun(domain)+"，请调整筛选条件。";
+        ImGui::TextWrapped("%s",status.empty()?empty.c_str():status.c_str());
     }
     controlNavigation=ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopup) || (!textNavigation && !gridNavigation);
     ImGui::PopID();

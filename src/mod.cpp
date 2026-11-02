@@ -66,6 +66,8 @@ __declspec(dllexport) void Init() {
         Log("服装原生定位提交：ID="+std::to_string(request.key.id)+"；"+message);
     };
     host.view.customization.submitModuleAction=host.view.customization.submitModuleLocate;
+    // 发型与自定义道具使用独立注入口；同一网关按最新目录重算目标页，未认证能力明确拒绝。
+    host.view.customization.submitItemRequest=host.view.customization.submitModuleLocate;
     host.view.invalidateSongNavigation=diva::CancelSongNavigation;
     // 参数milliseconds为共享路由Hook实测CPU时间，避免把其开销漏算到游戏本体。
     diva::ConfigureNativePerformance([trace=host.view.performance](double milliseconds) {

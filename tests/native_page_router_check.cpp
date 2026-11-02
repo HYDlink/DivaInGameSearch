@@ -25,7 +25,7 @@ void OnModuleActionStateFrame(uintptr_t state) {(void)state;}
 // 参数request/message为无副作用的拒绝路径。
 bool SubmitModuleAction(const CustomizationLocateRequest& request,std::string& message) {testSubmittedAction=request;if(testAcceptActions){++testActionCalls;message="隔离动作已受理";return true;}message="隔离测试不允许装备。";return false;}
 // 返回未知能力，不把测试数据导入产品。
-CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey& key,CustomizationCharacter character) {(void)key;(void)character;CustomizationActionCapability c;if(testAcceptActions){c.modelPage=c.preview=c.equip=true;c.contextGeneration=91;c.slot=0;c.nativeScope=3;c.scope=CustomizationScope::Song;}return c;}
+CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey& key,CustomizationCharacter character) {(void)key;(void)character;CustomizationActionCapability c;if(testAcceptActions){c.targetPage=c.preview=c.equip=true;c.contextGeneration=91;c.slot=0;c.nativeScope=3;c.scope=CustomizationScope::Song;}return c;}
 // 路由测试没有并行服装动作。
 bool ModuleActionBusy() {return testBusy;}
 // 默认夹具没有原生预览；专项续接夹具另行提供状态。
@@ -97,7 +97,7 @@ int main() {
         for(auto origin:{CustomizationOrigin::CardSingleClick,CustomizationOrigin::Keyboard,CustomizationOrigin::Footer,CustomizationOrigin::HoverButton}) {
             request.origin=origin;Check(!SubmitCustomizationRequest(request,message) && route.phase==RoutePhase::Idle,"非双击来源排入跨页事务");
         }
-        request.origin=CustomizationOrigin::CardDoubleClick;request.firstClickKey=request.key;request.firstClickRevision=3;
+        request.origin=CustomizationOrigin::CardDoubleClick;request.firstClickKey=request.key;request.firstClickDomain=CustomizationDomain::Models;request.firstClickRevision=3;
         Check(SubmitCustomizationRequest(request,message) && locateCalls==0,"双击未排队或提前执行定位");
         const auto source=route.source;
         CancelNativePageRouter();OnBoundary(2,f.state);
