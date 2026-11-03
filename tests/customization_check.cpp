@@ -304,6 +304,7 @@ diva::CustomizationCatalog ItemDomainCatalog() {
 // 记录型 Fake 后端：按模拟原生页独立计算跨页需求并复用生产权限网关，统计导航、原位定位和动作次数。
 struct FakeItemBackend {
     std::optional<diva::CustomizationDomain> page;
+    std::optional<diva::CustomizationKey> equippedKey;
     bool allowActions=false;
     std::vector<diva::CustomizationLocateRequest> requests;
     int navigations=0,locates=0,actions=0,rejections=0;
@@ -353,7 +354,7 @@ void ItemDomainInteractions() {
     view.submitModuleAction=[&](const CustomizationLocateRequest& request) {(void)request;++moduleActions;};
     // 参数 key 为按钮所在卡片；按卡片自身领域计算能力。
     view.actionCapability=[&](const CustomizationKey& key) {
-        for(const auto& item:view.catalog->items) if(item.key==key) {auto domain=CustomizationItemDomain(item);if(domain) return backend.Capability(*domain);}
+        for(const auto& item:view.catalog->items) if(item.key==key) {auto domain=CustomizationItemDomain(item);if(domain) {auto capability=backend.Capability(*domain);capability.equipped=backend.equippedKey==key;capability.remove=capability.equipped && backend.allowActions;return capability;}}
         return CustomizationActionCapability{};
     };
 
@@ -436,7 +437,7 @@ void ItemDomainInteractions() {
     // 不在目标页时按钮禁用；即使能力误报可执行，也只提示双击而不提交、不冒泡成主体点击。
     backend.allowActions=true;const auto beforeButtons=backend.requests.size();
     // 发型卡片使用紧凑图片区；操作条位于图片区底部。
-    Check(view.imageHeight>=view.cardWidth*0.70f-0.5f && view.imageHeight<=view.cardWidth*0.85f+0.5f && view.cardHeight<340.0f*0.76f && view.cardHeight>340.0f*0.55f,"发型卡片尺寸不在设计区间");
+    Check(view.imageHeight>=210.0f && view.imageHeight<=250.0f && view.cardHeight<340.0f && view.cardHeight>view.imageHeight,"发型卡片应保留肖像空间且仍矮于模型卡片");
     const ImVec2 equip(grid->DC.CursorStartPos.x+35,grid->DC.CursorStartPos.y+view.imageHeight-22.0f);
     Idle(view,40);ClickAt(view,equip);ClickAt(view,equip,0);
     Check(backend.requests.size()==beforeButtons && backend.navigations==1 && moduleActions==0,"不在发型页时更换按钮提交请求、跨页或冒泡");
@@ -447,6 +448,11 @@ void ItemDomainInteractions() {
     ClickAt(view,equip);ClickAt(view,equip,0);
     Check(backend.actions==1 && backend.locates==0 && backend.navigations==1 && backend.requests.back().origin==CustomizationOrigin::HoverButton
         && backend.requests.back().action==CustomizationAction::Equip && backend.requests.back().key.id==100,"目标页按钮双击重复动作、冒泡或借用了其他目标");
+    // 同一真实 ImGui 按钮：当前装备时改发搭配模型动作，卸除后再恢复普通更换；单纯选中不能触发卸除。
+    backend.equippedKey=CustomizationKey{CustomizationKind::Accessory,100};Idle(view,40);ClickAt(view,equip);
+    Check(backend.requests.back().action==CustomizationAction::Remove && backend.requests.back().key.id==100,"已装备发型按钮没有切换为搭配模型动作");
+    backend.equippedKey.reset();Idle(view,40);ClickAt(view,equip);
+    Check(backend.requests.back().action==CustomizationAction::Equip,"搭配模型后发型按钮没有恢复更换");
     // 目标页内单击／Enter 是原位定位，不是跨页。
     Idle(view,40);ClickAt(view,second,0);
     Check(backend.locates==1 && backend.navigations==1,"目标页内单击未原位定位或误跨页");
@@ -464,7 +470,7 @@ void ItemDomainInteractions() {
     grid=GridWindow();
     // 道具页多一行子标签，网格位置下移；按当前网格重新计算首张卡片坐标。
     const ImVec2 accessoryFirst(grid->InnerRect.Min.x+30,grid->InnerRect.Min.y+30);
-    Check(view.imageHeight>=view.cardWidth*0.50f-0.5f && view.imageHeight<=view.cardWidth*0.65f+0.5f && view.cardHeight<340.0f*0.66f,"道具卡片尺寸不在设计区间");
+    Check(view.imageHeight>=160.0f && view.imageHeight<=225.0f && view.cardHeight<340.0f,"道具卡片应完整容纳轮廓并矮于模型卡片");
     // 首击后切换子标签再切回，旧首击失效，不构成双击。
     ClickAt(view,accessoryFirst);view.SetAccessoryPart(CustomizationPart::Face);view.SetAccessoryPart(CustomizationPart::Head);Idle(view,1);ClickAt(view,accessoryFirst,0);
     Check(backend.requests.back().domain==CustomizationDomain::Accessories && backend.requests.back().origin==CustomizationOrigin::CardSingleClick
@@ -474,6 +480,10 @@ void ItemDomainInteractions() {
     Check(backend.navigations==navigationsBefore+1 && item.domain==CustomizationDomain::Accessories && item.part==CustomizationPart::Head && item.key.id==200
         && item.firstClickDomain==CustomizationDomain::Accessories,"道具双击未携带领域与部位或未跨页");
     Check(moduleCalls==0,"道具请求进入了模型定位器");
+    backend.page=CustomizationDomain::Accessories;backend.equippedKey=CustomizationKey{CustomizationKind::Accessory,200};Idle(view,40);grid=GridWindow();
+    ClickAt(view,{grid->DC.CursorStartPos.x+35,grid->DC.CursorStartPos.y+view.imageHeight-22.0f});
+    Check(backend.requests.back().action==CustomizationAction::Remove && backend.requests.back().key.id==200,"已装备道具按钮没有切换为卸除动作");
+    backend.equippedKey.reset();
     // 模型领域仍走原模型定位入口，不经发型／道具后端。
     const auto itemRequests=backend.requests.size();
     view.SetDomain(CustomizationDomain::Models);Complete(view);Idle(view,40);grid=GridWindow();

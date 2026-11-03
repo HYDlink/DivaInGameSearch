@@ -22,6 +22,8 @@ struct CustomizationItemNativeSpec {
     std::optional<uintptr_t> equippedBase,equippedStride;
     // 原生入口 RVA：逐步移动 void(scene*,int dir)、部位切换 void(scene*,int dir)、直接高亮 void(scene*,int index)。
     std::optional<uintptr_t> stepRva,partRva,highlightRva;
+    // 高亮控件内嵌于 scene 的偏移及卡片刷新入口；为空时保留普通 scene/index ABI，供其他已认证规格使用。
+    std::optional<uintptr_t> highlightControl,refreshRva;
     // scene 内动作回调对象指针偏移与回调 RVA uint8(callback*,int command)；预览、更换、退出预览命令号须独立认证。
     std::optional<uintptr_t> callbackObject,callbackRva;
     std::optional<int32_t> previewCommand,equipCommand,exitPreviewCommand;

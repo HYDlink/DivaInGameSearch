@@ -126,7 +126,7 @@ CustomizationItemFrame ItemFrame(const NativePageSnapshot& s) {
     return frame;
 }
 struct PreviewContinuation {
-    bool waiting=false;
+    bool waiting=false,itemPreview=false;
     CustomizationLocateRequest request;
     NativePageSnapshot source;
     uint64_t cancelled=0,previewSerial=0,deadline=0,readyAfter=0;
@@ -135,6 +135,7 @@ struct PreviewContinuation {
 enum class SongPhase {Idle,PreviewExit,Boundary,ParentArrival,FinishBoundary,OuterArrival,HomeBoundary,SongArrival,Ready,Selecting,Done};
 struct SongRoute {
     SongPhase phase=SongPhase::Idle;
+    bool itemPreview=false;
     Request request;
     NativePageSnapshot source;
     int returnMode=-1,sourcePvid=-1;
@@ -401,7 +402,7 @@ void OnBoundary(int boundary,uintptr_t object) {
 }
 // 参数 object 为原生内部状态机；仅当发型／道具执行器有事务时读取页面并转交本帧，不扫描驻留对象。
 void ForwardItemFrame(uintptr_t object) {
-    if(!installed || !CustomizationItemLocatorBusy()) return;
+    if(!installed || !CustomizationItemFrameNeeded()) return;
     const auto s=ReadNativePage(imageBase);
     if(s.state && object!=s.state) return;
     auto frame=ItemFrame(s);frame.thread=GetCurrentThreadId();
@@ -533,8 +534,15 @@ bool SubmitCustomizationRequest(const CustomizationLocateRequest& original,std::
     if(ModuleActionBusy()) {message="服装预览或换装仍在处理中，请先完成当前操作。";return false;}
     // 发型／道具临时预览期间不接受新操作；Profile 提供退出入口时先请求退出，核对原装备后再允许下一步。
     if(CustomizationItemPreviewActive()) {
-        std::string exitMessage;
-        message=RequestCustomizationItemPreviewExit(exitMessage)?"正在退出临时预览，请稍后再试。":"正在临时预览，请先在游戏中退出预览。";return false;
+        if(!request.serial || request.key.id<0 || !request.queryRevision || request.catalogFingerprint.empty()
+            || request.uiGeneration!=currentUiGeneration) {message="预览后续目标或目录身份无效。";return false;}
+        const auto preview=PollCustomizationItemLocator();
+        if(!RequestCustomizationItemPreviewExit(message)) return false;
+        previewContinuation={};previewContinuation.waiting=previewContinuation.itemPreview=true;
+        previewContinuation.request=request;previewContinuation.source=page;
+        previewContinuation.cancelled=cancellation.load();previewContinuation.previewSerial=preview.serial;previewContinuation.deadline=GetTickCount64()+20000;
+        previewContinuation.status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,0,false,false,"正在退出当前预览，恢复原装备后继续所选操作……"};
+        previewContinuation.status.action=request.action;route.phase=RoutePhase::Idle;message=previewContinuation.status.message;return true;
     }
     if(CustomizationItemLocatorBusy()) {message="发型／道具原生操作仍在处理中，请稍候。";return false;}
     if(route.phase!=RoutePhase::Idle && route.phase!=RoutePhase::Done && route.cancelled==cancellation.load()) {message="上一条跨页定位仍在处理中。";return false;}
@@ -596,18 +604,18 @@ void TickNativePageRouter(uint64_t now,uint64_t generation) {
         const auto reject=[&](const std::string& reason) {pending.waiting=false;pending.status.completed=true;pending.status.succeeded=false;pending.status.phase=ModuleLocatePhase::Rejected;pending.status.message=reason;};
         if(pending.cancelled!=cancellation.load() || pending.request.uiGeneration!=generation) {reject("后续查询或目录已变化，预览退出后的旧请求已取消。");return;}
         if(now>pending.deadline) {reject("退出旧预览超时，未执行后续操作。");return;}
-        const auto previous=PollModuleAction();
+        const auto previous=pending.itemPreview?PollCustomizationItemLocator():PollModuleAction();
         if(previous.serial!=pending.previewSerial) {reject("预览事务身份已变化，未执行后续操作。");return;}
-        if(!previous.completed || ModuleActionBusy()) return;
+        if(!previous.completed || (pending.itemPreview?CustomizationItemLocatorBusy():ModuleActionBusy())) return;
         if(!previous.succeeded) {reject("旧预览未能安全恢复原装备："+previous.message);return;}
         // 原分类与高亮按用户要求保留；等后续原生帧刷新定位器后再派发，帧内不等待。
         if(!pending.readyAfter) {pending.readyAfter=now+20;return;}
         if(now<pending.readyAfter) return;
         const auto page=ReadNativePage(imageBase);
-        if(page.page!=NativePage::Module || !page.idle || page.scene!=pending.source.scene || page.state!=pending.source.state || !SameConfiguration(page,pending.source)) {reject("退出预览期间歌曲、槽位、范围或页面已改变。");return;}
+        if(page.page!=pending.source.page || !page.idle || page.scene!=pending.source.scene || page.state!=pending.source.state || !SameConfiguration(page,pending.source)) {reject("退出预览期间歌曲、槽位、范围或页面已改变。");return;}
         auto request=pending.request;
         if(request.action!=CustomizationAction::Locate) {
-            const auto capability=ReadModuleActionCapability(request.key,request.character);
+            const auto capability=request.domain==CustomizationDomain::Models?ReadModuleActionCapability(request.key,request.character):ReadCustomizationItemActionCapability(request.domain,request.key);
             if(capability.slot!=request.slot || capability.nativeScope!=request.nativeScope || capability.scope!=request.scope) {reject("后续动作槽位或范围不再匹配。");return;}
             // 只更新本次已认证退出产生的上下文代数，保留原请求目标、目录、查询和槽位意图。
             request.contextGeneration=capability.contextGeneration;
@@ -651,16 +659,20 @@ CustomizationActionCapability ReadCustomizationActionCapability(const Customizat
     capability.locate=capability.targetPage;
     return capability;
 }
-CustomizationActionCapability ReadCustomizationItemActionCapability(CustomizationDomain domain) {
-    auto capability=CustomizationItemCapabilities(domain);
+CustomizationActionCapability ReadCustomizationItemActionCapability(CustomizationDomain domain,std::optional<CustomizationKey> key) {
+    auto capability=CustomizationItemCapabilities(domain,key);
     if(domain==CustomizationDomain::Models) return capability;
     const auto page=CachedNativePage();
-    capability.targetPage=page.idle && page.page==TargetPage(domain);
-    capability.busy=capability.busy || CustomizationItemLocatorBusy();
+    const bool inPreview=CustomizationItemPreviewActive() && page.internal==2;
+    capability.targetPage=(page.idle || inPreview) && page.page==TargetPage(domain);
+    if(capability.contextGeneration!=page.scene || capability.slot!=page.slot || capability.nativeScope!=page.nativeScope) capability.remove=capability.equipped=false;
+    capability.slot=page.slot;capability.nativeScope=page.nativeScope;capability.scope=page.nativeScope==3?CustomizationScope::Song:CustomizationScope::Common;
+    capability.contextGeneration=page.scene;
+    capability.busy=capability.busy || (CustomizationItemLocatorBusy() && !inPreview);
     // 实际歌者未知时预览与更换不开放；人物兼容性由界面只读规则与执行器再次核对。
-    if(!SingerOf(page)) {capability.preview=capability.equip=false;capability.previewReason=capability.equipReason="未读取到当前歌者，暂不支持此操作。";}
+    if(!SingerOf(page)) {capability.preview=capability.equip=capability.remove=false;capability.previewReason=capability.equipReason="未读取到当前歌者，暂不支持此操作。";}
     // 不在目标页时任何能力都不开放；按钮与底栏只提示双击主体进入。
-    if(!capability.targetPage) capability.locate=capability.preview=capability.equip=false;
+    if(!capability.targetPage) capability.locate=capability.preview=capability.equip=capability.remove=false;
     return capability;
 }
 NativePage CurrentNativePage() {
@@ -703,10 +715,12 @@ bool SubmitSongNavigation(const Request& request,bool available,std::string& mes
     }
     if(SongBusy() && songRoute.cancelled==songCancellation.load()) {message="上一条歌曲请求仍在处理中。";return false;}
     if(previewContinuation.waiting) {message="服装预览后续操作正在退出准备中。";return false;}
-    if(s.page==NativePage::Module && ModulePreviewCanExit()) {
+    const bool itemPreview=CustomizationItemPreviewActive() && (s.page==NativePage::Hair || s.page==NativePage::Accessory);
+    if((s.page==NativePage::Module && ModulePreviewCanExit()) || itemPreview) {
         if(!request.serial || request.serial<=songLastSerial || !request.catalogGeneration || request.catalogGeneration!=songGeneration || request.queryRevision!=songRevision) {message="歌曲目标、查询或目录身份已过期。";return false;}
-        const auto preview=PollModuleAction();if(!RequestModulePreviewExitForSong(message)) return false;
-        songLastSerial=request.serial;songRoute={};songRoute.request=request;songRoute.source=s;songRoute.previewSerial=preview.serial;
+        const auto preview=itemPreview?PollCustomizationItemLocator():PollModuleAction();
+        if(!(itemPreview?RequestCustomizationItemPreviewExit(message):RequestModulePreviewExitForSong(message))) return false;
+        songLastSerial=request.serial;songRoute={};songRoute.itemPreview=itemPreview;songRoute.request=request;songRoute.source=s;songRoute.previewSerial=preview.serial;
         songRoute.returnMode=s.mode;songRoute.sourcePvid=s.sourcePvid;songRoute.cancelled=songCancellation.load();songRoute.status.serial=request.serial;songRoute.status.busy=true;
         AdvanceSong(SongPhase::PreviewExit,"正在退出服装预览，随后进入所选歌曲……");songRoute.deadline=GetTickCount64()+20000;message=songRoute.status.message;return true;
     }
@@ -742,14 +756,14 @@ void TickSongNavigation(uint64_t now,uint64_t generation,uint64_t revision) {
         FinishSong("歌曲跨页或定位超时，已停止后续操作。");return;
     }
     if(songRoute.phase==SongPhase::PreviewExit) {
-        const auto previous=PollModuleAction();
+        const auto previous=songRoute.itemPreview?PollCustomizationItemLocator():PollModuleAction();
         if(previous.serial!=songRoute.previewSerial) {FinishSong("原预览事务已改变，取消旧歌曲请求。");return;}
-        if(!previous.completed || ModuleActionBusy()) return;
+        if(!previous.completed || (songRoute.itemPreview?CustomizationItemLocatorBusy():ModuleActionBusy())) return;
         if(!previous.succeeded) {FinishSong("退出旧预览未能核对原装备，未切换歌曲。");return;}
         if(!songRoute.readyAfter) {songRoute.readyAfter=now+20;return;}
         if(now<songRoute.readyAfter) return;
         const auto page=ReadNativePage(imageBase);
-        if(page.page!=NativePage::Module || !page.idle || page.scene!=songRoute.source.scene || !SameConfiguration(page,songRoute.source)) {FinishSong("退出预览期间曲目、槽位或范围改变，未切换歌曲。");return;}
+        if(page.page!=songRoute.source.page || !page.idle || page.scene!=songRoute.source.scene || !SameConfiguration(page,songRoute.source)) {FinishSong("退出预览期间曲目、槽位或范围改变，未切换歌曲。");return;}
         songRoute.source=page;AdvanceSong(SongPhase::Boundary,"旧预览已安全退出，正在进入所选歌曲……");return;
     }
     if(songRoute.phase!=SongPhase::Ready || now<songRoute.readyAfter) return;

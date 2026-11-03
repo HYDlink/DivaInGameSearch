@@ -4,7 +4,7 @@
 
 namespace diva {
 // 动作与输入来源分别保存，按钮永远不获得跨页权限。
-enum class CustomizationAction { Locate, Preview, Equip };
+enum class CustomizationAction { Locate, Preview, Equip, Remove };
 enum class CustomizationOrigin { CardSingleClick, CardDoubleClick, HoverButton, Keyboard, Footer };
 enum class CustomizationScope { Unknown, Common, Song };
 enum class Ownership { Unknown, Unowned, Owned };
@@ -46,7 +46,7 @@ inline std::string CheckCustomizationNavigation(const CustomizationLocateRequest
 // 每张卡片独立取得的能力；未知拥有、范围及槽位均不开放写入。
 // targetPage 表示当前原生页就是该卡片领域的目标子页；locate 仅对发型／道具表示已认证的原位定位 Profile。
 struct CustomizationActionCapability {
-    bool targetPage=false,locate=false,preview=false,equip=false,equipped=false,busy=false;
+    bool targetPage=false,locate=false,preview=false,equip=false,equipped=false,busy=false,remove=false;
     Ownership ownership=Ownership::Unknown;
     uint64_t contextGeneration=0;
     int slot=-1,nativeScope=-1;

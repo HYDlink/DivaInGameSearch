@@ -1,6 +1,7 @@
 #include "host.h"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
+#include <imgui_impl_dx11.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <iostream>
@@ -11,6 +12,30 @@ static void Check(bool value,const char* text) { if(!value) throw std::runtime_e
 static std::array<bool,256> physicalKeys{};
 // 参数 key 为模拟物理状态的虚拟键；使测试不依赖运行机器恰好按住哪些键。
 static bool KeyDown(int key) { return physicalKeys.at(key); }
+// 参数 host/chain/device/context 为真实宿主与 WARP 设备；像素读回同时验证非等比后缓冲的视口和裁剪缩放。
+static void CheckFramebufferMapping(diva::Host& host,IDXGISwapChain* chain,ID3D11Device* device,ID3D11DeviceContext* context) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<ID3D11Texture2D> buffer;Check(SUCCEEDED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer))),"读取测试后缓冲失败");
+    D3D11_TEXTURE2D_DESC desc{};buffer->GetDesc(&desc);
+    auto previous=ImGui::GetCurrentContext();ImGui::SetCurrentContext((ImGuiContext*)host.context);
+    auto& io=ImGui::GetIO();
+    Check(std::abs(io.DisplayFramebufferScale.x*io.DisplaySize.x-desc.Width)<0.01f
+        && std::abs(io.DisplayFramebufferScale.y*io.DisplaySize.y-desc.Height)<0.01f,"客户区与后缓冲比例没有同步");
+    ComPtr<ID3D11RenderTargetView> target;Check(SUCCEEDED(device->CreateRenderTargetView(buffer.Get(),nullptr,&target)),"创建测试目标失败");
+    const float black[4]={0,0,0,1};context->ClearRenderTargetView(target.Get(),black);auto* rt=target.Get();context->OMSetRenderTargets(1,&rt,nullptr);
+    ImDrawList list(ImGui::GetDrawListSharedData());list._ResetForNewFrame();list.PushTextureID(io.Fonts->TexID);list.PushClipRect({40,40},{80,80});
+    list.AddRectFilled({20,20},{120,120},IM_COL32(255,0,0,255));list.PopClipRect();
+    ImDrawList* lists[]={&list};ImDrawData data;data.Valid=true;data.CmdLists=lists;data.CmdListsCount=1;
+    data.TotalVtxCount=list.VtxBuffer.Size;data.TotalIdxCount=list.IdxBuffer.Size;data.DisplaySize=io.DisplaySize;data.FramebufferScale=io.DisplayFramebufferScale;
+    ImGui_ImplDX11_RenderDrawData(&data);context->OMSetRenderTargets(0,nullptr,nullptr);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;desc.MiscFlags=0;
+    ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&desc,nullptr,&staging)),"创建像素读回失败");context->CopyResource(staging.Get(),buffer.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"读取测试像素失败");
+    // 参数 x/y 为客户区逻辑坐标；采样同一位置映射到后缓冲后的像素。
+    auto red=[&](float x,float y) {const auto* p=static_cast<const unsigned char*>(mapped.pData)+int(y*data.FramebufferScale.y)*mapped.RowPitch+int(x*data.FramebufferScale.x)*4;return p[0]>240 && p[1]<10;};
+    const bool pixels=red(60,60) && !red(30,60) && !red(100,60);
+    context->Unmap(staging.Get(),0);ImGui::SetCurrentContext(previous);Check(pixels,"视口或裁剪未按后缓冲比例映射，鼠标与图像将错位");
+}
 static int forwarded=0;
 // 参数 hwnd/message/w/l 为转发消息，记录宿主是否保留了前一 Mod 的处理链。
 static LRESULT CALLBACK PreviousProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
@@ -134,6 +159,12 @@ int wmain(int argc,wchar_t** argv) {
         ImGui::CloseCurrentPopup();ImGui::EndPopup();ImGui::End();ImGui::Render();
         ImGui::SetCurrentContext(oldContext);host.Message(window,WM_KEYUP,VK_ESCAPE,1);
         context->OMSetRenderTargets(0,nullptr,nullptr);Check(SUCCEEDED(chain->ResizeBuffers(0,1024,768,DXGI_FORMAT_UNKNOWN,0)),"后缓冲未释放");host.Frame(chain.Get());
+        CheckFramebufferMapping(host,chain.Get(),device.Get(),context.Get());
+        // 客户区保持原尺寸，后缓冲独立放大再缩小，覆盖游戏切换渲染分辨率但窗口不变的情况。
+        for(auto size:{std::pair{2560u,1440u},std::pair{640u,360u},std::pair{1024u,768u}}) {
+            Check(SUCCEEDED(chain->ResizeBuffers(0,size.first,size.second,DXGI_FORMAT_UNKNOWN,0)),"独立后缓冲尺寸切换失败");
+            host.Frame(chain.Get());CheckFramebufferMapping(host,chain.Get(),device.Get(),context.Get());
+        }
         host.view.fontSize=20;host.view.fontDirty=true;host.Frame(chain.Get());Check(!host.view.fontDirty,"字体未在安全帧重建");
         host.Shutdown();host.diagnostic={};DestroyWindow(window);std::cout<<"原生输入协议通过：组合 Enter/Esc、长按释放屏障、丢失释放恢复、窗口链转发、导航累加、中文消息、失焦、DX11 调整和字体重建。\n";return 0;
     } catch(const std::exception& error) { std::cout<<"原生输入验证失败："<<error.what()<<"\n";return 1; }

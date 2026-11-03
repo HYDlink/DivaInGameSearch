@@ -27,7 +27,7 @@ struct RecommendedModules {
 std::optional<CustomizationCharacter> ResolvePerformerCharacter(const RecommendationSnapshot& snapshot,int pvid,int slot);
 // 参数 snapshot/pvid/catalog 为游戏推荐值、歌曲编号及最终有效服装目录；按人物和零基COS唯一关联。
 RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snapshot,int pvid,const CustomizationCatalog& catalog);
-// 参数为服装条件、共用曲库及歌曲条件、收藏和推荐快照；同一输入同时检索服装名称和歌曲推荐。
+// 参数为领域条件、共用曲库及歌曲条件、收藏和推荐快照；模型与发型共用歌曲匹配，发型通过 bindModule 唯一关联推荐模型。
 RecommendedModules SearchModulesWithSongs(const CustomizationCatalog& modules,const CustomizationQuery& moduleQuery,const Catalog* songs,Query songQuery,const std::set<int>& favorites,const RecommendationSnapshot* recommendations);
 // 参数 base 必须已通过定位器的完整SHA256核验；只初始化只读读取器。
 void InitializeRecommendations(uintptr_t base);

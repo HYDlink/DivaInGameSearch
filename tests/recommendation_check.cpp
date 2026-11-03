@@ -61,6 +61,30 @@ int main() {
         Check(view.State().results.empty() && !view.State().recommendationWarnings.empty() && actions==0,"推荐快照失效后仍显示旧目标");
         View parent;parent.catalog=songs;parent.query.modMode=true;parent.query.pack="不存在的曲包";parent.query.favoritesOnly=true;parent.query.style=0;parent.Poll();
         Check(parent.customization.songCatalog==songs && !parent.customization.songCriteria.modMode && parent.customization.songCriteria.pack.empty() && !parent.customization.songCriteria.favoritesOnly,"歌曲页隐藏筛选导致服装页按歌曲名称无法检索");
+        // 发型和模型使用不同ID，按绑定关联；同ID错误发型不能混入，其他角色推荐仍可只读浏览。
+        auto hairCatalog=*modules;
+        for(size_t n=0;n<modules->items.size();++n) {
+            auto hair=modules->items[n];hair.key={CustomizationKind::Accessory,900+static_cast<int>(n)};
+            hair.part=CustomizationPart::Hair;hair.bindModule=modules->items[n].key.id;hair.name="绑定发型";hair.searchKey=Normalize(hair.name);hairCatalog.items.push_back(hair);
+        }
+        auto unrelated=hairCatalog.items[3];unrelated.key.id=270;unrelated.bindModule=12345;hairCatalog.items.push_back(unrelated);
+        query.domain=CustomizationDomain::Hair;query.text="637";query.character=CustomizationCharacter::Miku;
+        auto hairResult=SearchModulesWithSongs(hairCatalog,query,songs.get(),{},favorites,snapshot.get());
+        Check(hairResult.items==std::vector<size_t>({3,4,5}) && hairResult.reasons.size()==3 && hairResult.matchedSongs==1,"发型推荐没有按bindModule关联，或错误按同ID/角色筛选推荐");
+        for(const auto* text:{"千本樱","Senbonzakura","せんぼんざくら","637"}) {
+            query.text=text;hairResult=SearchModulesWithSongs(hairCatalog,query,songs.get(),{},favorites,snapshot.get());
+            Check(hairResult.items.size()==3 && !hairResult.reasons.empty(),"发型未复用歌曲多语及PVID检索");
+        }
+        auto ambiguous=hairCatalog;auto extra=hairCatalog.items[3];extra.key.id=999;ambiguous.items.push_back(extra);query.text="637";
+        hairResult=SearchModulesWithSongs(ambiguous,query,songs.get(),{},favorites,snapshot.get());
+        Check(hairResult.items.size()==2 && !hairResult.unresolved.empty(),"发型绑定歧义仍任意选择目标");
+        CustomizationView hairView;hairView.catalog=std::make_shared<CustomizationCatalog>(hairCatalog);hairView.songCatalog=songs;hairView.generation=1;
+        hairView.recommendationProvider=[snapshot] {return snapshot;};hairView.SetDomain(CustomizationDomain::Hair);
+        hairView.submitItemRequest=[&actions](const CustomizationLocateRequest&) {++actions;};
+        strcpy_s(hairView.State().input,"637");hairView.QueueSearch(false);Complete(hairView);
+        Check(hairView.State().results.size()==3 && hairView.State().recommendationReasons.size()==3 && actions==0,"发型视图未展示歌曲推荐或查询自动导航");
+        hairView.recommendationProvider=[notReady] {return notReady;};hairView.Poll();Complete(hairView);
+        Check(hairView.State().results.empty() && !hairView.State().recommendationWarnings.empty(),"发型推荐快照失效后仍显示旧推荐");
         std::cout<<"歌曲推荐服装回归通过：共用多语检索、多角色、唯一COS关联、歧义与过期保护，查询没有导航副作用。\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"歌曲推荐服装验收失败："<<error.what()<<"\n";return 1;}
 }

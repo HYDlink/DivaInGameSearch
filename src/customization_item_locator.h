@@ -26,6 +26,10 @@ struct CustomizationItemSnapshot {
     std::optional<size_t> highlightIndex;
     // 独立读回的原生高亮、临时预览及当前槽位实际装备的稳定 ID。
     std::optional<int> highlightedId,previewId,equippedId;
+    // 原始覆盖配置，-1 表示搭配模型／未设置；不得用解析后的默认发型ID替代。
+    std::optional<int> rawEquippedId;
+    // 六槽的模型、头、脸、胸口、背部、发型配置，用于卸除后逐项确认其他字段未变。
+    std::array<std::optional<int>,36> configurationIds{};
     // 各歌者槽位在本部位的实际装备，用于核对预览／更换没有改变其他槽位。
     std::array<std::optional<int>,6> slotEquipped{};
     // 原生读回的当前歌者人物；若提供，须与路由器按槽位解析的歌者一致。
@@ -50,6 +54,8 @@ struct CustomizationItemFrame {
 // 禁止把模型页 scene+0x60/+0x68、分类函数 0x694D00、动作回调 0x695250、command3/7 或随机／卸除哨兵填作默认值。
 struct CustomizationItemProfile {
     std::string evidence;
+    // 当前 PC 动作需要先完成真实高亮，再在下一帧查询拥有并准备菜单目标；其他规格可自行处理目标。
+    bool requiresHighlightedAction=false;
     // 参数 frame/out 为当前帧上下文与输出快照；读取失败返回 false，不写游戏内存。
     std::function<bool(const CustomizationItemFrame&,CustomizationItemSnapshot&)> read;
     // 参数 frame/direction 为当前帧与部位切换方向（-1／+1）；仅道具页需要，未认证时为空。
@@ -60,6 +66,8 @@ struct CustomizationItemProfile {
     std::function<bool(const CustomizationItemFrame&,int)> step;
     // 参数 frame/index 同上；已认证的临时预览与普通更换入口（不得是购买命令），未认证时为空。
     std::function<bool(const CustomizationItemFrame&,size_t)> preview,equip;
+    // 参数 frame/index 为场景与当前真实装备的列表索引；只卸除该装备，不写配置ID。
+    std::function<bool(const CustomizationItemFrame&,size_t)> remove;
     // 参数 frame 为当前帧；已认证的退出临时预览入口，未认证时为空（只能等待玩家原生 Esc 退出）。
     std::function<bool(const CustomizationItemFrame&)> exitPreview;
 };
@@ -67,7 +75,9 @@ struct CustomizationItemProfile {
 // 参数 domain/profile 为领域及已认证 Profile；传空值撤销。生产由规格构造器调用，隔离测试注入模拟 Profile。
 void RegisterCustomizationItemProfile(CustomizationDomain domain,std::optional<CustomizationItemProfile> profile);
 // 参数 domain 为发型或自定义道具；返回 Profile 能力与简短原因，不读取游戏内存，targetPage 由路由器填写。
-CustomizationActionCapability CustomizationItemCapabilities(CustomizationDomain domain);
+CustomizationActionCapability CustomizationItemCapabilities(CustomizationDomain domain,std::optional<CustomizationKey> key=std::nullopt);
+// 返回是否有事务或界面请求的装备观察；路由器只在匹配的游戏线程帧读取原生数据。
+bool CustomizationItemFrameNeeded();
 // 参数 request/frame/message 为网关核对后的请求、提交时的目标页上下文与即时反馈；未知 Profile 明确拒绝。
 bool SubmitCustomizationItemRequest(const CustomizationLocateRequest& request,const CustomizationItemFrame& frame,std::string& message);
 // 参数 frame 为原生内部状态帧上下文；每帧最多执行一步原生调用，确认阶段只读回。

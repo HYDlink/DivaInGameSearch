@@ -83,8 +83,9 @@ static void ImGui_ImplDX11_SetupRenderState(ImDrawData* draw_data, ID3D11DeviceC
     // Setup viewport
     D3D11_VIEWPORT vp;
     memset(&vp, 0, sizeof(D3D11_VIEWPORT));
-    vp.Width = draw_data->DisplaySize.x;
-    vp.Height = draw_data->DisplaySize.y;
+    // 本地兼容补丁：与上游 2025-05-07 的 FramebufferScale 支持保持一致，逻辑坐标转换到真实后缓冲。
+    vp.Width = draw_data->DisplaySize.x * draw_data->FramebufferScale.x;
+    vp.Height = draw_data->DisplaySize.y * draw_data->FramebufferScale.y;
     vp.MinDepth = 0.0f;
     vp.MaxDepth = 1.0f;
     vp.TopLeftX = vp.TopLeftY = 0;
@@ -264,8 +265,9 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
             else
             {
                 // Project scissor/clipping rectangles into framebuffer space
-                ImVec2 clip_min(pcmd->ClipRect.x - clip_off.x, pcmd->ClipRect.y - clip_off.y);
-                ImVec2 clip_max(pcmd->ClipRect.z - clip_off.x, pcmd->ClipRect.w - clip_off.y);
+                // 裁剪与视口使用同一比例，不能只缩放绘制而保留旧裁剪坐标。
+                ImVec2 clip_min((pcmd->ClipRect.x - clip_off.x) * draw_data->FramebufferScale.x, (pcmd->ClipRect.y - clip_off.y) * draw_data->FramebufferScale.y);
+                ImVec2 clip_max((pcmd->ClipRect.z - clip_off.x) * draw_data->FramebufferScale.x, (pcmd->ClipRect.w - clip_off.y) * draw_data->FramebufferScale.y);
                 if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y)
                     continue;
 

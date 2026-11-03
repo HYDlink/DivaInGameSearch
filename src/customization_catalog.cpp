@@ -335,18 +335,20 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         out.diagnostics.push_back("未检测到标准定制实体定义："+root.id+"；资源替换、PV引用或DLL动态注册需另行核查。");
     }
     const bool legacyBuild=LegacyNameBuild(game);
-    // PC已核查构建的原生名称调用以ModuleID+0x113查语言表；只应用于官方实体，Mod名称随后按DML优先级覆盖。
+    // 已核查的PC语言表中，官方模型使用ID+0x113，发型与道具使用ID+0x3a8；Mod名称随后按DML优先级覆盖。
     if(legacyBuild && out.language.size()==2 && out.language.find_first_not_of("abcdefghijklmnopqrstuvwxyz")==std::string::npos) {
         const auto suffix="rom/lang2/"+out.language+"/str_array.bin";
         auto strings=ReadOfficialCpkEntries(game,home,suffix,out.diagnostics);
         for(const auto& entry:strings) if(entry.internalPath=="rom_steam/"+suffix) {
             const auto names=ReadCustomizationStrings(entry.entryData);
             out.configurationKey+=entry.fingerprint+"\n";
-            for(auto& [key,item]:merged) if(key.kind==CustomizationKind::Module && item.definitionSource.starts_with("official:") && key.id<=100000-0x113) {
-                const auto name=names.find(key.id+0x113);if(name==names.end()) continue;
+            for(auto& [key,item]:merged) if(item.definitionSource.starts_with("official:")) {
+                const int offset=key.kind==CustomizationKind::Module?0x113:0x3a8;
+                if(key.id>100000-offset) continue;
+                const auto name=names.find(key.id+offset);if(name==names.end()) continue;
                 item.namesByLanguage[out.language]=name->second;item.name=name->second;
             }
-            out.diagnostics.push_back("官方服装语言表："+out.language+"，有效字符串 "+std::to_string(names.size())+" 条。");
+            out.diagnostics.push_back("官方定制语言表："+out.language+"，有效字符串 "+std::to_string(names.size())+" 条。");
             break;
         }
     }

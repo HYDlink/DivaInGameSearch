@@ -17,7 +17,7 @@ constexpr uintptr_t kEquipped=0x40,kStride=0x10;
 constexpr int kPreview=41,kEquip=42,kExit=43;
 // 模拟记录：稳定 ID 位于 +0x10，拥有标记位于 +0x14。
 struct Record {int64_t pad[2]{};int32_t id=-1;uint8_t owned=0;};
-alignas(16) unsigned char scene[0x100]{};
+alignas(16) unsigned char scene[0x200]{};
 alignas(16) unsigned char controller[0x100]{};
 struct Callback {uintptr_t scene=0;} callback;
 std::vector<Record> hairRecords,headRecords,faceRecords;
@@ -38,6 +38,10 @@ void Build(std::vector<Record>& records,std::vector<uintptr_t>& pointers,std::ve
 }
 // 参数 object/index 为场景与序号；模拟直接高亮。
 void __fastcall TestHighlight(void* object,int index) {++highlightCalls;Put(static_cast<unsigned char*>(object),kHighlight,int32_t(index));}
+// 参数 object/index 为内嵌控件与序号；确认构造器没有误把 scene 当作控件传入。
+void __fastcall TestControlHighlight(void* object,int index) {TestHighlight(static_cast<unsigned char*>(object)-0x60,index);}
+// 参数 object/reason 为场景与刷新原因；确认只刷新卡片而不重建列表。
+void __fastcall TestRefresh(void* object,int reason) {if(object!=scene || reason!=3) throw std::runtime_error("卡片刷新 ABI 错误");}
 // 参数 object/direction 为场景与方向；模拟逐步移动。
 void __fastcall TestStep(void* object,int direction) {++stepCalls;auto* s=static_cast<unsigned char*>(object);Put(s,kHighlight,int32_t(Get<int32_t>(s,kHighlight)+direction));}
 // 参数 object/direction 为场景与方向；模拟部位切换并换列表。
@@ -114,6 +118,18 @@ int main() {
         Put(scene,kEnd,Get<uintptr_t>(scene,kBegin)-8);CustomizationItemSnapshot broken;
         Check(!hair->read(Frame(CustomizationDomain::Hair),broken),"列表边界异常仍返回快照");
         Bind(hairPointers);
+        // 实机布局形状：内嵌控件与刷新入口必须配对，过渡中不能执行高亮。
+        auto controlSpec=Spec(CustomizationDomain::Hair);
+        controlSpec.highlightControl=0x60;
+        Check(!BuildCustomizationItemProfile(CustomizationDomain::Hair,controlSpec,0),"控件缺少刷新入口仍登记");
+        controlSpec.refreshRva=reinterpret_cast<uintptr_t>(&TestRefresh);
+        controlSpec.highlightRva=reinterpret_cast<uintptr_t>(&TestControlHighlight);
+        auto controlProfile=BuildCustomizationItemProfile(CustomizationDomain::Hair,controlSpec,0);
+        Put(scene,0x60+0xAC,int32_t(2));
+        Check(controlProfile && !controlProfile->highlight(Frame(CustomizationDomain::Hair),2),"控件过渡期间仍提交定位");
+        Put(scene,0x60+0xAC,int32_t(-1));
+        Check(controlProfile->highlight(Frame(CustomizationDomain::Hair),2) && Get<int32_t>(scene,kHighlight)==2,"内嵌控件定位 ABI 错误");
+        highlightCalls=0;Put(scene,kHighlight,int32_t(0));
         // 定位：唯一 ID → 序号 → 直接高亮 → 跨帧读回。
         RegisterCustomizationItemProfile(CustomizationDomain::Hair,hair);
         std::string message;
@@ -125,11 +141,11 @@ int main() {
         Frames(2,CustomizationDomain::Hair);
         Check(PollCustomizationItemLocator().completed && !PollCustomizationItemLocator().succeeded && equipCalls==0,"未拥有目标仍发出更换命令");
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,502,CustomizationPart::Hair,CustomizationAction::Equip),Frame(CustomizationDomain::Hair),message),"更换未受理");
-        Frames(3,CustomizationDomain::Hair);status=PollCustomizationItemLocator();
+        Frames(4,CustomizationDomain::Hair);status=PollCustomizationItemLocator();
         Check(status.succeeded && status.stage==CustomizationStage::Equipped && equipCalls==1 && Get<int32_t>(controller,kEquipped)==502 && Get<int32_t>(controller,kEquipped+kStride)==777,"更换未按读回确认或改动了其他槽位");
         // 预览：进入、确认、请求退出、核对原装备。
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair,CustomizationAction::Preview),Frame(CustomizationDomain::Hair),message),"预览未受理");
-        Frames(3,CustomizationDomain::Hair);status=PollCustomizationItemLocator();
+        Frames(4,CustomizationDomain::Hair);status=PollCustomizationItemLocator();
         Check(previewCalls==1 && status.previewReady && status.stage==CustomizationStage::Previewing && !status.completed,"预览未进入临时预览阶段");
         Check(RequestCustomizationItemPreviewExit(message),"退出预览请求未受理");
         Frames(2,CustomizationDomain::Hair);status=PollCustomizationItemLocator();
@@ -144,6 +160,6 @@ int main() {
         Frames(4,CustomizationDomain::Accessories);status=PollCustomizationItemLocator();
         Check(status.succeeded && partCalls==1 && Get<int32_t>(scene,kHighlight)==1,"道具未切部位后在新列表中定位");
         RegisterCustomizationItemProfile(CustomizationDomain::Hair,std::nullopt);RegisterCustomizationItemProfile(CustomizationDomain::Accessories,std::nullopt);
-        std::cout<<"发型／道具原生规格隔离回归通过："<<checks<<" 项；只使用测试进程内模拟内存与函数，生产规格表为空。\n";return 0;
+        std::cout<<"发型／道具原生规格隔离回归通过："<<checks<<" 项；只使用测试进程内模拟内存与函数，不代表实机验收。\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"发型／道具原生规格验证失败："<<error.what()<<"\n";return 1;}
 }

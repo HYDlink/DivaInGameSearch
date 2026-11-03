@@ -374,7 +374,7 @@ bool SubmitModuleAction(const CustomizationLocateRequest& request,std::string& m
     std::unique_lock lock(mutex,std::try_to_lock);
     if(!lock.owns_lock()) {message="模型动作正在处理，请稍候。";return false;}
     const auto reject=[&](const char* reason) {message=reason;return false;};
-    if(request.action==CustomizationAction::Locate || request.key.kind!=CustomizationKind::Module || request.key.id<0) return reject("原生动作目标无效。");
+    if((request.action!=CustomizationAction::Preview && request.action!=CustomizationAction::Equip) || request.key.kind!=CustomizationKind::Module || request.key.id<0) return reject("原生动作目标无效。");
     if(active.phase!=Phase::Idle && active.phase!=Phase::Done) return reject("已有原生服装动作正在进行。");
     if(!base || !latest.page.idle || !CertifiedContext(latest) || GetTickCount64()-lastFrame>500) return reject("当前槽位或设置范围尚未认证，未执行服装动作。");
     if(request.contextGeneration!=generation || request.slot!=latest.page.slot || request.nativeScope!=latest.page.nativeScope

@@ -63,19 +63,15 @@ size_t SlotOf(CustomizationDomain domain,CustomizationPart part) {
 }
 // 卡片几何：图片区高度、名称行与信息行偏移及整卡高度。
 struct CardMetrics {float image,name,detail,card;};
-// 参数 domain/width 为领域与实际卡片宽度；模型保持原尺寸，发型图片约 0.78 倍宽、整卡为模型 65%～75%，
-// 道具图片约 0.58 倍宽、整卡为模型 50%～65%；随字号缩放文字行，不为动作按钮永久预留空白。
-CardMetrics MetricsFor(CustomizationDomain domain,float width) {
+// 参数 domain/width/part 为领域、实际卡宽与道具部位；按内容形状统一行高，发型保留完整半身缩略图空间。
+CardMetrics MetricsFor(CustomizationDomain domain,float width,CustomizationPart part) {
     if(domain==CustomizationDomain::Models) return {kPreviewHeight,290.0f,315.0f,kCardHeight};
     const float line=ImGui::GetTextLineHeight();
     const float text=8.0f+line+4.0f+line+8.0f;
     const bool hair=domain==CustomizationDomain::Hair;
-    const float low=(hair?0.65f:0.50f)*kCardHeight,high=(hair?0.75f:0.65f)*kCardHeight;
-    const float minRatio=hair?0.70f:0.50f,maxRatio=hair?0.85f:0.65f;
-    // 先保证图片区比例落在设计区间，再尽量把整卡高度拉进目标比例；两者冲突时以图片比例为准。
-    float image=width*(hair?0.78f:0.58f);
-    if(image+text<low) image=std::min(width*maxRatio,low-text);
-    else if(image+text>high) image=std::max(width*minRatio,high-text);
+    // 真实发型资源是半身肖像，旧0.78过扁；背部翅膀等需要比眼镜、胸针更高的完整轮廓空间。
+    const float ratio=hair?1.0f:part==CustomizationPart::Back?0.88f:part==CustomizationPart::Head?0.80f:0.72f;
+    const float image=std::clamp(width*ratio,hair?210.0f:160.0f,hair?250.0f:225.0f);
     return {image,image+8.0f,image+8.0f+line+4.0f,image+text};
 }
 
@@ -139,7 +135,7 @@ void BuildGridLayout(CustomizationView& view,CustomizationView::ModeState& state
     int nextColumns=std::max(1,static_cast<int>((width+spacing)/(kMinimumCardWidth+spacing)));
     nextColumns=std::min(nextColumns,8);
     const float nextCardWidth=std::max(1.0f,(width-spacing*(nextColumns-1))/nextColumns);
-    const auto metrics=MetricsFor(view.domain,nextCardWidth);
+    const auto metrics=MetricsFor(view.domain,nextCardWidth,view.accessoryPart);
     const float nextRowHeight=metrics.card+ImGui::GetStyle().ItemSpacing.y;
     std::vector<int> spans(state.results.size(),1);
     // 只有模型宽图跨列；同一发型或道具子标签保持统一单列卡片与行高，避免逐卡跳动。
@@ -298,7 +294,8 @@ void CustomizationView::Poll() {
     if(songCriteria.favoritesOnly) for(int id:songFavorites) criteriaKey+='|'+std::to_string(id);
     if(observedSongCatalog!=songCatalog || observedRecommendationGeneration!=recommendationGeneration || observedSongCriteria!=criteriaKey) {
         observedSongCatalog=songCatalog;observedRecommendationGeneration=recommendationGeneration;observedSongCriteria=std::move(criteriaKey);
-        auto& state=states[0];++state.revision;state.due={};state.locateRequested=state.detailsRequested=false;
+        // 模型与发型都依赖推荐快照；数据更新时分别作废旧查询，避免发型继续显示上一次歌曲推荐。
+        for(size_t slot:{size_t(0),size_t(1)}) {auto& state=states[slot];++state.revision;state.due={};state.locateRequested=state.detailsRequested=false;}
         ResetBodyClick();if(invalidateModuleLocate) invalidateModuleLocate();
     }
     if(pending.valid() && pending.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
@@ -509,13 +506,14 @@ void CustomizationView::ResetBodyClick() {
 void CustomizationView::RequestAction(const CustomizationKey& key,CustomizationAction action) {
     ResetBodyClick();
     if(composing || SearchPending() || catalogRequiresRestart || !catalog || action==CustomizationAction::Locate) return;
+    if(action==CustomizationAction::Remove && domain==CustomizationDomain::Models) return;
     const auto found=std::find_if(State().results.begin(),State().results.end(),[&](size_t index){return catalog->items[index].key==key;});
     if(found==State().results.end()) {status="动作目标已不在当前结果中。";return;}
     if(BrowseOnly(catalog->items[*found])) {status="仅供浏览。";return;}
     const auto capability=actionCapability?actionCapability(key):CustomizationActionCapability{};
     // 按钮永远不跨页：不在目标原生页时只提示双击主体，既不排队导航也不改变搜索选择。
     if(!capability.targetPage) {status=std::string("双击卡片进入")+CustomizationDomainPageName(domain)+"后使用。";return;}
-    if(capability.busy || (action==CustomizationAction::Preview?!capability.preview:!capability.equip)) {
+    if(capability.busy || (action==CustomizationAction::Preview?!capability.preview:action==CustomizationAction::Remove?!capability.remove:!capability.equip)) {
         status=action==CustomizationAction::Preview?capability.previewReason:capability.equipReason;return;
     }
     const bool models=domain==CustomizationDomain::Models;
@@ -572,6 +570,9 @@ void CustomizationView::Draw() {
     ImGui::PushID(models?"custom-module":domain==CustomizationDomain::Hair?"custom-hair":"custom-accessory");
     // 自定义道具第二级标签：头｜脸｜胸口｜背部，每次只展示一个部位；先于取用状态绘制，避免切换后沿用旧状态引用。
     if(domain==CustomizationDomain::Accessories) {
+        // 子标签高度小于主标签，单独设置垂直内边距和对齐，给底部选中线留出空间。
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(ImGui::GetStyle().FramePadding.x,0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign,ImVec2(0.5f,0.42f));
         for(auto part:{CustomizationPart::Head,CustomizationPart::Face,CustomizationPart::Neck,CustomizationPart::Back}) {
             if(part!=CustomizationPart::Head) ImGui::SameLine(0,4);
             const bool selected=accessoryPart==part;
@@ -585,13 +586,14 @@ void CustomizationView::Draw() {
             }
             ImGui::PopStyleColor(2);
         }
+        ImGui::PopStyleVar(2);
     }
     auto& state=State();
     const float availableWidth=ImGui::GetContentRegionAvail().x;
     const bool splitFilters=availableWidth<680.0f;
     ImGui::SetNextItemWidth(-1);
     if(state.focus) {ImGui::SetKeyboardFocusHere();state.focus=false;}
-    const char* hint=models?"服装名称、歌曲名称或 ID":domain==CustomizationDomain::Hair?"发型名称、别名、假名、罗马音或 ID":"道具名称、别名、假名、罗马音或 ID";
+    const char* hint=models?"服装名称、歌曲名称或 ID":domain==CustomizationDomain::Hair?"发型名称、歌曲名称或 ID":"道具名称、别名、假名、罗马音或 ID";
     if(ImGui::InputTextWithHint("##item-search",hint,state.input,sizeof(state.input))) QueueSearch(true);
     textNavigation=ImGui::IsItemActive() || ImGui::IsItemFocused();
     // 自定义道具不按人物区分，不显示人物筛选；四个部位子标签就是主要分类。
@@ -683,7 +685,7 @@ void CustomizationView::Draw() {
         if(singer) ImGui::TextDisabled("当前歌者：%s",CustomizationCharacterName(singer->character));
         else ImGui::TextDisabled("未读取到当前歌者，暂不支持预览与更换");
     }
-    if(models && state.matchedSongs && !SearchPending()) {
+    if(domain!=CustomizationDomain::Accessories && state.matchedSongs && !SearchPending()) {
         ImGui::SameLine();ImGui::TextDisabled("匹配 %zu 首歌曲 · 推荐显示全部角色",state.matchedSongs);
     }
     if(!state.recommendationWarnings.empty() && !SearchPending()) {
@@ -895,10 +897,12 @@ void CustomizationView::Draw() {
                     const auto capability=actionCapability?actionCapability(item.key):CustomizationActionCapability{};
                     const bool unavailable=SearchPending() || composing || catalogRequiresRestart || capability.busy;
                     ImGui::SetCursorPos(ImVec2(x+8,rowY+actionY));
-                    ImGui::BeginDisabled(unavailable || !capability.equip);
+                    const bool removal=!models && capability.equipped;
+                    ImGui::BeginDisabled(unavailable || (removal?!capability.remove:!capability.equip));
                     ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0.15f,0.28f,0.25f,1));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,ImVec4(0.21f,0.39f,0.34f,1));
-                    const char* equipLabel=capability.equipped?"已装备###card-equip":models?"换装###card-equip":"更换###card-equip";
+                    const char* equipLabel=removal?(domain==CustomizationDomain::Hair?"搭配模型###card-equip":"卸除###card-equip")
+                        :capability.equipped?"已装备###card-equip":models?"换装###card-equip":"更换###card-equip";
                     const bool equip=ImGui::Button(equipLabel,ImVec2(actionWidth,32));
                     ImGui::PopStyleColor(2);
                     ImGui::EndDisabled();
@@ -914,7 +918,7 @@ void CustomizationView::Draw() {
                         actionPressKey=item.key;ResetBodyClick();
                     }
                     const bool duplicate=suppressActionRelease && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-                    if(equip && !duplicate) RequestAction(item.key,CustomizationAction::Equip);
+                    if(equip && !duplicate) RequestAction(item.key,removal?CustomizationAction::Remove:CustomizationAction::Equip);
                     if(previewClicked && !duplicate) RequestAction(item.key,CustomizationAction::Preview);
                     if(capability.equipped) draw->AddText(ImVec2(origin.x+cellWidth-70,origin.y+8),IM_COL32(107,224,194,255),"已装备");
                 }

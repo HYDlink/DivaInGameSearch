@@ -17,6 +17,7 @@ enum class Phase { Idle, Preparing, Confirming, PreviewActive, Done };
 struct Baseline {
     std::optional<int> equipped;
     std::array<std::optional<int>,6> slots{};
+    std::array<std::optional<int>,36> configurationIds{};
 };
 struct Active {
     Phase phase=Phase::Idle;
@@ -33,6 +34,10 @@ struct Active {
 std::mutex mutex;
 std::atomic<uint64_t> cancellation{0};
 std::array<std::optional<CustomizationItemProfile>,3> profiles;
+struct Observation {CustomizationItemFrame frame;CustomizationItemSnapshot snapshot;};
+std::array<std::optional<Observation>,3> observations;
+std::atomic<bool> observationRequested{false};
+uint64_t latestNow=0;
 Active active;
 ModuleLocateStatus status;
 uint64_t lastSerial=0,uiGeneration=0;
@@ -72,7 +77,7 @@ void Finish(const std::string& text,bool success=false,CustomizationStage stage=
     const bool restored=stage==CustomizationStage::PreviewRestored;
     Set(success?ModuleLocatePhase::Succeeded:ModuleLocatePhase::Rejected,text,true,success,stage);
     status.detail=detail;status.previewRestored=restored && success;
-    if(!restored) status.previewReady=false;
+    status.previewReady=false;
 }
 // 参数 part 为道具部位，返回原生左侧列表顺序（头0、脸1、胸口2、背部3）；胸口与背部顺序待本机核对。
 int PartOrder(CustomizationPart part) {
@@ -83,6 +88,7 @@ std::string Confirmed(CustomizationAction action,int id) {
     const auto suffix=" · ID "+std::to_string(id);
     if(action==CustomizationAction::Locate) return "已定位"+suffix;
     if(action==CustomizationAction::Equip) return "已更换"+suffix;
+    if(action==CustomizationAction::Remove) return "已卸除自定义设置";
     return "正在临时预览"+suffix+"（在游戏中退出预览）";
 }
 // 参数 snapshot/baseline/slot 为当前读数、备份与当前槽位；核对其他槽位装备未被改变。
@@ -102,9 +108,10 @@ void RegisterCustomizationItemProfile(CustomizationDomain domain,std::optional<C
     std::lock_guard lock(mutex);
     const auto slot=Slot(domain);if(!slot) return;
     profiles[*slot]=std::move(profile);
+    observations[*slot].reset();
 }
 
-CustomizationActionCapability CustomizationItemCapabilities(CustomizationDomain domain) {
+CustomizationActionCapability CustomizationItemCapabilities(CustomizationDomain domain,std::optional<CustomizationKey> key) {
     using namespace item_runtime;
     CustomizationActionCapability c;
     c.locateReason=ShortGap(domain,CustomizationAction::Locate);
@@ -120,7 +127,23 @@ CustomizationActionCapability CustomizationItemCapabilities(CustomizationDomain 
     if(c.locate) c.locateReason.clear();
     if(c.preview) c.previewReason.clear();
     if(c.equip) c.equipReason.clear();
-    c.busy=BusyLocked();
+    if(key) {
+        observationRequested.store(true);
+        const auto& observed=observations[*slot];
+        if(observed && latestNow>=observed->frame.now && latestNow-observed->frame.now<500) {
+            const auto& frame=observed->frame;const auto& snapshot=observed->snapshot;
+            c.slot=frame.slot;c.nativeScope=frame.nativeScope;c.contextGeneration=frame.scene;
+            c.scope=frame.nativeScope==3?CustomizationScope::Song:CustomizationScope::Common;
+            if(frame.slot>=0 && frame.slot<6) {
+                const size_t start=static_cast<size_t>(frame.slot)*6;
+                for(size_t part=domain==CustomizationDomain::Hair?5:1;part<=(domain==CustomizationDomain::Hair?5:4);++part)
+                    if(snapshot.configurationIds[start+part]==key->id) c.equipped=true;
+                c.remove=c.equipped && bool(profile.remove) && frame.nativeScope==3;
+                if(c.equipped) c.equipReason=c.remove?(domain==CustomizationDomain::Hair?"恢复当前模型自带发型。":"卸除当前已装备的道具。") :"当前装备的卸除能力暂不可用。";
+            }
+        }
+    }
+    c.busy=BusyLocked() && !(active.phase==Phase::PreviewActive && profile.exitPreview);
     return c;
 }
 
@@ -146,8 +169,10 @@ bool SubmitCustomizationItemRequest(const CustomizationLocateRequest& request,co
     const auto& profile=profiles[*slot];
     // 未登记 Profile 或缺少对应入口一律 Unsupported：不写缓存、不写高亮序号、不返回成功。
     const bool supported=profile && profile->read && (request.action==CustomizationAction::Locate?(bool(profile->highlight) || bool(profile->step))
-        :request.action==CustomizationAction::Preview?bool(profile->preview):bool(profile->equip));
+        :request.action==CustomizationAction::Preview?bool(profile->preview):request.action==CustomizationAction::Remove?bool(profile->remove):bool(profile->equip));
     if(!supported) return reject(ShortGap(request.domain,request.action),DetailGap(request.domain,request.action));
+    if(request.action==CustomizationAction::Remove && (frame.nativeScope!=3 || (request.contextGeneration && request.contextGeneration!=frame.scene)))
+        return reject("当前设置范围或装备上下文已变化，未卸除。");
     if(!request.serial || request.serial<=lastSerial) return reject("请求已过期，已拒绝重复提交。");
     if(request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256
         || (!lockedFingerprint.empty() && lockedFingerprint!=request.catalogFingerprint)) return reject("目录已变化，请重启游戏后再操作。");
@@ -161,7 +186,18 @@ bool SubmitCustomizationItemRequest(const CustomizationLocateRequest& request,co
 void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
     using namespace item_runtime;
     std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock() || (active.phase!=Phase::Preparing && active.phase!=Phase::Confirming && active.phase!=Phase::PreviewActive)) return;
+    if(!lock.owns_lock()) return;
+    latestNow=frame.now;
+    if(observationRequested.load() && frame.valid && frame.idle) {
+        const auto slot=Slot(frame.domain);
+        if(slot && profiles[*slot] && profiles[*slot]->read) {
+            CustomizationItemSnapshot snapshot;
+            if(profiles[*slot]->read(frame,snapshot) && snapshot.pageReady && !snapshot.loading && !snapshot.previewActive) {
+                observations[*slot]=Observation{frame,std::move(snapshot)};observationRequested.store(false);
+            }
+        }
+    }
+    if(active.phase!=Phase::Preparing && active.phase!=Phase::Confirming && active.phase!=Phase::PreviewActive) return;
     const bool previewing=active.phase==Phase::PreviewActive;
     // 已进入的临时预览不因取消或超时中断核对：只等待原生退出，再独立核对原装备与其他槽位。
     if(!previewing) {
@@ -173,7 +209,7 @@ void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
     // 界面线程提交时线程未知，首个原生帧锁定线程；之后换线程即取消。
     if(!active.submitted.thread) active.submitted.thread=frame.thread;
     else if(frame.thread!=active.submitted.thread) {Finish("原生帧线程已改变，已取消操作。");return;}
-    if(!frame.idle && !previewing) return;
+    if(!frame.idle && active.phase==Phase::Preparing) return;
     const auto& profile=profiles[*Slot(active.request.domain)];
     if(!profile || !profile->read) {Finish("暂不支持此操作。",false,CustomizationStage::None,"证据Profile已撤销，未继续执行。");return;}
     CustomizationItemSnapshot snapshot;
@@ -210,7 +246,7 @@ void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
         const auto index=static_cast<size_t>(std::find(snapshot.recordIds.begin(),snapshot.recordIds.end(),id)-snapshot.recordIds.begin());
         if(action==CustomizationAction::Locate) {
             if(profile->highlight) {
-                if(!profile->highlight(frame,index)) {Finish("原生调用未受理，已停止操作。");return;}
+                if(!profile->highlight(frame,index)) return;
             } else {
                 // 逐步移动：每帧一步，并在下一帧按新读数重新查找目标；读不到当前高亮序号时不移动。
                 if(!snapshot.highlightIndex) {Finish("无法读取当前高亮，未移动。");return;}
@@ -222,9 +258,20 @@ void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
                 }
             }
         } else {
+            if(action==CustomizationAction::Remove) {
+                if(!snapshot.rawEquippedId) {Finish("无法确认当前自定义设置，未卸除。");return;}
+                if(*snapshot.rawEquippedId==-1) {Finish("当前已搭配模型或未设置道具。",true,CustomizationStage::Removed);return;}
+                if(snapshot.rawEquippedId!=id) {Finish("该项目已不是当前装备，未卸除其他项目。");return;}
+                if(std::any_of(snapshot.configurationIds.begin(),snapshot.configurationIds.end(),[](const auto& value){return !value;})) {Finish("未能完整读取六槽配置，未卸除。");return;}
+            }
+            // 动作先定位到真实目标，下一帧重新读取拥有状态及列表；不能对上一次菜单残留目标发命令。
+            if(profile->requiresHighlightedAction && snapshot.highlightedId!=id && profile->highlight) {
+                if(!profile->highlight(frame,index)) return;
+                Set(ModuleLocatePhase::SwitchingCategory,"正在准备目标项目……",false,false);return;
+            }
             // 预览与更换前先等待加载结束，并备份当前槽位与全部槽位的实际装备。
             if(snapshot.loading) return;
-            if(!snapshot.equippedId) {Finish("未能读回当前装备，暂不支持此操作。");return;}
+            if(action!=CustomizationAction::Remove && !snapshot.equippedId) {Finish("未能读回当前装备，暂不支持此操作。");return;}
             if(action==CustomizationAction::Equip) {
                 // 实时拥有判定：目录存在不等于拥有；未知或未拥有一律不更换，不调用购买命令。
                 const auto owned=index<snapshot.owned.size()?snapshot.owned[index]:std::nullopt;
@@ -233,7 +280,8 @@ void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
                 if(snapshot.equippedId==id) {Finish("已是当前装备。",true,CustomizationStage::Equipped);return;}
             }
             active.baseline.equipped=snapshot.equippedId;active.baseline.slots=snapshot.slotEquipped;
-            const auto& call=action==CustomizationAction::Preview?profile->preview:profile->equip;
+            active.baseline.configurationIds=snapshot.configurationIds;
+            const auto& call=action==CustomizationAction::Preview?profile->preview:action==CustomizationAction::Remove?profile->remove:profile->equip;
             if(!call(frame,index)) {Finish("原生调用未受理，已停止操作。");return;}
         }
         active.expectedList=snapshot.listIdentity;active.expectedPart=snapshot.part;active.phase=Phase::Confirming;
@@ -241,25 +289,32 @@ void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
         Set(ModuleLocatePhase::Confirming,"正在跨帧读回确认……",false,false);return;
     }
     // 确认阶段只读：列表身份或部位变化说明记录已刷新，旧结果作废；读回值必须独立等于目标，不回显请求ID。
-    if(snapshot.part!=active.expectedPart || (action!=CustomizationAction::Preview && snapshot.listIdentity!=active.expectedList)) {Finish("确认前原生列表已刷新，旧记录作废，未报告成功。");return;}
+    if(snapshot.part!=active.expectedPart || ((action==CustomizationAction::Locate || action==CustomizationAction::Equip) && snapshot.listIdentity!=active.expectedList)) {Finish("确认前原生列表已刷新，旧记录作废，未报告成功。");return;}
     bool confirmed=false;
     if(action==CustomizationAction::Locate) confirmed=snapshot.highlightedId==id;
     else if(action==CustomizationAction::Preview) {
         if(snapshot.loading) return;
         confirmed=snapshot.previewActive && snapshot.previewId==id;
+    } else if(action==CustomizationAction::Remove) {
+        if(snapshot.loading || !frame.idle) return;
+        const size_t part=active.request.domain==CustomizationDomain::Hair?5:static_cast<size_t>(PartOrder(active.request.part)+1);
+        const size_t changed=static_cast<size_t>(frame.slot)*6+part;
+        for(size_t n=0;n<snapshot.configurationIds.size();++n) if(n!=changed && snapshot.configurationIds[n]!=active.baseline.configurationIds[n]) {Finish("卸除后其他配置发生变化，未报告成功。");return;}
+        confirmed=snapshot.rawEquippedId==-1 && snapshot.configurationIds[changed]==-1;
     } else {
         if(snapshot.loading) return;
         if(!OtherSlotsUnchanged(snapshot,active.baseline,frame.slot)) {Finish("更换影响了其他槽位，已停止并保留现状。");return;}
         confirmed=snapshot.equippedId==id && snapshot.slotEquipped[static_cast<size_t>(std::clamp(frame.slot,0,5))]==id;
     }
     if(confirmed) {
-        if(++active.matches<kConfirmFrames) return;
+        if(++active.matches<(action==CustomizationAction::Remove?3:kConfirmFrames)) return;
         if(action==CustomizationAction::Preview) {
             // 临时预览已由独立读回确认；在原生退出并核对装备之前事务保持进行，不报告完成。
             active.phase=Phase::PreviewActive;
             Set(ModuleLocatePhase::Confirming,Confirmed(action,id),false,false,CustomizationStage::Previewing);status.previewReady=true;return;
         }
-        Finish(Confirmed(action,id),true,action==CustomizationAction::Locate?CustomizationStage::Highlighted:CustomizationStage::Equipped);return;
+        Finish(action==CustomizationAction::Remove?(active.request.domain==CustomizationDomain::Hair?"已搭配模型自带发型。":"已卸除道具。"):Confirmed(action,id),true,
+            action==CustomizationAction::Locate?CustomizationStage::Highlighted:action==CustomizationAction::Remove?CustomizationStage::Removed:CustomizationStage::Equipped);return;
     }
     active.matches=0;
     if(++active.misses>kConfirmMisses) Finish("原生读回与目标不符，未报告成功。");
@@ -268,12 +323,14 @@ void OnCustomizationItemFrame(const CustomizationItemFrame& frame) {
 void TickCustomizationItemLocator(uint64_t now,uint64_t generation) {
     using namespace item_runtime;
     std::unique_lock lock(mutex,std::try_to_lock);if(!lock.owns_lock()) return;
-    uiGeneration=generation;
+    uiGeneration=generation;latestNow=now;
     if(active.phase!=Phase::Preparing && active.phase!=Phase::Confirming) return;
     if(active.cancelled!=cancellation.load()) {Finish("查询、目录或面板已变化，旧操作已取消。");return;}
     if(active.request.uiGeneration!=generation) {Finish("目录已重新载入，旧操作已失效。");return;}
     if(now>active.deadline) Finish("等待原生列表超时，已停止操作。");
 }
+
+bool CustomizationItemFrameNeeded() {return item_runtime::observationRequested.load() || CustomizationItemLocatorBusy();}
 
 ModuleLocateStatus PollCustomizationItemLocator() {
     using namespace item_runtime;

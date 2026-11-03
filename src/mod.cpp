@@ -48,7 +48,7 @@ __declspec(dllexport) void Init() {
         if(catalog) for(const auto& item:catalog->items) if(item.key==key) {
             const auto domain=diva::CustomizationItemDomain(item);
             // 发型与道具走独立执行器能力，不借用模型动作缓存。
-            if(domain && *domain!=diva::CustomizationDomain::Models) return diva::ReadCustomizationItemActionCapability(*domain);
+            if(domain && *domain!=diva::CustomizationDomain::Models) return diva::ReadCustomizationItemActionCapability(*domain,key);
             if(!domain) return diva::CustomizationActionCapability{};
             return diva::ReadCustomizationActionCapability(key,diva::ModuleSearchCharacter(item.character));
         }
@@ -146,7 +146,7 @@ __declspec(dllexport) void PostInit() {
         diva::InitializeRecommendations(diva::Game().ExecutableBase());
         nativeRoutingAvailable=diva::InitializeNativePageRouter(diva::Game().ExecutableBase());
         if(nativeRoutingAvailable) Log(diva::CustomizationItemProfileDiagnostics());
-        Log(nativeRoutingAvailable?"歌曲、服装、发型与自定义道具原生双击跨页路由已初始化；发型／道具列表定位未登记证据Profile，到达后不改动原生高亮。":"原生路由初始化失败；已认证目标页内定位仍可用。");
+        Log(nativeRoutingAvailable?"歌曲、服装、发型与自定义道具原生双击跨页路由已初始化；各项定位能力以已登记原生规格为准。":"原生路由初始化失败；已认证目标页内定位仍可用。");
     }
     Log(diva::PollModuleLocator().message);
 }
@@ -181,14 +181,14 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
             Log("服装按钮动作已受理，立即隐藏搜索窗口并等待原生结果。");
         }
     }
-    if(moduleStatus.action==diva::CustomizationAction::Preview && moduleStatus.previewReady
+    if(diva::IsRunningCustomizationPreview(moduleStatus)
         && !nativePreviewSuspended && host.view.open) {
         nativePreviewSuspended=true;nativePreviewSerial=moduleStatus.serial;
         host.view.open=false;host.view.ClearActions();host.releaseUntil=now+120;
         Log("原生模型预览已确认，临时让出输入并保留搜索条件、滚动与焦点。");
     }
     if(nativePreviewSuspended && moduleStatus.serial==nativePreviewSerial && moduleStatus.completed) {
-        nativePreviewSuspended=false;
+        nativePreviewSuspended=false;nativePreviewSerial=0;
         if(moduleStatus.previewRestored && moduleStatus.succeeded && !host.view.open) {
             host.view.open=true;
             host.view.customization.State().focus=host.view.customization.textNavigation;
@@ -205,11 +205,7 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
             reportedModuleSerial=moduleSerial;reportedModuleMessage=moduleStatus.message;
             host.view.customization.status=moduleStatus.message;
             if(moduleStatus.completed || moduleStatus.phase==diva::ModuleLocatePhase::Confirming) Log("定制原生阶段："+moduleStatus.message+(moduleStatus.detail.empty()?"":"；细节："+moduleStatus.detail));
-            if(moduleStatus.action==diva::CustomizationAction::Locate && moduleStatus.completed && moduleStatus.succeeded && host.view.closeOnSuccess) {
-                host.view.open=false;host.view.ClearActions();host.releaseUntil=GetTickCount64()+120;
-                diva::CancelModuleLocate();
-                Log("服装定位成功后关闭搜索："+host.DescribeInputState());
-            }
+            // 定制页面定位或跨页成功后保留搜索窗口，以便直接继续预览和更换。
         }
     }
     if(host.view.open && !Selection().Busy()) diva::Game().Read();

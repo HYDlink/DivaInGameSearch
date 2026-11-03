@@ -21,7 +21,7 @@ struct FakeNative {
     std::optional<int> equipped,previewId,otherSlot;
     // 未列出的ID视为已拥有；显式 false 为未拥有，nullopt 为拥有状态未知。
     std::map<int,std::optional<bool>> owned;
-    int loadingFrames=0,reads=0,switches=0,highlights=0,steps=0,equips=0,previews=0,exits=0;
+    int loadingFrames=0,reads=0,switches=0,highlights=0,steps=0,equips=0,previews=0,exits=0,removes=0;
     size_t lastIndex=~size_t(0);
 };
 FakeNative native;
@@ -33,7 +33,18 @@ bool FakeRead(const CustomizationItemFrame& frame,CustomizationItemSnapshot& out
     for(int id:list.ids) {auto found=native.owned.find(id);out.owned.push_back(found==native.owned.end()?std::optional<bool>(true):found->second);}
     out.loading=native.loadingFrames>0;if(native.loadingFrames>0) --native.loadingFrames;
     out.previewActive=native.previewActive;out.previewId=native.previewId;
-    out.equippedId=native.equipped;out.slotEquipped[0]=native.equipped;out.slotEquipped[1]=native.otherSlot;return true;
+    out.equippedId=native.equipped;out.slotEquipped[0]=native.equipped;out.slotEquipped[1]=native.otherSlot;
+    out.rawEquippedId=native.equipped;out.configurationIds.fill(-1);
+    for(size_t slot=0;slot<6;++slot) out.configurationIds[slot*6]=100+static_cast<int>(slot);
+    const size_t part=native.current==CustomizationPart::Hair?5:native.current==CustomizationPart::Head?1:native.current==CustomizationPart::Face?2:native.current==CustomizationPart::Neck?3:4;
+    out.configurationIds[part]=native.equipped;out.configurationIds[6]=native.otherSlot;return true;
+}
+// 参数 frame/index 为场景及真实装备记录；模拟原生卸除、加载与高亮迁移，不要求卸除后仍高亮旧发型。
+bool FakeRemove(const CustomizationItemFrame& frame,size_t index) {
+    (void)frame;(void)index;++native.removes;
+    if(!native.forge) native.equipped=-1;
+    if(native.changeOtherSlot) native.otherSlot=-7;
+    native.loadingFrames=2;native.lists[native.current].highlight=0;++native.lists[native.current].identity;return true;
 }
 // 参数 frame/direction 为上下文与方向；按头→脸→胸口→背部顺序移动一步。
 bool FakeSwitch(const CustomizationItemFrame& frame,int direction) {
@@ -228,7 +239,10 @@ int main() {
         Check(RequestCustomizationItemPreviewExit(message),"退出预览请求未受理");
         Frames(1,Frame(CustomizationDomain::Accessories));Check(native.exits==1,"退出预览入口未调用或重复调用");
         Frames(2,Frame(CustomizationDomain::Accessories));status=PollCustomizationItemLocator();
-        Check(status.completed && status.succeeded && status.previewRestored && status.stage==CustomizationStage::PreviewRestored && native.exits==1 && !CustomizationItemLocatorBusy(),"退出预览后未核对原装备或未完成");
+        Check(status.completed && status.succeeded && status.previewRestored && !status.previewReady && status.stage==CustomizationStage::PreviewRestored && native.exits==1 && !CustomizationItemLocatorBusy(),"退出预览后未核对原装备、仍标记活动预览或未完成");
+        // 重现旧状态同时带ready/restored：数百帧重复轮询也不能再次进入隐藏面板分支。
+        auto historical=status;historical.previewReady=true;
+        for(int frame=0;frame<240;++frame) Check(!IsRunningCustomizationPreview(historical),"旧预览恢复状态反复隐藏面板并吞掉标签点击");
         Reset();native.current=CustomizationPart::Back;
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Accessories,631,CustomizationPart::Back,CustomizationAction::Preview),Frame(CustomizationDomain::Accessories),message),"预览变装场景未受理");
         Frames(6,Frame(CustomizationDomain::Accessories));Check(CustomizationItemPreviewActive(),"预览变装场景未进入预览");
@@ -242,6 +256,28 @@ int main() {
         Frames(3,Frame(CustomizationDomain::Hair));Check(native.steps==3 && !PollCustomizationItemLocator().completed,"逐步移动不是每帧一步");
         Frames(3,Frame(CustomizationDomain::Hair));status=PollCustomizationItemLocator();
         Check(status.succeeded && status.stage==CustomizationStage::Highlighted && native.steps==3,"逐步移动到达后未确认或继续移动");
+        // 五类均验证原生重建列表和高亮迁移、三帧确认，以及其余35个配置字段保护。
+        for(auto part:{CustomizationPart::Hair,CustomizationPart::Head,CustomizationPart::Face,CustomizationPart::Neck,CustomizationPart::Back}) {
+            Reset();native.current=part;const auto domain=part==CustomizationPart::Hair?CustomizationDomain::Hair:CustomizationDomain::Accessories;
+            const int id=native.lists[part].ids.back();native.equipped=id;
+            CustomizationItemProfile removal;removal.evidence="隔离卸除模拟";removal.read=FakeRead;removal.highlight=FakeHighlight;removal.remove=FakeRemove;removal.requiresHighlightedAction=true;
+            RegisterCustomizationItemProfile(domain,removal);
+            CustomizationItemCapabilities(domain,CustomizationKey{CustomizationKind::Accessory,id});Frames(1,Frame(domain));
+            auto capability=CustomizationItemCapabilities(domain,CustomizationKey{CustomizationKind::Accessory,id});
+            Check(capability.equipped && capability.remove,"真实装备卡片未开放卸除能力");
+            Check(!CustomizationItemCapabilities(domain,CustomizationKey{CustomizationKind::Accessory,9999}).equipped,"普通选中项被误标成当前装备");
+            Check(SubmitCustomizationItemRequest(Request(domain,id,part,CustomizationAction::Remove),Frame(domain),message),"卸除请求未受理");
+            Frames(9,Frame(domain));auto removed=PollCustomizationItemLocator();
+            Check(removed.succeeded && removed.stage==CustomizationStage::Removed && native.removes==1 && native.equipped==-1,"卸除未按加载后真实配置确认");
+            CustomizationItemCapabilities(domain,CustomizationKey{CustomizationKind::Accessory,id});Frames(1,Frame(domain));
+            Check(!CustomizationItemCapabilities(domain,CustomizationKey{CustomizationKind::Accessory,id}).equipped,"卸除后按钮仍处于已装备状态");
+            native.equipped=id+100;native.removes=0;
+            Check(SubmitCustomizationItemRequest(Request(domain,id,part,CustomizationAction::Remove),Frame(domain),message),"过期目标应在游戏帧再次核对");Frames(2,Frame(domain));
+            Check(!PollCustomizationItemLocator().succeeded && native.removes==0,"过期目标卸除了另一件装备");
+            native.equipped=id;native.changeOtherSlot=true;
+            Check(SubmitCustomizationItemRequest(Request(domain,id,part,CustomizationAction::Remove),Frame(domain),message),"其他配置变化场景未受理");Frames(9,Frame(domain));
+            Check(!PollCustomizationItemLocator().succeeded,"卸除误改其他槽位仍报告成功");
+        }
         RegisterCustomizationItemProfile(CustomizationDomain::Hair,std::nullopt);RegisterCustomizationItemProfile(CustomizationDomain::Accessories,std::nullopt);
         Check(!CustomizationItemCapabilities(CustomizationDomain::Hair).locate,"撤销Profile后仍开放能力");
         std::cout<<"发型／道具执行器隔离回归通过："<<checks<<" 项；只使用模拟Profile，未认证任何原生发型或道具协议。\n";return 0;

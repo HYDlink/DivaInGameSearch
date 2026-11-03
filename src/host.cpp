@@ -383,7 +383,16 @@ void Host::Frame(IDXGISwapChain* chain) {
     if(view.fontDirty) {
         ImGui_ImplDX11_InvalidateDeviceObjects(); ImGui::GetIO().Fonts->Clear(); SetupStyle(view.fontSize); view.fontDirty=false;
     }
-    ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
+    // 每帧读取真实后缓冲：游戏更改渲染分辨率时，客户区不一定同步变化。
+    // UI 与鼠标继续使用 Win32 客户区坐标，只有 DX11 视口和裁剪转换到后缓冲像素。
+    ID3D11Texture2D* buffer=nullptr;
+    if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer)))) return;
+    D3D11_TEXTURE2D_DESC bufferDesc{};buffer->GetDesc(&bufferDesc);buffer->Release();
+    ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame();
+    auto& io=ImGui::GetIO();
+    if(io.DisplaySize.x<=0 || io.DisplaySize.y<=0 || !bufferDesc.Width || !bufferDesc.Height) return;
+    io.DisplayFramebufferScale={bufferDesc.Width/io.DisplaySize.x,bufferDesc.Height/io.DisplaySize.y};
+    ImGui::NewFrame();
     {PerformanceStageScope stage(view.performance->current.draw);view.Draw();ImGui::Render();}
     if(wasOpen && !view.open) {
         view.ResetSongBodyClick();if(view.invalidateSongNavigation) view.invalidateSongNavigation();
@@ -391,7 +400,7 @@ void Host::Frame(IDXGISwapChain* chain) {
         view.ClearActions(); releaseUntil=GetTickCount64()+120; ImGui::GetIO().ClearInputKeys();
         if(diagnostic) diagnostic("搜索面板关闭："+DescribeInputState());
     }
-    ID3D11Texture2D* buffer=nullptr; ID3D11RenderTargetView* target=nullptr;
+    buffer=nullptr; ID3D11RenderTargetView* target=nullptr;
     PerformanceStageScope rendering(view.performance->current.render);
     if(SUCCEEDED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer)))) {
         device->CreateRenderTargetView(buffer,nullptr,&target); buffer->Release();

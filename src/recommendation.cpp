@@ -76,7 +76,7 @@ RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snaps
 // 保留原服装名称结果；歌曲匹配严格使用歌曲页Search，推荐卡片按稳定身份去重。
 RecommendedModules SearchModulesWithSongs(const CustomizationCatalog& modules,const CustomizationQuery& moduleQuery,const Catalog* songs,Query songQuery,const std::set<int>& favorites,const RecommendationSnapshot* recommendations) {
     RecommendedModules result;result.items=SearchCustomization(modules,moduleQuery);
-    if(moduleQuery.domain!=CustomizationDomain::Models || moduleQuery.modMode || Normalize(moduleQuery.text).empty()) return result;
+    if(moduleQuery.domain==CustomizationDomain::Accessories || moduleQuery.modMode || Normalize(moduleQuery.text).empty()) return result;
     if(!songs) {result.unresolved.push_back("歌曲目录正在加载，歌曲推荐暂不可用。");return result;}
     if(songs->requiresRestart || modules.stale) {result.unresolved.push_back("目录配置已改变，重启游戏后读取歌曲推荐。");return result;}
     songQuery.text=moduleQuery.text;
@@ -86,8 +86,30 @@ RecommendedModules SearchModulesWithSongs(const CustomizationCatalog& modules,co
     auto filter=moduleQuery;filter.text.clear();filter.character.reset();
     const auto allowed=SearchCustomization(modules,filter);const std::set<size_t> allowedSet(allowed.begin(),allowed.end());
     for(const auto& match:matches) {
-        const auto& song=songs->songs[match.index];const auto mapped=ResolveRecommendedModules(*recommendations,song.id,modules);
+        const auto& song=songs->songs[match.index];auto mapped=ResolveRecommendedModules(*recommendations,song.id,modules);
         const auto title=song.name+" [PVID "+std::to_string(song.id)+"]";
+        if(moduleQuery.domain==CustomizationDomain::Hair) {
+            RecommendedModules hair;
+            hair.unresolved=std::move(mapped.unresolved);
+            for(size_t moduleIndex:mapped.items) {
+                const auto& module=modules.items[moduleIndex];std::vector<size_t> candidates;
+                // bind_module 才是模型到默认发型的关联；两个编号空间不同，绝不按相同 ID 或名称猜测。
+                for(size_t index=0;index<modules.items.size();++index) {
+                    const auto& item=modules.items[index];
+                    if(item.key.kind==CustomizationKind::Accessory && item.part==CustomizationPart::Hair
+                        && item.character==module.character && item.bindModule==module.key.id) candidates.push_back(index);
+                }
+                if(candidates.size()!=1) {
+                    hair.unresolved.push_back(std::string(CustomizationCharacterName(module.character))+" / 模型 ID "+std::to_string(module.key.id)
+                        +(candidates.empty()?" 未匹配绑定发型。":" 对应多个绑定发型，未猜测目标。"));continue;
+                }
+                const size_t index=candidates.front();
+                if(std::find(hair.items.begin(),hair.items.end(),index)==hair.items.end()) hair.items.push_back(index);
+                auto& reasons=hair.reasons[modules.items[index].key];
+                const auto& original=mapped.reasons.at(module.key);reasons.insert(reasons.end(),original.begin(),original.end());
+            }
+            mapped=std::move(hair);
+        }
         for(size_t index:mapped.items) {
             if(!allowedSet.contains(index)) continue;
             if(std::find(result.items.begin(),result.items.end(),index)==result.items.end()) result.items.push_back(index);
