@@ -47,6 +47,8 @@ std::string Utf8(const std::wstring& text);
 std::string Normalize(const std::string& text);
 // 从可靠假名读音产生罗马音，不推测汉字读音；参数 text 为数据库读音。
 std::string Romanize(const std::string& text);
+// 生成常见罗马音拼写变体（shi/si、tsu/tu 等）；参数 text 为 Romanize 输出的标准罗马音。
+std::string RomanizeVariant(std::string text);
 // 构建检索键；参数 song 为完整合并后的歌曲。
 void PrepareSong(Song& song);
 // 在完整曲库执行过滤与排序；参数 catalog/query/favorites 分别为快照、条件和收藏。

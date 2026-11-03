@@ -25,7 +25,7 @@ void OnModuleActionStateFrame(uintptr_t state) {(void)state;}
 // 参数request/message为无副作用的拒绝路径。
 bool SubmitModuleAction(const CustomizationLocateRequest& request,std::string& message) {testSubmittedAction=request;if(testAcceptActions){++testActionCalls;message="隔离动作已受理";return true;}message="隔离测试不允许装备。";return false;}
 // 返回未知能力，不把测试数据导入产品。
-CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey& key,CustomizationCharacter character) {(void)key;(void)character;CustomizationActionCapability c;if(testAcceptActions){c.modelPage=c.preview=c.equip=true;c.contextGeneration=91;c.slot=0;c.nativeScope=3;c.scope=CustomizationScope::Song;}return c;}
+CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey& key,CustomizationCharacter character) {(void)key;(void)character;CustomizationActionCapability c;if(testAcceptActions){c.targetPage=c.preview=c.equip=true;c.contextGeneration=91;c.slot=0;c.nativeScope=3;c.scope=CustomizationScope::Song;}return c;}
 // 路由测试没有并行服装动作。
 bool ModuleActionBusy() {return testBusy;}
 // 默认夹具没有原生预览；专项续接夹具另行提供状态。
@@ -38,12 +38,34 @@ bool RequestModulePreviewExitForSong(std::string& message) {CustomizationLocateR
 ModuleLocateStatus PollModuleAction() {return testActionStatus;}
 // 隔离取消没有外部副作用。
 void CancelModuleAction() {}
+// 原生导航调用替身：只记录调用顺序与参数，不跳入任何生产 RVA。
+static std::vector<std::string> nativeLog;
+static bool acceptScene=true;
+// 参数 mode 为外层请求模式。
+bool RecordOuter(int mode) {nativeLog.push_back("outer:"+std::to_string(mode));return true;}
+// 参数 pvid/song 为来源歌曲与对象。
+bool RecordSong(int pvid,uintptr_t song) {(void)song;nativeLog.push_back("song:"+std::to_string(pvid));return true;}
+// 参数 scene 为父页场景。
+bool RecordParent(uintptr_t scene) {(void)scene;nativeLog.push_back("parent");return true;}
+// 参数 manager/key 为管理器与目标页键；acceptScene=false 模拟原生拒绝。
+bool RecordScene(uintptr_t manager,int key) {(void)manager;nativeLog.push_back("scene:"+std::to_string(key));return acceptScene;}
+// 参数 panel 为来源面板。
+bool RecordPanel(uintptr_t panel) {(void)panel;nativeLog.push_back("panel");return true;}
 }
 namespace {
 // 参数condition/message为边界断言与中文失败说明。
 void Check(bool condition,const char* message) {if(!condition) throw std::runtime_error(message);}
 // 参数address/value为隔离夹具字段；只写测试自己持有的内存。
 template<class T> void Put(uintptr_t address,T value) {std::memcpy(reinterpret_cast<void*>(address),&value,sizeof(T));}
+// 参数address为隔离夹具字段；读取测试持有内存中的值。
+template<class T> T Get(uintptr_t address) {T value{};std::memcpy(&value,reinterpret_cast<void*>(address),sizeof(T));return value;}
+// 参数log/expected为记录的原生调用与预期顺序。
+bool Calls(const std::vector<std::string>& log,std::initializer_list<const char*> expected) {
+    if(log.size()!=expected.size()) return false;size_t n=0;for(const auto* item:expected) if(log[n++]!=item) return false;return true;
+}
+// 模拟道具页列表：仅供隔离事务夹具，不代表实机道具容器布局。
+std::vector<int> fakeAccessoryIds{600,601};
+int fakeHighlight=1,fakeHighlightCalls=0;
 struct Fixture {
     uintptr_t base=0,controller=0,manager=0,head=0,node=0,scene=0,state=0,song=0;
     alignas(uintptr_t) std::array<unsigned char,0xA00> control{};
@@ -65,6 +87,10 @@ struct Fixture {
     ~Fixture() {VirtualFree(reinterpret_cast<void*>(base),0,MEM_RELEASE);}
     // 切到隔离的空闲选曲来源。
     void Song() {Put(base+diva::kOuter,int32_t(2));Put(base+diva::kOuter+0x1C,int32_t(5));Put(base+diva::kOuter+0x20,int32_t(6));Put(base+0xCC5EF18,song);}
+    // 切回隔离的空闲主页：外层 mode9 sub42/43，无自定义控制器与选曲对象。
+    void Home() {Put(base+diva::kOuter,int32_t(9));Put(base+diva::kOuter+0x1C,int32_t(42));Put(base+diva::kOuter+0x20,int32_t(43));Put(base+0xCC5EF18,uintptr_t(0));Put(base+diva::kTask+0x78,uintptr_t(0));}
+    // 参数 key 为子页；切到主页来源的自定义页（外层 mode7 sub36/37）。
+    void HomeCustomize(int key) {Customize(key);Put(base+diva::kOuter,int32_t(7));Put(base+diva::kOuter+0x1C,int32_t(36));Put(base+diva::kOuter+0x20,int32_t(37));}
     // 参数key为父页/模型/发型/饰品，建立有界场景树与真实持有关系。
     void Customize(int key) {
         Song();Put(base+diva::kTask+0x78,controller);Put(controller+0x18,song);Put(controller+0x998,manager);
@@ -80,6 +106,8 @@ struct Fixture {
 int main() {
     SetConsoleOutputCP(CP_UTF8);
     try {
+        // 所有原生导航入口替换为记录替身，任何路径都不会调用生产地址。
+        diva::nativeCalls={diva::RecordOuter,diva::RecordSong,diva::RecordParent,diva::RecordScene,diva::RecordPanel};
         Fixture f;using namespace diva;
         Check(ReadNativePage(f.base).page==NativePage::Home,"主页读取失败");
         Put(f.base+kOuter+0x11,uint8_t(1));Check(ReadNativePage(f.base).page==NativePage::Home,"把相邻字节当模式切换标记");
@@ -97,7 +125,7 @@ int main() {
         for(auto origin:{CustomizationOrigin::CardSingleClick,CustomizationOrigin::Keyboard,CustomizationOrigin::Footer,CustomizationOrigin::HoverButton}) {
             request.origin=origin;Check(!SubmitCustomizationRequest(request,message) && route.phase==RoutePhase::Idle,"非双击来源排入跨页事务");
         }
-        request.origin=CustomizationOrigin::CardDoubleClick;request.firstClickKey=request.key;request.firstClickRevision=3;
+        request.origin=CustomizationOrigin::CardDoubleClick;request.firstClickKey=request.key;request.firstClickDomain=CustomizationDomain::Models;request.firstClickRevision=3;
         Check(SubmitCustomizationRequest(request,message) && locateCalls==0,"双击未排队或提前执行定位");
         const auto source=route.source;
         CancelNativePageRouter();OnBoundary(2,f.state);
@@ -109,10 +137,10 @@ int main() {
         ++request.serial;Check(SubmitCustomizationRequest(request,message),"超时后不能重试");
         route.source=source;Put(f.controller+0x18,f.scene);OnBoundary(2,f.state);
         Check(route.phase==RoutePhase::Done && !route.status.succeeded,"换配置后旧请求未取消");
-        f.Customize(1);route.source=ReadNativePage(f.base);route.phase=RoutePhase::ModelArrival;
+        f.Customize(1);route.source=ReadNativePage(f.base);route.phase=RoutePhase::PageArrival;route.target=route.expect=NativePage::Module;
         f.Customize(2);OnBoundary(2,f.state);
         Check(route.phase==RoutePhase::LocateReady,"同一配置的预期场景切换被误取消");
-        f.Customize(1);route.source=ReadNativePage(f.base);route.phase=RoutePhase::ModelArrival;
+        f.Customize(1);route.source=ReadNativePage(f.base);route.phase=RoutePhase::PageArrival;route.target=route.expect=NativePage::Module;
         f.Customize(2);Put(f.controller+0x3C,int32_t(1));OnBoundary(2,f.state);
         Check(route.phase==RoutePhase::Done && !route.status.succeeded,"进入模型期间换槽后旧目标继续执行");
         Put(f.controller+0x3C,int32_t(0));f.Customize(1);route.phase=RoutePhase::ParentArrival;
@@ -192,6 +220,162 @@ int main() {
         Check(SubmitSongNavigation(song,true,message),"歌曲取消接续测试未能排队");const int beforeSongCancelled=songCalls;
         TickSongNavigation(GetTickCount64(),11,18);
         Check(songRoute.status.completed && !songRoute.status.succeeded && songCalls==beforeSongCancelled,"改搜后仍执行旧歌曲预览接续");
-        std::cout<<"原生路由隔离回归通过：页面树、来源、取消、超时、预览后定位／换装／预览及歌曲双击接续；未访问游戏。\n";return 0;
+
+        // ===== 发型／自定义道具泛化路由：所有原生调用均为记录替身 =====
+        route={};songRoute={};previewContinuation={};testPreview=false;testBusy=false;testActionStatus={};testAcceptActions=false;currentUiGeneration=7;
+        uint64_t itemSerial=1000;
+        const uintptr_t panel=f.head;
+        // 参数domain/id/part为目标；返回已绑定首击身份、领域与修订的主体双击请求。
+        auto itemRequest=[&](CustomizationDomain domain,int id,CustomizationPart part) {
+            CustomizationLocateRequest r;r.key={CustomizationKind::Accessory,id};r.domain=domain;r.part=part;r.character=CustomizationCharacter::Miku;
+            r.catalogFingerprint="隔离目录";r.serial=++itemSerial;r.uiGeneration=7;r.queryRevision=3;
+            r.origin=CustomizationOrigin::CardDoubleClick;r.firstClickKey=r.key;r.firstClickDomain=domain;r.firstClickRevision=3;return r;
+        };
+        // 主页→父页→模型→发型：只走已验证的父页光标0协议，到达后发型定位未认证，如实不报告成功。
+        nativeLog.clear();f.Home();
+        Check(ReadNativePage(f.base).page==NativePage::Home,"隔离主页夹具失效");
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair),message) && route.phase==RoutePhase::Boundary
+            && route.target==NativePage::Hair && message.find("暂不支持")!=std::string::npos,"主页双击发型未排队或未在导航前说明定位缺口");
+        OnBoundary(2,f.state);Check(nativeLog.empty(),"主页来源在错误帧边界执行导航");
+        OnBoundary(0,0);Check(Calls(nativeLog,{"outer:7"}) && route.phase==RoutePhase::ParentArrival,"主页未请求进入自定义父页");
+        f.HomeCustomize(1);Put(f.scene+0x28,int32_t(0));OnBoundary(2,f.state);
+        Check(route.phase==RoutePhase::ParentConfirm && nativeLog.size()==1,"父页到达后提前确认或未进入确认阶段");
+        OnBoundary(2,f.state);
+        Check(Calls(nativeLog,{"outer:7","parent"}) && Get<int32_t>(f.scene+0x1C)==2 && route.phase==RoutePhase::PageArrival && route.expect==NativePage::Module,"父页光标0未经模型入口确认");
+        f.HomeCustomize(2);Put(f.scene+0x310,panel);Put(f.scene+0x25,uint8_t(0));OnBoundary(2,f.state);
+        Check(route.phase==RoutePhase::SiblingBoundary && nativeLog.size()==2,"到达中转模型页后未等待同层边界");
+        OnBoundary(2,f.state);Check(nativeLog.size()==2,"中转模型页首个状态帧即请求兄弟页");
+        OnBoundary(2,f.state);
+        Check(Calls(nativeLog,{"outer:7","parent","scene:3","panel"}) && Get<uint8_t>(f.scene+0x25)==1 && route.expect==NativePage::Hair,"模型→发型同层协议顺序、目标键或完成字节错误");
+        f.HomeCustomize(3);OnBoundary(2,f.state);Check(route.phase==RoutePhase::LocateReady,"发型页到达未进入列表核对");
+        OnBoundary(0,0);Check(route.phase==RoutePhase::LocateReady,"发型页单帧稳定即分发");
+        OnBoundary(0,0);
+        Check(route.phase==RoutePhase::Done && route.status.completed && !route.status.succeeded && route.status.message.find("已进入发型页")!=std::string::npos
+            && route.status.message.find("暂不支持")!=std::string::npos && nativeLog.size()==4 && route.status.stage==CustomizationStage::PageEntered
+            && route.status.message.find("0x")==std::string::npos && !route.status.detail.empty(),"发型页到达被当作定位成功、缺少进入页面阶段或界面显示了实现细节");
+
+        // 模型→自定义道具直接同层；注入模拟道具Profile后由执行器跨帧读回高亮再报告成功。
+        CustomizationItemProfile accessory;accessory.evidence="隔离模拟";
+        // 参数frame/out为执行器上下文与快照；读取测试内存列表。
+        accessory.read=[](const CustomizationItemFrame& frame,CustomizationItemSnapshot& out) {
+            (void)frame;out.pageReady=out.listReady=true;out.part=CustomizationPart::Head;out.listIdentity=77;out.recordIds=fakeAccessoryIds;
+            if(fakeHighlight>=0 && fakeHighlight<static_cast<int>(fakeAccessoryIds.size())) out.highlightedId=fakeAccessoryIds[static_cast<size_t>(fakeHighlight)];return true;
+        };
+        // 参数frame/index为上下文与列表序号；模拟原位高亮。
+        accessory.highlight=[](const CustomizationItemFrame& frame,size_t index) {(void)frame;++fakeHighlightCalls;fakeHighlight=static_cast<int>(index);return true;};
+        RegisterCustomizationItemProfile(CustomizationDomain::Accessories,accessory);
+        route={};nativeLog.clear();f.Customize(2);Put(f.scene+0x310,panel);Put(f.scene+0x25,uint8_t(0));
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Accessories,600,CustomizationPart::Head),message) && route.target==NativePage::Accessory
+            && message.find("暂不支持")==std::string::npos,"模型页双击道具未排队或误报缺口");
+        OnBoundary(2,f.state);
+        Check(Calls(nativeLog,{"scene:4","panel"}) && Get<uint8_t>(f.scene+0x25)==1 && route.phase==RoutePhase::PageArrival && route.expect==NativePage::Accessory,"模型→道具没有直接请求道具页");
+        f.Customize(4);OnBoundary(2,f.state);OnBoundary(0,0);OnBoundary(0,0);
+        Check(route.phase==RoutePhase::Locating && fakeHighlightCalls==0,"道具页到达后未交给执行器或同帧执行原生调用");
+        for(int frame=0;frame<3;++frame) ForwardItemFrame(f.state);
+        TickNativePageRouter(GetTickCount64(),7);
+        Check(fakeHighlightCalls==1 && route.phase==RoutePhase::Done && route.status.succeeded && route.status.serial==route.request.serial
+            && route.status.stage==CustomizationStage::Highlighted,"道具定位读回后路由未完成、重复调用或阶段不是目标高亮");
+        RegisterCustomizationItemProfile(CustomizationDomain::Accessories,std::nullopt);
+
+        // 发型→模型（既有协议）与道具→发型（经模型页中转，未实测直接边不使用）。
+        route={};nativeLog.clear();f.Customize(3);Put(f.scene+0x380,panel);
+        auto moduleDouble=request;moduleDouble.serial=++itemSerial;moduleDouble.action=CustomizationAction::Locate;moduleDouble.uiGeneration=7;
+        moduleDouble.origin=CustomizationOrigin::CardDoubleClick;moduleDouble.firstClickKey=moduleDouble.key;moduleDouble.firstClickDomain=CustomizationDomain::Models;moduleDouble.firstClickRevision=moduleDouble.queryRevision;
+        Check(SubmitCustomizationRequest(moduleDouble,message) && route.target==NativePage::Module,"发型页双击模型未排队");
+        OnBoundary(2,f.state);Check(Calls(nativeLog,{"scene:2","panel"}) && route.expect==NativePage::Module,"发型→模型同层请求错误");
+        f.Customize(2);OnBoundary(2,f.state);Check(route.phase==RoutePhase::LocateReady,"模型页到达未进入定位准备");
+        route={};nativeLog.clear();f.Customize(4);Put(f.scene+0x2E0,panel);Put(f.scene+0x29,uint8_t(0));
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,501,CustomizationPart::Hair),message),"道具页双击发型未排队");
+        OnBoundary(2,f.state);
+        Check(Calls(nativeLog,{"scene:2","panel"}) && Get<uint8_t>(f.scene+0x29)==1 && route.expect==NativePage::Module,"道具→发型未经模型页中转或完成字节错误");
+        f.Customize(2);Put(f.scene+0x310,panel);OnBoundary(2,f.state);OnBoundary(2,f.state);OnBoundary(2,f.state);
+        Check(Calls(nativeLog,{"scene:2","panel","scene:3","panel"}) && route.expect==NativePage::Hair,"中转模型页未请求发型页");
+
+        // 父页光标非0：来源直接拒绝；从选曲进入后光标非0也明确停止。
+        route={};nativeLog.clear();f.Customize(1);Put(f.scene+0x28,int32_t(1));
+        Check(!SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair),message) && message.find("光标")!=std::string::npos
+            && route.phase==RoutePhase::Idle && nativeLog.empty(),"父页非0光标仍排队跨页");
+        Put(f.scene+0x28,int32_t(0));f.Song();Put(f.base+kTask+0x78,uintptr_t(0));
+        Check(ReadNativePage(f.base).page==NativePage::Song,"隔离选曲夹具失效");
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Accessories,600,CustomizationPart::Head),message),"选曲双击道具未排队");
+        OnBoundary(1,f.song);Check(Calls(nativeLog,{"song:800"}) && route.phase==RoutePhase::ParentArrival,"选曲未保存PVID并进入自定义");
+        f.Customize(1);Put(f.scene+0x28,int32_t(2));OnBoundary(2,f.state);
+        Check(route.phase==RoutePhase::Done && !route.status.succeeded && route.status.message.find("光标")!=std::string::npos && nativeLog.size()==1,"到达父页光标非0仍自动进入");
+        Put(f.scene+0x28,int32_t(0));
+
+        // 目标页内单击：交给执行器并明确未认证，不建立路由、不调用原生导航。
+        route={};nativeLog.clear();f.Customize(3);
+        auto single=itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair);single.origin=CustomizationOrigin::CardSingleClick;single.firstClickKey.reset();
+        Check(!SubmitCustomizationRequest(single,message) && message.find("暂不支持")!=std::string::npos && route.phase==RoutePhase::Idle && nativeLog.empty(),"发型页内单击未明确未认证或产生路由");
+        // 非目标页：单击、Enter、底栏、按钮均不跨页；伪造双击的预览按钮同样拒绝。
+        f.Customize(2);
+        for(auto origin:{CustomizationOrigin::CardSingleClick,CustomizationOrigin::Keyboard,CustomizationOrigin::Footer,CustomizationOrigin::HoverButton}) {
+            auto r=itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair);r.origin=origin;r.firstClickKey.reset();
+            Check(!SubmitCustomizationRequest(r,message) && route.phase==RoutePhase::Idle && nativeLog.empty(),"发型非双击来源产生跨页");
+        }
+        auto forgedButton=itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair);forgedButton.action=CustomizationAction::Preview;
+        Check(!SubmitCustomizationRequest(forgedButton,message) && route.phase==RoutePhase::Idle && nativeLog.empty(),"伪造双击的发型预览按钮获得跨页权限");
+
+        // 网关按最新目录重算：领域或部位不一致、目标缺失、种类矛盾均拒绝。
+        // 参数key/fingerprint为请求稳定键与目录指纹；隔离解析器把500声明为头部道具。
+        ConfigureCustomizationTargetResolver([](const CustomizationKey& key,const std::string& fingerprint) -> std::optional<CustomizationTargetFacts> {
+            if(fingerprint!="隔离目录" || key.id!=500) return std::nullopt;
+            CustomizationTargetFacts facts;facts.domain=CustomizationDomain::Accessories;facts.part=CustomizationPart::Head;return facts;
+        });
+        Check(!SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair),message) && message.find("不一致")!=std::string::npos,"界面领域与最新目录不一致仍受理");
+        Check(!SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,501,CustomizationPart::Hair),message) && message.find("已不在最新")!=std::string::npos,"最新目录缺失目标仍受理");
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Accessories,500,CustomizationPart::Head),message) && route.target==NativePage::Accessory,"目录一致的道具请求被拒绝");
+        CancelNativePageRouter();OnBoundary(2,f.state);route={};nativeLog.clear();
+        ConfigureCustomizationTargetResolver(nullptr);
+        auto contradiction=itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair);contradiction.key.kind=CustomizationKind::Module;
+        Check(!SubmitCustomizationRequest(contradiction,message) && message.find("种类")!=std::string::npos,"模型键冒充发型领域仍受理");
+        Check(!SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Head),message) && route.phase==RoutePhase::Idle,"发型请求携带道具部位仍受理");
+
+        // 取消、换槽、原生拒绝：停止后续步骤，不再调用。
+        f.Customize(2);Put(f.scene+0x310,panel);
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,502,CustomizationPart::Hair),message),"取消场景未排队");
+        CancelNativePageRouter();OnBoundary(2,f.state);
+        Check(route.phase==RoutePhase::Done && nativeLog.empty(),"取消后仍执行发型导航");
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,502,CustomizationPart::Hair),message),"换槽场景未排队");
+        OnBoundary(2,f.state);Check(Calls(nativeLog,{"scene:3","panel"}),"换槽场景未请求发型页");
+        f.Customize(3);Put(f.controller+0x3C,int32_t(1));OnBoundary(2,f.state);
+        Check(route.phase==RoutePhase::Done && !route.status.succeeded && nativeLog.size()==2,"进入发型期间换槽后旧目标继续");
+        Put(f.controller+0x3C,int32_t(0));nativeLog.clear();acceptScene=false;f.Customize(2);
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,503,CustomizationPart::Hair),message),"拒绝场景未排队");
+        OnBoundary(2,f.state);
+        Check(Calls(nativeLog,{"scene:3"}) && route.phase==RoutePhase::Done && !route.status.succeeded,"原生未受理后仍隐藏面板或继续");
+        acceptScene=true;
+
+        // 歌曲退出共用同层协议：子页→父页键1，父页→来源键8。
+        nativeLog.clear();f.Customize(3);Put(f.scene+0x380,panel);Put(f.scene+0x25,uint8_t(0));
+        Check(InvokeSongExit(ReadNativePage(f.base),false) && Calls(nativeLog,{"scene:1","panel"}) && Get<uint8_t>(f.scene+0x25)==1,"子页→父页退出协议错误");
+        nativeLog.clear();f.Customize(1);Put(f.controller+0x28,int32_t(0));Put(f.scene+0x19,uint8_t(0));
+        Check(InvokeSongExit(ReadNativePage(f.base),true) && Calls(nativeLog,{"scene:8"}) && Get<int32_t>(f.controller+0x28)==1 && Get<uint8_t>(f.scene+0x19)==1,"父页→来源退出协议错误");
+
+        // 实际歌者守卫：歌者已知时其他角色发型任何入口都不跨页；未知时可跨页但不可预览／更换；到达后按实际歌者重验。
+        std::optional<CustomizationCharacter> testSinger=CustomizationCharacter::Rin;
+        // 参数page为隔离页面快照；返回测试控制的实际歌者。
+        ConfigureCustomizationSingerResolver([&](const NativePageSnapshot& page) {(void)page;return testSinger;});
+        route={};nativeLog.clear();f.Customize(2);Put(f.scene+0x310,panel);
+        Check(!SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,510,CustomizationPart::Hair),message) && message.find("仅供浏览")!=std::string::npos
+            && route.phase==RoutePhase::Idle && nativeLog.empty(),"其他角色发型的双击仍跨页");
+        auto ownHair=itemRequest(CustomizationDomain::Hair,511,CustomizationPart::Hair);ownHair.character=CustomizationCharacter::Rin;
+        Check(SubmitCustomizationRequest(ownHair,message) && route.target==NativePage::Hair,"当前歌者自己的发型双击未排队");
+        CancelNativePageRouter();OnBoundary(2,f.state);route={};nativeLog.clear();
+        testSinger.reset();
+        Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,512,CustomizationPart::Hair),message),"歌者未知时双击发型未允许跨页");
+        OnBoundary(2,f.state);f.Customize(3);OnBoundary(2,f.state);
+        testSinger=CustomizationCharacter::Rin;OnBoundary(0,0);OnBoundary(0,0);
+        Check(route.phase==RoutePhase::Done && !route.status.succeeded && route.status.message.find("仅供浏览")!=std::string::npos,"到达后未按实际歌者重验发型");
+        testSinger.reset();f.Customize(3);
+        auto previewHair=itemRequest(CustomizationDomain::Hair,511,CustomizationPart::Hair);previewHair.action=CustomizationAction::Preview;previewHair.origin=CustomizationOrigin::HoverButton;
+        Check(!SubmitCustomizationRequest(previewHair,message) && message.find("歌者")!=std::string::npos,"歌者未知时仍可预览发型");
+        ConfigureCustomizationSingerResolver(nullptr);route={};nativeLog.clear();
+        // 卡片能力：只在空闲目标页标记目标页；未登记Profile时定位、预览、更换全部关闭。
+        cachedAt=0;f.Customize(3);auto itemCapability=ReadCustomizationItemActionCapability(CustomizationDomain::Hair);
+        Check(itemCapability.targetPage && !itemCapability.locate && !itemCapability.preview && !itemCapability.equip && itemCapability.locateReason.find("暂不支持")!=std::string::npos && CurrentNativePage()==NativePage::Hair,"发型页能力或当前页缓存错误");
+        Check(!ReadCustomizationItemActionCapability(CustomizationDomain::Accessories).targetPage,"发型页被当作道具目标页");
+        cachedAt=0;f.Customize(2);Check(!ReadCustomizationItemActionCapability(CustomizationDomain::Hair).targetPage,"模型页被当作发型目标页");
+        std::cout<<"原生路由隔离回归通过：页面树、来源、取消、超时、预览后定位／换装／预览、歌曲双击接续及发型／道具泛化路由；未访问游戏。\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"原生路由验证失败："<<error.what()<<"\n";return 1;}
 }

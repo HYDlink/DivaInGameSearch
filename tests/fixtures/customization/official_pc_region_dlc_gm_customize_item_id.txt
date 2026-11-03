@@ -1,0 +1,14 @@
+# 人工合成测试夹具：DLC 地区定制表，按稳定ID覆盖 501 并新增 506；不是游戏数据。
+cstm_item.0.bind_module=12
+cstm_item.0.chara=RIN
+cstm_item.0.id=501
+cstm_item.0.name=合成リンヘアDLC
+cstm_item.0.obj_id=9501
+cstm_item.0.parts=KAMI
+cstm_item.0.sort_index=101
+cstm_item.1.chara=TETO
+cstm_item.1.id=506
+cstm_item.1.name=合成DLCヘア
+cstm_item.1.parts=KAMI
+cstm_item.1.sort_index=104
+cstm_item.data_list.length=2

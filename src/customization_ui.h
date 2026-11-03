@@ -22,9 +22,13 @@ struct CustomizationPreview {
     const unsigned char* rgbaPixels=nullptr;
     int width=0,height=0;
     std::string source;
+    // 专用图不可用而使用同 ID 通用图时为 true；界面只做轻量标注，不冒充专用图。
+    bool fallback=false;
+    // 有效内容透明边界；宽高为 0 表示未知，按整张画布显示。
+    int contentX=0,contentY=0,contentWidth=0,contentHeight=0;
 };
 
-// 两种定制模式分别保留搜索、筛选、选择与滚动状态；不调用歌曲定位器。
+// 模型、发型、自定义道具三个领域分别保留搜索、筛选、选择与滚动状态；不调用歌曲定位器。
 struct CustomizationView {
     // 共用后台查询执行器，声明在视图状态之前以保证最后销毁。
     std::shared_ptr<SearchExecutor> searchExecutor=std::make_shared<SearchExecutor>();
@@ -61,8 +65,11 @@ struct CustomizationView {
     std::shared_ptr<const CustomizationCatalog> catalog;
     std::future<CustomizationCatalog> pending;
     std::future<SearchReply> searching;
-    std::array<ModeState,2> states;
-    CustomizationKind kind=CustomizationKind::Module;
+    // 下标见 Slot()：0 模型、1 发型、2～5 自定义道具的头／脸／胸口／背部子标签，各自保存查询、选择与滚动。
+    std::array<ModeState,6> states;
+    CustomizationDomain domain=CustomizationDomain::Models;
+    // 自定义道具当前子标签；每次只展示一个部位，不提供混合四部位的结果。
+    CustomizationPart accessoryPart=CustomizationPart::Head;
     uint64_t generation=0,runningRevision=0,runningGeneration=0,locateSerial=0,drawFrame=0,locateRequestFrame=0,locateRequestRevision=0;
     size_t runningMode=0;
     bool composing=false;
@@ -73,6 +80,8 @@ struct CustomizationView {
     // 独立预览样式：1为MEGA39，2为Future Tone；不借用歌曲模式枚举。
     int previewStyle=2;
     float cardWidth=1.0f,cardHeight=344.0f,rowHeight=356.0f,gridScrollY=0;
+    // 当前领域卡片的图片区高度及名称、信息行纵向偏移；模型保持原尺寸，发型与道具按宽度紧凑计算。
+    float imageHeight=280.0f,nameOffset=290.0f,detailOffset=315.0f;
     int previousLayoutColumns=0;
     std::vector<int> previousLayoutSpans;
     float previousGridWidth=0.0f;
@@ -82,16 +91,18 @@ struct CustomizationView {
     std::vector<CustomizationPreview> layoutPreviews;
     uint64_t previewMetadataGeneration=0,layoutMetadataGeneration=~uint64_t(0),layoutRevision=~uint64_t(0),layoutCatalogGeneration=~uint64_t(0);
     int layoutStyle=-1;
-    CustomizationKind layoutKind=CustomizationKind::Accessory;
+    CustomizationDomain layoutDomain=CustomizationDomain::Accessories;
+    size_t layoutSlot=~size_t(0);
     float layoutWidth=-1;
-    std::array<std::map<std::string,size_t>,2> sourceAssociationCounts;
+    std::array<std::map<std::string,size_t>,6> sourceAssociationCounts;
     std::optional<CustomizationKey> hoveredKey;
     std::chrono::steady_clock::time_point hoverSince{};
     bool textNavigation=false,gridNavigation=false,controlNavigation=false;
     // 从文本框使用上下浏览后转入卡片焦点，使随后的左右键能移动卡片。
     bool requestGridFocus=false;
-    // 首击只绑定真实主体及当前查询；滚动、失焦、重排或按钮输入立即作废。
+    // 首击只绑定真实主体、领域及当前查询；滚动、失焦、重排或按钮输入立即作废。
     std::optional<CustomizationKey> bodyClickKey,pendingLocateKey;
+    CustomizationDomain bodyClickDomain=CustomizationDomain::Models;
     uint64_t bodyClickRevision=0,bodyClickGeneration=0;
     double bodyClickTime=-1;
     ImVec2 bodyClickPosition{};
@@ -107,7 +118,15 @@ struct CustomizationView {
     std::function<ImTextureID(const CustomizationKey&,const unsigned char*,int,int)> uploadPreviewPixels;
     // 参数 request 包含服装稳定键、角色映射、目录指纹和 UI 代数/序号；由原生适配器执行非阻塞提交。
     std::function<void(const CustomizationLocateRequest&)> submitModuleLocate;
-    // 搜索条件或选择变化时立即作废已提交请求；回调不得阻塞界面线程。
+    // 返回当前实际歌者槽位所属人物与上下文代数；未知返回空。只用于发型浏览默认值与只读判定，不授予切换权限。
+    std::function<std::optional<CustomizationContext>()> singerProvider;
+    std::optional<CustomizationContext> singer;
+    uint64_t observedSingerGeneration=0;
+    // 每次打开时发型筛选跟随实际歌者；玩家手动选择其他角色后本次打开内不再自动覆盖。
+    bool hairFollowsSinger=true;
+    // 参数 request 为发型或自定义道具的定位／动作请求；与模型定位器分开注入，后端须独立核对目标页与能力。
+    std::function<void(const CustomizationLocateRequest&)> submitItemRequest;
+    // 任一定制领域的搜索条件或选择变化时立即作废已提交请求；回调不得阻塞界面线程。
     std::function<void()> invalidateModuleLocate;
 
     // 初始化模式种类，默认不插入任何演示数据。
@@ -118,8 +137,18 @@ struct CustomizationView {
     void EnsureLoaded(const fs::path& home,const fs::path& game);
     // 接收已完成任务，启动到期搜索，不等待后台任务。
     void Poll();
-    // 参数 kind 为当前模式；模式切换保留各自条件。
-    void SetKind(CustomizationKind kind);
+    // 参数 domain 为当前领域；切换只保留各自条件，不操作游戏页面。
+    void SetDomain(CustomizationDomain domain);
+    // 参数 part 为自定义道具子标签（头／脸／胸口／背部）；只切搜索状态，不切游戏部位、不改装备，旧查询与旧双击失效。
+    void SetAccessoryPart(CustomizationPart part);
+    // 返回当前领域与子标签对应的状态下标。
+    size_t Slot() const;
+    // 参数 value 为玩家选择的人物筛选；发型的手动选择只是浏览意图，停止跟随实际歌者，不授予任何原生权限。
+    void SetCharacterFilter(std::optional<CustomizationCharacter> value);
+    // 参数 item 为卡片实体；当前歌者已知且发型属于其他角色时返回 true，此类卡片不提供跳转、预览与更换。
+    bool BrowseOnly(const CustomizationItem& item) const;
+    // 参数 opening 为是否由打开面板触发；同步实际歌者，变化时取消旧操作，并按跟随状态更新发型默认筛选。
+    void SyncSinger(bool opening);
     // 参数context仅更新游戏角色说明；不重置已选搜索筛选，首次默认全部角色。
     void OnOpen(std::optional<CustomizationContext> context);
     // 在外层现有窗口内绘制，不自行 Begin 主窗口。
@@ -130,9 +159,9 @@ struct CustomizationView {
     bool WantsListNavigation() const;
     // 文本和卡片焦点均支持左右浏览结果，与歌曲搜索一致。
     bool WantsHorizontalNavigation() const;
-    // Enter 在最新查询完成后提交所选服装定位。
+    // Enter 在最新查询完成后提交当前领域所选项目的原位定位。
     void RequestDetails();
-    // 参数 key 为所选服装；在最新结果有效后调用注入的定位适配器。
+    // 参数 key/origin 为所选项目与输入来源；在最新结果有效后调用当前领域注入的定位适配器。
     void RequestLocate(const CustomizationKey& key,CustomizationOrigin origin=CustomizationOrigin::Footer);
     // 参数 key/action 为按钮所在卡片的稳定身份与原生动作，不改变搜索选择。
     void RequestAction(const CustomizationKey& key,CustomizationAction action);

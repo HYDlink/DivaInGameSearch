@@ -3,6 +3,7 @@
 #include "module_locator.h"
 #include "native_page_router.h"
 #include "module_action.h"
+#include "customization_item_profiles.h"
 #include <fstream>
 #include <atomic>
 
@@ -44,9 +45,34 @@ __declspec(dllexport) void Init() {
     host.view.customization.actionCapability=[](const diva::CustomizationKey& key) {
         // 参数key为按钮所在卡片；目录人物仅提供切分类意图，原生目标与拥有状态仍在游戏帧重新核对。
         const auto catalog=diva::App().view.customization.catalog;
-        if(catalog) for(const auto& item:catalog->items) if(item.key==key) return diva::ReadCustomizationActionCapability(key,diva::ModuleSearchCharacter(item.character));
+        if(catalog) for(const auto& item:catalog->items) if(item.key==key) {
+            const auto domain=diva::CustomizationItemDomain(item);
+            // 发型与道具走独立执行器能力，不借用模型动作缓存。
+            if(domain && *domain!=diva::CustomizationDomain::Models) return diva::ReadCustomizationItemActionCapability(*domain,key);
+            if(!domain) return diva::CustomizationActionCapability{};
+            return diva::ReadCustomizationActionCapability(key,diva::ModuleSearchCharacter(item.character));
+        }
         return diva::ReadCustomizationActionCapability(key);
     };
+    // 参数page为自定义页快照；按来源歌曲PV演出角色与实际歌者槽位解析人物，只读推荐快照，不调用游戏函数。
+    diva::ConfigureCustomizationSingerResolver([](const diva::NativePageSnapshot& page) -> std::optional<diva::CustomizationCharacter> {
+        const auto recommendations=diva::ReadRecommendations();
+        if(!recommendations || page.sourcePvid<=0) return std::nullopt;
+        return diva::ResolvePerformerCharacter(*recommendations,page.sourcePvid,page.slot);
+    });
+    host.view.customization.singerProvider=diva::ReadCustomizationSingerContext;
+    // 参数key/fingerprint为请求稳定键与目录指纹；网关据最新目录重算领域、部位和人物，指纹不符即拒绝。
+    diva::ConfigureCustomizationTargetResolver([](const diva::CustomizationKey& key,const std::string& fingerprint) -> std::optional<diva::CustomizationTargetFacts> {
+        const auto catalog=diva::App().view.customization.catalog;
+        if(!catalog || catalog->catalogFingerprint!=fingerprint) return std::nullopt;
+        for(const auto& item:catalog->items) if(item.key==key) {
+            const auto domain=diva::CustomizationItemDomain(item);if(!domain) return std::nullopt;
+            diva::CustomizationTargetFacts facts;facts.domain=*domain;facts.part=item.part;
+            facts.character=*domain==diva::CustomizationDomain::Models?diva::ModuleSearchCharacter(item.character):item.character;
+            return facts;
+        }
+        return std::nullopt;
+    });
     host.view.customization.recommendationProvider=diva::ReadRecommendations;
     // 参数 request 为 UI 提交的稳定服装身份、角色分类及目录代数；原生上下文由定位器独立捕获。
     host.view.customization.submitModuleLocate=[](const diva::CustomizationLocateRequest& request) {
@@ -63,9 +89,13 @@ __declspec(dllexport) void Init() {
             if(request.action!=diva::CustomizationAction::Locate) pendingActionCloseSerial=request.serial;
         }
         diva::App().view.customization.status=message;
-        Log("服装原生定位提交：ID="+std::to_string(request.key.id)+"；"+message);
+        Log(std::string(diva::CustomizationDomainName(request.domain))+"原生请求提交：ID="+std::to_string(request.key.id)+"；"+message);
+        // 开发原因（缺失的原生证据等）只进入诊断日志，界面保持短句。
+        if(status.serial==request.serial && !status.detail.empty()) Log("原生能力细节："+status.detail);
     };
     host.view.customization.submitModuleAction=host.view.customization.submitModuleLocate;
+    // 发型与自定义道具使用独立注入口；同一网关按最新目录重算目标页，未认证能力明确拒绝。
+    host.view.customization.submitItemRequest=host.view.customization.submitModuleLocate;
     host.view.invalidateSongNavigation=diva::CancelSongNavigation;
     // 参数milliseconds为共享路由Hook实测CPU时间，避免把其开销漏算到游戏本体。
     diva::ConfigureNativePerformance([trace=host.view.performance](double milliseconds) {
@@ -80,7 +110,11 @@ __declspec(dllexport) void Init() {
     // 打开面板时沿用游戏当前的难度和风格。
     host.view.onOpen=[] {
         auto snapshot=diva::Game().Read(); auto& view=diva::App().view;
+        const auto page=diva::CurrentNativePage();
         if(auto context=diva::ReadModuleLocatorContext()) view.ApplyOpeningContext(diva::SearchMode::Modules,context);
+        // 在发型或自定义道具页打开时进入对应领域，保留各领域查询；只读页面，不改游戏状态。
+        else if(page==diva::NativePage::Hair) view.ApplyOpeningContext(diva::SearchMode::Hair);
+        else if(page==diva::NativePage::Accessory) view.ApplyOpeningContext(diva::SearchMode::Accessories);
         else if(diva::Game().IsSongSearchPage()) view.ApplyOpeningContext(diva::SearchMode::Songs);
         Log("打开搜索："+diva::DescribeSnapshot(snapshot)+"；"+diva::App().DescribeInputState());
         if(!diva::Game().inputReady) {
@@ -111,7 +145,8 @@ __declspec(dllexport) void PostInit() {
     if(diva::InitializeModuleLocator(diva::Game().ExecutableBase())) {
         diva::InitializeRecommendations(diva::Game().ExecutableBase());
         nativeRoutingAvailable=diva::InitializeNativePageRouter(diva::Game().ExecutableBase());
-        Log(nativeRoutingAvailable?"歌曲与服装原生双击跨页路由已初始化。":"原生路由初始化失败；已认证目标页内定位仍可用。");
+        if(nativeRoutingAvailable) Log(diva::CustomizationItemProfileDiagnostics());
+        Log(nativeRoutingAvailable?"歌曲、服装、发型与自定义道具原生双击跨页路由已初始化；各项定位能力以已登记原生规格为准。":"原生路由初始化失败；已认证目标页内定位仍可用。");
     }
     Log(diva::PollModuleLocator().message);
 }
@@ -124,7 +159,8 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
     diva::PerformanceFrameScope performance(*host.view.performance,true,callbackStart);
     host.view.performance->current.frameLock=diva::PerformanceNow()-callbackStart;
     const auto now=GetTickCount64();
-    diva::RequestRecommendations(host.view.open && host.view.mode==diva::SearchMode::Modules);
+    // 模型推荐与发型当前歌者都依赖已加载的 PV 演出角色快照。
+    diva::RequestRecommendations(host.view.open && (host.view.mode==diva::SearchMode::Modules || host.view.mode==diva::SearchMode::Hair));
     diva::TickModuleLocator(now,host.view.customization.generation);
     diva::TickNativePageRouter(now,host.view.customization.generation);
     diva::TickModuleAction(now,host.view.customization.generation);
@@ -145,14 +181,14 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
             Log("服装按钮动作已受理，立即隐藏搜索窗口并等待原生结果。");
         }
     }
-    if(moduleStatus.action==diva::CustomizationAction::Preview && moduleStatus.previewReady
+    if(diva::IsRunningCustomizationPreview(moduleStatus)
         && !nativePreviewSuspended && host.view.open) {
         nativePreviewSuspended=true;nativePreviewSerial=moduleStatus.serial;
         host.view.open=false;host.view.ClearActions();host.releaseUntil=now+120;
         Log("原生模型预览已确认，临时让出输入并保留搜索条件、滚动与焦点。");
     }
     if(nativePreviewSuspended && moduleStatus.serial==nativePreviewSerial && moduleStatus.completed) {
-        nativePreviewSuspended=false;
+        nativePreviewSuspended=false;nativePreviewSerial=0;
         if(moduleStatus.previewRestored && moduleStatus.succeeded && !host.view.open) {
             host.view.open=true;
             host.view.customization.State().focus=host.view.customization.textNavigation;
@@ -168,12 +204,8 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
         if(reportedModuleSerial!=moduleSerial || reportedModuleMessage!=moduleStatus.message) {
             reportedModuleSerial=moduleSerial;reportedModuleMessage=moduleStatus.message;
             host.view.customization.status=moduleStatus.message;
-            if(moduleStatus.completed || moduleStatus.phase==diva::ModuleLocatePhase::Confirming) Log("服装定位阶段："+moduleStatus.message);
-            if(moduleStatus.action==diva::CustomizationAction::Locate && moduleStatus.completed && moduleStatus.succeeded && host.view.closeOnSuccess) {
-                host.view.open=false;host.view.ClearActions();host.releaseUntil=GetTickCount64()+120;
-                diva::CancelModuleLocate();
-                Log("服装定位成功后关闭搜索："+host.DescribeInputState());
-            }
+            if(moduleStatus.completed || moduleStatus.phase==diva::ModuleLocatePhase::Confirming) Log("定制原生阶段："+moduleStatus.message+(moduleStatus.detail.empty()?"":"；细节："+moduleStatus.detail));
+            // 定制页面定位或跨页成功后保留搜索窗口，以便直接继续预览和更换。
         }
     }
     if(host.view.open && !Selection().Busy()) diva::Game().Read();

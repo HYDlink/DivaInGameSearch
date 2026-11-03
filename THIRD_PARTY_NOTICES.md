@@ -21,6 +21,8 @@ data/base_pv_db.txt 与 data/dlc_pv_db.txt 仅保留官方地区数据库中的�
 中日字体在运行时只读使用 Windows 安装的微软雅黑，不重新分发字体。依赖文件 SHA-256 清单由打包脚本生成，见发行包 dependencies.sha256。
 
 ## miniz 3.0.2
+Dear ImGui v1.88 的 DX11 后端包含本地兼容补丁：支持 `FramebufferScale` 的视口及裁剪转换，参照上游 2025-05-07 同项修正。宿主每帧提供真实后缓冲与客户区比例；未升级 ImGui 核心或修改其他 Mod 的后端。来源：https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_dx11.cpp 。原 MIT 声明保留。
+
 来源：https://github.com/richgel999/miniz/tree/3.0.2 。使用 MIT 许可的低层 tinfl 解压器，许可证保留于 third_party/vendor/miniz/LICENSE。miniz_tinfl.cpp 是原始 miniz_tinfl.c 的 C++ 编译副本；本地 miniz.h 仅引用 tinfl，miniz_export.h 使用静态链接导出宏。
 
 ## MikuMikuLibrary CPK／精灵桥接

@@ -47,7 +47,9 @@ bind_module = 0                    # 可选，保留原值；0和负数语义尚
 
 **最终清单始终称为“导入目录”，不能证明当前游戏的有效、可装备或已解锁集合。** 不匹配启用 Mod/root 的手工 `items` 仍能作为离线导入目录浏览，来源不会被标成当前 Mod。本插件没有验证最终目录是否完整覆盖 DML 的运行时合并与资源覆盖。
 
-已知角色为 `MIKU/RIN/LEN/LUKA/NERU/HAKU/KAITO/MEIKO/SAKINE/TETO`；饰品另有 `ALL`。角色未知时保留原 token，归入未知角色；服装的 `ALL` 也归入未知。饰品部位支持 `ZUJO/FACE/NECK/BACK`；其他值归入未知部位，发型等扩展类型不在本轮四部位适配范围。选具体角色时，饰品包含 `ALL` 共通项；未知条目只在全部／未知筛选中出现。
+已知角色为 `MIKU/RIN/LEN/LUKA/NERU/HAKU/KAITO/MEIKO/SAKINE/TETO`；饰品另有 `ALL`。角色未知时保留原 token，归入未知角色；服装的 `ALL` 也归入未知。`cstm_item` 的 `parts=KAMI` 归入“发型”领域；`ZUJO/FACE/NECK/BACK` 归入“自定义道具”的头／脸／胸口／背部。发型与道具共用同一 CustomizeItem 稳定 ID 空间，`customize.<id>`／`cstm_item.<id>` 名称对两者同样生效。其他部位值保留为未知部位并写入诊断，不归入发型或道具检索。选具体角色时，发型与道具均包含 `ALL` 共通项；未知条目只在全部／未知筛选中出现。可选 `reading` 字段为显式假名读音，与名称、别名中的真实假名一起生成罗马音检索键；汉字名称不会自动推测读音。
+
+官方定制表自动读取：随包 CPK 桥接查找 `gm_customize_item_tbl.farc` 内的 `gm_customize_item_id.bin`，只接受 PC 基础地区路径 `rom_steam_region/rom/…`（`diva_main_region.cpk`）及 DLC 地区路径 `rom_steam_region_dlc/rom/…`（`diva_dlc00_region.cpk`，沿用模型表命名，待本机核对）。启用 Mod 的普通 `rom/gm_customize_item_tbl.farc` 使官方定制表整表退出；`mod_gm_customize_item_tbl.farc` 按稳定 ID 覆盖。
 
 名称显示顺序为 DML 名称补丁（见下文）、清单 `names.<language>`、`name`、自动编号占位。所有真实语言名、原始表名和别名都参加搜索；不同项目不会共同满足一条多词查询。名称模式也匹配十进制 ID，来源模式匹配全部关联来源的身份、显示名和目录。角色、部位、来源过滤取交集。
 

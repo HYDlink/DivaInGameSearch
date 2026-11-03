@@ -1,0 +1,24 @@
+# 人工合成测试夹具：离线导入清单，提供显式假名读音与无读音的纯汉字名称；不是游戏数据。
+schema_version = 1
+language = 'cn'
+
+[[sources]]
+id = 'base'
+name = '离线合成来源'
+
+[[items]]
+kind = 'accessory'
+id = 900
+source = 'base'
+chara = 'MIKU'
+parts = 'KAMI'
+name = '漢字のみ'
+reading = 'かんじのみ'
+
+[[items]]
+kind = 'accessory'
+id = 901
+source = 'base'
+chara = 'MIKU'
+parts = 'KAMI'
+name = '純漢字髪型'

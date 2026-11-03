@@ -1,14 +1,18 @@
 #pragma once
 #include "core.h"
 #include <optional>
+#include <functional>
 #include <memory>
 #include <cstdint>
 
 namespace diva {
-// 服装和饰品拥有独立编号空间，零也是合法编号。
+// 服装和饰品拥有独立编号空间，零也是合法编号；发型与四部位道具同属 cstm_item 编号空间。
 enum class CustomizationKind { Module, Accessory };
 enum class CustomizationCharacter { Miku,Rin,Len,Luka,Neru,Haku,Kaito,Meiko,Sakine,Teto,All,Unknown,Derived,Random };
-enum class CustomizationPart { Head,Face,Neck,Back,Unknown };
+// 原始 parts 令牌：ZUJO/FACE/NECK/BACK 为道具部位，KAMI 为发型；未知令牌保留 Unknown，不猜测归属。
+enum class CustomizationPart { Head,Face,Neck,Back,Hair,Unknown };
+// 玩家可见的三个独立定制领域；实体身份仍为 CustomizationKey，领域只是投影，不另建 ID 空间。
+enum class CustomizationDomain { Models, Hair, Accessories };
 struct CustomizationKey { CustomizationKind kind=CustomizationKind::Module; int id=0; auto operator<=>(const CustomizationKey&) const=default; };
 struct CustomizationSource { std::string id,name,modDirectory,includeRoot; bool currentMod=false; };
 struct CustomizationContribution { std::string source,role; bool effective=false; };
@@ -35,7 +39,8 @@ struct CustomizationCatalog {
     bool importedDirectory=true;
 };
 struct CustomizationQuery {
-    CustomizationKind kind=CustomizationKind::Module;
+    // 检索领域：模型=服装实体；发型=cstm_item 且 KAMI；道具=cstm_item 且四部位之一。
+    CustomizationDomain domain=CustomizationDomain::Models;
     std::string text,source;
     std::optional<CustomizationCharacter> character=CustomizationCharacter::Miku;
     std::optional<CustomizationPart> part;
@@ -57,13 +62,42 @@ const char* CustomizationCharacterName(CustomizationCharacter value);
 // 参数 value 为原始角色；服装搜索将衍生角色归入独立界面分类。
 CustomizationCharacter ModuleSearchCharacter(CustomizationCharacter value);
 const char* CustomizationPartName(CustomizationPart value);
+// 参数 item 为实体；返回所属检索领域，未知部位的 cstm_item 不归入发型或道具。
+std::optional<CustomizationDomain> CustomizationItemDomain(const CustomizationItem& item);
+// 参数 domain 为检索领域，返回其实体种类（发型与道具均为 Accessory）。
+CustomizationKind CustomizationDomainKind(CustomizationDomain domain);
+// 参数 domain 为检索领域，返回状态数组下标 0/1/2。
+size_t CustomizationDomainIndex(CustomizationDomain domain);
+// 参数 domain 为检索领域，返回玩家可见类别名“模型／发型／自定义道具”。
+const char* CustomizationDomainName(CustomizationDomain domain);
+// 参数 domain 为检索领域，返回对应原生子页名称，用于跨页提示。
+const char* CustomizationDomainPageName(CustomizationDomain domain);
 // 参数 item/catalog 为实体和来源快照，缓存规范化检索键。
 void PrepareCustomizationItem(CustomizationItem& item,const CustomizationCatalog& catalog);
 // 参数 catalog/query 为不可变快照和完整条件，结果为快照索引。
 std::vector<size_t> SearchCustomization(const CustomizationCatalog& catalog,const CustomizationQuery& query);
+// 官方 CPK 中的一份实体表：物理归档、内部条目、逻辑路径、UTF-8 文本和指纹。
+struct OfficialEntityTable {
+    fs::path cpkPath;
+    std::string internalPath;
+    std::string logicalPath;
+    std::string tableText;
+    std::string fingerprint;
+};
+// 官方实体表读取入口；生产使用随包 CPK 桥接，隔离测试注入合成表而不访问游戏目录。
+struct OfficialTableSource {
+    // 参数 game/home/diagnostics 为游戏目录、插件目录与诊断接收器；返回官方模型表候选。
+    std::function<std::vector<OfficialEntityTable>(const fs::path&,const fs::path&,std::vector<std::string>&)> modules;
+    // 参数同上；返回官方 gm_customize_item_id.bin 候选（发型与四部位道具）。
+    std::function<std::vector<OfficialEntityTable>(const fs::path&,const fs::path&,std::vector<std::string>&)> customizeItems;
+};
+// 返回生产官方表来源：随包 CPK 桥接读取模型表及定制表。
+OfficialTableSource ProductionOfficialTables();
 // 参数 home/game 为插件和游戏目录；后台只读当前启用Mod归档与可选兼容导入。
 // 参数language为显式目录语言；玩家界面传cn，审计未提供时使用导入设置或中文。
 CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language="");
+// 参数 home/game/language 同上，official 为官方表来源；测试可注入合成官方表。
+CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language,const OfficialTableSource& official);
 // 参数data为PC官方经典字符串表；越界、无终止符或无效UTF-8时拒绝整表。
 std::map<int,std::string> ReadCustomizationStrings(const std::string& data);
 // 参数 path/kind/source/diagnostics 为已解包文本、数据库种类、来源与诊断接收器。

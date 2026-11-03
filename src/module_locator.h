@@ -17,6 +17,9 @@ enum class ModuleLocatePhase {
     Rejected
 };
 
+// 定制事务实际确认到的阶段；进入页面、目标高亮、临时预览、预览已退出并核对、实际装备分别表达，互不替代。
+enum class CustomizationStage { None, PageEntered, Highlighted, Previewing, PreviewRestored, Equipped, Removed };
+
 // 面向 UI 的只读定位状态；serial 与 uiGeneration 用于丢弃过期反馈。
 struct ModuleLocateStatus {
     ModuleLocatePhase phase=ModuleLocatePhase::Disabled;
@@ -28,7 +31,16 @@ struct ModuleLocateStatus {
     std::string message="原生服装定位尚未初始化。";
     CustomizationAction action=CustomizationAction::Locate;
     bool previewReady=false,previewRestored=false;
+    // 已由独立读回确认的阶段；未确认时保持 None 或 PageEntered，不能据此显示定位或更换成功。
+    CustomizationStage stage=CustomizationStage::None;
+    // 仅写入诊断日志的开发细节（缺失的原生证据、读回差异）；界面只显示 message 短句。
+    std::string detail;
 };
+
+// 参数 status 为轮询的事务状态；只有未完成的活动预览才能让出输入，历史恢复状态不得重复隐藏面板。
+inline bool IsRunningCustomizationPreview(const ModuleLocateStatus& status) {
+    return status.action==CustomizationAction::Preview && status.previewReady && !status.completed && !status.previewRestored;
+}
 
 // 初始化受支持游戏构建的 Module 原生定位；参数 base 为动态取得的主程序基址。
 bool InitializeModuleLocator(uintptr_t base);

@@ -65,6 +65,7 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
         for(const auto& [key,value]:attributes) if(key.ends_with(".script_file_name") && !value.first.empty()) officialScripts.emplace(value.first,value.second);
     }
     std::map<int,std::set<std::string>> associations;
+    std::map<int,std::set<std::string>> translatedNames;
     std::vector<Root> roots;
     bool ncEnabled=false;
     Fingerprint(game/"config.toml",out.configurationKey);
@@ -86,6 +87,18 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
         if(!cfg["enabled"].value_or(true)) continue;
         if(auto dlls=cfg["dll"].as_array()) for(auto& dll:*dlls) if(Normalize(dll.value_or<std::string>(""))=="newclassics.dll") ncEnabled=true;
         auto name=cfg["name"].value_or(Utf8(path.filename().wstring()));
+        // 仅识别已核对的中文歌词包；其可选歌名表不参与游戏 PVDB 覆盖。
+        if(name=="Chinese lyrics Base" || name=="Chinese lyrics DLC" ||
+           name=="Chinese lyrics Restore Cut Songs" || name=="Chinese lyrics F2 Pack" || name=="Chinese lyrics X Pack") {
+            for(const auto& region:{"rom_steam_cn","rom_steam_tw"}) for(const auto& file:{"pv_db.txt","mdata_pv_db.txt","mod_pv_db.txt"}) {
+                auto translated=path/"use_song_name"/region/"rom"/file;
+                Fingerprint(translated,out.configurationKey);
+                for(const auto& [id,attrs]:ReadPvdb(translated,name)) {
+                    auto entry=attrs.find("song_name");
+                    if(entry!=attrs.end() && !entry->second.first.empty()) translatedNames[id].insert(entry->second.first);
+                }
+            }
+        }
         if(auto includes=cfg["include"].as_array()) for(auto& item:*includes) {
             auto relative=item.value_or<std::string>(""); if(relative.empty()) continue;
             auto root=path/fs::path(Wide(relative)); if(fs::is_directory(root)) roots.push_back({root,name});
@@ -166,6 +179,10 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
     std::set<std::string> packs;
     for(auto& [id,song]:songs) {
         song.aliases=aliases["aliases"][std::to_string(id)].value_or<std::string>("");
+        for(const auto& translated:translatedNames[id]) {
+            if(!song.aliases.empty()) song.aliases+='|';
+            song.aliases+=translated;
+        }
         song.sources.assign(associations[id].begin(),associations[id].end());
         for(auto& style:song.charts) for(auto& c:style) if(c.available) {
             if(std::find(song.sources.begin(),song.sources.end(),c.source)==song.sources.end()) song.sources.push_back(c.source);

@@ -31,12 +31,16 @@ Copy-Item -LiteralPath third_party/vendor/licenses/QuantumSwitch.txt,third_party
 Copy-Item -LiteralPath third_party/vendor/miniz/LICENSE -Destination (Join-Path $modRoot 'licenses/miniz.txt') -Force
 Copy-Item -LiteralPath third_party/vendor/mml-cpk/LICENSE.md -Destination (Join-Path $modRoot 'licenses/MikuMikuLibrary.md') -Force
 Copy-Item -LiteralPath third_party/vendor/mml-cpk/COPYRIGHT.md -Destination (Join-Path $modRoot 'licenses/MikuMikuLibrary-Dependencies.md') -Force
-Copy-Item -LiteralPath third_party/vendor/bcdec/bcdec.h -Destination (Join-Path $modRoot 'licenses/bcdec.h') -Force
+# 仅提取 bcdec 的许可证文本，避免将源码放入玩家安装包。
+$bcdecSource=[IO.File]::ReadAllText((Join-Path $projectRoot 'third_party/vendor/bcdec/bcdec.h'))
+$licenseStart=$bcdecSource.LastIndexOf('/* LICENSE:')
+if($licenseStart -lt 0){ throw '未找到 bcdec 许可证。' }
+[IO.File]::WriteAllText((Join-Path $modRoot 'licenses/bcdec.txt'),$bcdecSource.Substring($licenseStart),[Text.UTF8Encoding]::new($false))
 # 显式允许清单防止源码、开发文档、截图、研究脚本或预览程序再次混入玩家包。
-$allowed=@('DivaInGameSearch.dll','MmlCpkBridge.dll','DivaTextureDecoder.dll','config.toml','settings.ini','aliases.toml','LICENSE','THIRD_PARTY_NOTICES.md','data/base_pv_db.txt','data/dlc_pv_db.txt','licenses/ImGui.txt','licenses/Detours.md','licenses/DivaModLoader.md','licenses/toml++.txt','licenses/NewClassics.txt','licenses/QuantumSwitch.txt','licenses/MikuMikuSwitchPlugin.txt','licenses/miniz.txt','licenses/MikuMikuLibrary.md','licenses/MikuMikuLibrary-Dependencies.md','licenses/bcdec.h')
+$allowed=@('DivaInGameSearch.dll','MmlCpkBridge.dll','DivaTextureDecoder.dll','config.toml','settings.ini','aliases.toml','LICENSE','THIRD_PARTY_NOTICES.md','data/base_pv_db.txt','data/dlc_pv_db.txt','licenses/ImGui.txt','licenses/Detours.md','licenses/DivaModLoader.md','licenses/toml++.txt','licenses/NewClassics.txt','licenses/QuantumSwitch.txt','licenses/MikuMikuSwitchPlugin.txt','licenses/miniz.txt','licenses/MikuMikuLibrary.md','licenses/MikuMikuLibrary-Dependencies.md','licenses/bcdec.txt')
 $actual=@(Get-ChildItem -LiteralPath $modRoot -Recurse -File | ForEach-Object {[IO.Path]::GetRelativePath($modRoot,$_.FullName).Replace('\','/')})
 if(@(Compare-Object $allowed $actual).Count){throw '安装包文件与允许清单不一致，已拒绝打包。'}
-$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.0.11-win64.zip'
+$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.2.0-win64.zip'
 Compress-Archive -LiteralPath $modRoot -DestinationPath $zip -Force
 $utf8=[Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText(($zip+'.sha256'),(Get-FileHash $zip -Algorithm SHA256).Hash+'  '+[IO.Path]::GetFileName($zip)+"`n",$utf8)

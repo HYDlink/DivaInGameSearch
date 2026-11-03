@@ -135,8 +135,15 @@ int main(int argc,char** argv) {
         std::strcpy(view.customization.State().input,"Module");view.customization.QueueSearch(false);
         view.SetMode(diva::SearchMode::Accessories);
         Check(view.customization.State().input[0]==0,"饰品未独立保存搜索条件");
+        view.SetMode(diva::SearchMode::Hair);
+        Check(view.customization.domain==diva::CustomizationDomain::Hair && view.customization.State().input[0]==0,"发型未作为独立领域保存搜索条件");
+        std::strcpy(view.customization.State().input,"发型");view.customization.QueueSearch(false);
+        view.SetMode(diva::SearchMode::Accessories);
+        Check(view.customization.domain==diva::CustomizationDomain::Accessories && view.customization.State().input[0]==0,"自定义道具继承了发型搜索条件");
         view.SetMode(diva::SearchMode::Modules);
         Check(std::string(view.customization.State().input)=="Module","切回服装丢失搜索条件");
+        view.SetMode(diva::SearchMode::Hair);Check(std::string(view.customization.State().input)=="发型","切回发型丢失搜索条件");
+        view.SetMode(diva::SearchMode::Modules);
         view.customization.State().detailsRequested=true;
         view.SetMode(diva::SearchMode::Songs);Check(!view.customization.State().detailsRequested,"返回歌曲遗留待打开的定制详情");
         Check(std::string(view.input)==songInput && view.currentDifficulty==songDifficulty,"定制浏览改变歌曲条件");
@@ -172,7 +179,7 @@ int main(int argc,char** argv) {
         io.AddMouseButtonEvent(0,true);Draw(view);io.AddMouseButtonEvent(0,false);Draw(view);
         Check(lastModuleRequest.origin==diva::CustomizationOrigin::CardSingleClick,"失效首击仍授予跨页权限");
         // 参数key为按钮所在卡片；演示能力仅用于隔离输入测试，生产不导入该能力。
-        module.actionCapability=[](const diva::CustomizationKey& key){(void)key;diva::CustomizationActionCapability c;c.modelPage=c.preview=c.equip=true;return c;};
+        module.actionCapability=[](const diva::CustomizationKey& key){(void)key;diva::CustomizationActionCapability c;c.targetPage=c.preview=c.equip=true;return c;};
         int actions=0;diva::CustomizationLocateRequest lastAction;
         // 参数request为真实ImGui按钮派发的稳定请求。
         module.submitModuleAction=[&](const diva::CustomizationLocateRequest& request){++actions;lastAction=request;};
