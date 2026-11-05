@@ -10,10 +10,10 @@ int main(){
     try{
         const auto start=steady_clock::time_point{};
         auto due=SearchDeadline(true,start);
-        Check(!SearchDue(2,1,due,false,start+milliseconds(299)),"防抖截止前提前启动");
+        Check(!SearchDue(2,1,due,false,start+kSearchDebounce-milliseconds(1)),"防抖截止前提前启动");
         due=SearchDeadline(true,start+milliseconds(250));
-        Check(!SearchDue(3,1,due,false,start+milliseconds(300)),"连续输入未推迟截止时间");
-        Check(SearchDue(3,1,due,false,start+milliseconds(550)),"停止输入后未启动");
+        Check(!SearchDue(3,1,due,false,start+milliseconds(250)+kSearchDebounce-milliseconds(1)),"连续输入未推迟截止时间");
+        Check(SearchDue(3,1,due,false,start+milliseconds(250)+kSearchDebounce),"停止输入后未启动");
         Check(!SearchDue(3,1,due,true,start+seconds(2)),"IME组词期间查询意外启动");
         Check(SearchDue(3,1,SearchDeadline(false,start),false,start),"Enter或筛选未立即调度");
         Check(!SearchDue(3,3,due,false,start+seconds(2)),"已发布修订重复启动");

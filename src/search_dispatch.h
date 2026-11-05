@@ -10,7 +10,8 @@
 #include <thread>
 
 namespace diva {
-inline constexpr auto kSearchDebounce=std::chrono::milliseconds(300);
+// 查询实测不到 1 毫秒，且在后台线程执行、旧结果按修订号丢弃；防抖只用来合并同一帧附近的按键。
+inline constexpr auto kSearchDebounce=std::chrono::milliseconds(30);
 // 参数debounce/now分别为是否防抖和可注入的单调时刻，两类搜索共用同一截止时间策略。
 inline auto SearchDeadline(bool debounce,std::chrono::steady_clock::time_point now=std::chrono::steady_clock::now()) {
     return now+(debounce?kSearchDebounce:std::chrono::milliseconds(0));

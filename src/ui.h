@@ -83,7 +83,7 @@ struct View {
     void Poll();
     // 立即调度完整快照查询，不在绘制帧执行搜索或等待。
     void Requery();
-    // 标记查询变化；参数 debounce 为是否等待连续输入停止 300 毫秒。
+    // 标记查询变化；参数 debounce 为是否等待连续输入短暂停止，时长见 kSearchDebounce。
     void QueueSearch(bool debounce);
     // 当前结果是否仍在等待最新文本或筛选条件。
     bool SearchPending() const;

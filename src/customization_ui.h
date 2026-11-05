@@ -178,7 +178,7 @@ struct CustomizationView {
     void ResetBodyClick();
     // Esc 优先清除等待中的定位，返回是否已消费；Combo 由 ImGui 原生取消。
     bool HandleEscape();
-    // 当前模式条件变化后递增版本；参数 debounce 决定是否等候连续输入停止150毫秒。
+    // 当前模式条件变化后递增版本；参数 debounce 决定是否等候连续输入短暂停止，时长见 kSearchDebounce。
     void QueueSearch(bool debounce);
     // 判断当前模式是否仍在等待最新条件的结果。
     bool SearchPending() const;

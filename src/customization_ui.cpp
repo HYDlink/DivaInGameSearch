@@ -437,7 +437,7 @@ bool CustomizationView::BrowseOnly(const CustomizationItem& item) const {
         && item.character!=singer->character && item.character!=CustomizationCharacter::All;
 }
 
-// 参数 debounce 为是否等待连续输入停止300毫秒；新条件会取消旧Enter和旧悬浮详情。
+// 参数 debounce 为是否等待连续输入短暂停止；新条件会取消旧Enter和旧悬浮详情。
 void CustomizationView::QueueSearch(bool debounce) {
     ResetBodyClick();
     if(invalidateModuleLocate) invalidateModuleLocate();
