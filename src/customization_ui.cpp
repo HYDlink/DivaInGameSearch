@@ -75,6 +75,11 @@ CardMetrics MetricsFor(CustomizationDomain domain,float width,CustomizationPart 
     return {image,image+8.0f,image+8.0f+line+4.0f,image+text};
 }
 
+// 参数 text 为下拉框要完整显示的文字，返回所需宽度。
+float ComboWidthFor(const char* text) {
+    return ImGui::CalcTextSize(text).x+ImGui::GetFrameHeight()+ImGui::GetStyle().FramePadding.x+4.0f;
+}
+
 // 参数 domain 为当前领域，返回状态提示中的项目名词。
 const char* DomainNoun(CustomizationDomain domain) {
     return Tr(domain==CustomizationDomain::Models?Tx::item_module:domain==CustomizationDomain::Hair?Tx::item_hair:Tx::item_accessory);
@@ -597,7 +602,7 @@ void CustomizationView::Draw() {
             ImGui::PushStyleColor(ImGuiCol_Button,selected?ImVec4(0.20f,0.32f,0.30f,1):ImVec4(0.105f,0.12f,0.14f,1));
             ImGui::PushStyleColor(ImGuiCol_Text,selected?ImVec4(0.63f,0.97f,0.86f,1):ImVec4(0.66f,0.71f,0.75f,1));
             const std::string label=std::string(CustomizationPartName(part))+"##accessory-part";
-            if(ImGui::Button(label.c_str(),ImVec2(72.0f,30.0f))) SetAccessoryPart(part);
+            if(ImGui::Button(label.c_str(),ImVec2(std::max(72.0f,ImGui::CalcTextSize(label.c_str(),nullptr,true).x+24.0f),30.0f))) SetAccessoryPart(part);
             if(selected) {
                 auto min=ImGui::GetItemRectMin(),max=ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRectFilled({min.x+12,max.y-3},{max.x-12,max.y-1},IM_COL32(107,224,194,255),1);
@@ -618,7 +623,7 @@ void CustomizationView::Draw() {
     // 自定义道具不按人物区分，不显示人物筛选；四个部位子标签就是主要分类。
     if(domain!=CustomizationDomain::Accessories) {
         DrawSearchGroupLabel(Tr(Tx::filter_character));
-        const float characterWidth=std::min(142.0f,std::max(90.0f,availableWidth-110.0f));
+        const float characterWidth=std::max({std::min(142.0f,std::max(90.0f,availableWidth-110.0f)),ComboWidthFor(Tr(Tx::filter_all_characters)),ComboWidthFor(Tr(Tx::character_extra))});
         ImGui::SetNextItemWidth(characterWidth);
         const char* character=state.query.character?CustomizationCharacterName(*state.query.character):Tr(Tx::filter_all_characters);
         if(ImGui::BeginCombo("##character",character)) {
@@ -638,7 +643,12 @@ void CustomizationView::Draw() {
     }
     DrawSearchGroupLabel(Tr(Tx::filter_source));
     const float sourceAvailable=ImGui::GetContentRegionAvail().x;
-    const float sourceWidth=splitFilters?std::max(130.0f,sourceAvailable-75.0f):std::clamp(sourceAvailable-280.0f,120.0f,390.0f);
+    const float baseSortWidth=std::min(130.0f,std::max(90.0f,availableWidth*0.34f));
+    const float sortWidth=std::max({baseSortWidth,ComboWidthFor(Tr(Tx::sort_default)),ComboWidthFor(Tr(Tx::sort_name))});
+    // 排序下拉框或其前后文字比中文长时，从来源下拉框让出相应宽度。
+    const float trailingText=ImGui::CalcTextSize(Tr(Tx::sort_label)).x+ImGui::CalcTextSize(Tr(Tx::catalog_options)).x;
+    const float sourceReserve=280.0f+(sortWidth-baseSortWidth)+std::max(0.0f,trailingText-95.0f);
+    const float sourceWidth=splitFilters?std::max(130.0f,sourceAvailable-75.0f):std::clamp(sourceAvailable-sourceReserve,120.0f,390.0f);
     ImGui::SetNextItemWidth(sourceWidth);
     const auto& activeSourceCounts=sourceAssociationCounts[Slot()];
     std::string selectedSource=state.query.source.empty()?Tr(Tx::filter_all_sources):state.query.source=="official"?Tr(Tx::source_official):catalog?SourceFilterLabel(*catalog,state.query.source,activeSourceCounts):state.query.source;
@@ -655,7 +665,7 @@ void CustomizationView::Draw() {
         ImGui::EndCombo();
     }
     if(splitFilters) ImGui::NewLine(); else ImGui::SameLine();
-    DrawSearchGroupLabel(Tr(Tx::sort_label));ImGui::SetNextItemWidth(std::min(130.0f,std::max(90.0f,availableWidth*0.34f)));
+    DrawSearchGroupLabel(Tr(Tx::sort_label));ImGui::SetNextItemWidth(sortWidth);
     const char* sorts[]={Tr(Tx::sort_default),Tr(Tx::sort_name),"ID"};
     if(ImGui::Combo("##sort",&state.query.sort,sorts,3)) QueueSearch(false);
     ImGui::SameLine();
@@ -693,7 +703,7 @@ void CustomizationView::Draw() {
     const std::string gridFocusLabel=Trf(Tx::catalog_results,{{"count",std::to_string(state.results.size())}})+"###结果卡片键盘焦点";
     const ImGuiID gridFocusId=parent->GetID(gridFocusLabel.c_str());
     ImGui::PushStyleColor(ImGuiCol_Text,SearchResultTextColor);
-    const bool clickedFocus=ImGui::Selectable(gridFocusLabel.c_str(),false,0,ImVec2(120.0f,22.0f));
+    const bool clickedFocus=ImGui::Selectable(gridFocusLabel.c_str(),false,0,ImVec2(std::max(120.0f,ImGui::CalcTextSize(gridFocusLabel.c_str(),nullptr,true).x+8.0f),22.0f));
     ImGui::PopStyleColor();
     gridNavigation=ImGui::IsItemFocused();
     if(requestGridFocus) {ImGui::ClearActiveID();ImGui::SetFocusID(gridFocusId,parent);ImGui::FocusWindow(parent);gridNavigation=true;textNavigation=false;requestGridFocus=false;}
@@ -987,14 +997,6 @@ void CustomizationView::Draw() {
         const std::string selectedText=selected.name+" · ID "+std::to_string(selected.key.id);
         const float footerWidth=ImGui::GetContentRegionAvail().x;
         const bool compactFooter=footerWidth>=400.0f;
-        const float buttonWidth=models?150.0f:190.0f;
-        const std::string footerText=status.empty()?selectedText:status;
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(EllipsizeText(footerText,compactFooter?footerWidth-buttonWidth-16.0f:footerWidth).c_str());
-        if(ImGui::IsItemHovered() && ImGui::CalcTextSize(footerText.c_str()).x>ImGui::GetItemRectSize().x) {
-            ImGui::BeginTooltip();ImGui::PushTextWrapPos(ImGui::GetFontSize()*30);ImGui::TextUnformatted(footerText.c_str());ImGui::PopTextWrapPos();ImGui::EndTooltip();
-        }
-        if(compactFooter) ImGui::SameLine(footerWidth-buttonWidth+ImGui::GetWindowContentRegionMin().x);
         // 底栏只做原位定位：不在目标页时禁用并提示双击；发型／道具还需已认证的定位 Profile。
         const auto capability=actionCapability?actionCapability(selected.key):CustomizationActionCapability{};
         const bool targetPage=models?(!actionCapability || capability.targetPage):capability.targetPage;
@@ -1004,6 +1006,14 @@ void CustomizationView::Draw() {
         const bool canSubmit=connected && !catalogRequiresRestart && !SearchPending() && targetPage && certified && !browseOnly;
         const std::string footerLabel=browseOnly?std::string(Tr(Tx::card_browse_only)):!connected && !models?std::string(Tr(Tx::card_footer_unsupported))
             :!targetPage?Trf(Tx::card_footer_open_page,{{"page",CustomizationDomainPageName(domain)}}):!certified?std::string(Tr(Tx::card_footer_unsupported)):std::string(Tr(Tx::card_footer_locate));
+        const float buttonWidth=std::max(models?150.0f:190.0f,ImGui::CalcTextSize(footerLabel.c_str()).x+24.0f);
+        const std::string footerText=status.empty()?selectedText:status;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(EllipsizeText(footerText,compactFooter?footerWidth-buttonWidth-16.0f:footerWidth).c_str());
+        if(ImGui::IsItemHovered() && ImGui::CalcTextSize(footerText.c_str()).x>ImGui::GetItemRectSize().x) {
+            ImGui::BeginTooltip();ImGui::PushTextWrapPos(ImGui::GetFontSize()*30);ImGui::TextUnformatted(footerText.c_str());ImGui::PopTextWrapPos();ImGui::EndTooltip();
+        }
+        if(compactFooter) ImGui::SameLine(footerWidth-buttonWidth+ImGui::GetWindowContentRegionMin().x);
         ImGui::BeginDisabled(!canSubmit);
         if(ImGui::Button((footerLabel+"###footer-locate").c_str(),ImVec2(buttonWidth,30.0f))) RequestLocate(selected.key);
         ImGui::EndDisabled();

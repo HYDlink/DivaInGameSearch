@@ -20,7 +20,7 @@ To update, close the game and overwrite the folder. Skip `settings.ini` if you w
 | Page | Search by | What you can do |
 | --- | --- | --- |
 | Songs | Original title, English title, kana, romaji, PVID; Chinese titles too with the [Chinese Lyrics Mod](https://gamebanana.com/mods/389814) | Filter and sort by song pack, style and difficulty; jump to a specific difficulty |
-| Modules | Module name or song title (shows that song's recommended modules) | Preview, equip |
+| Module | Module name or song title (shows that song's recommended modules) | Preview, equip |
 | Hairstyles | Hairstyle name or song title | Preview, change |
 | Accessories | Item name, grouped by body part | Preview, change |
 

@@ -60,7 +60,7 @@ int main() {
     InitLocale(root,"fr");
     Check(CurrentLocale()=="fr","外部语言文件没有生效");
     Check(std::string(Tr(Tx::tab_songs))=="Chansons","外部翻译没有覆盖");
-    Check(std::string(Tr(Tx::tab_modules))=="Modules","缺失的键没有回退 en");
+    Check(std::string(Tr(Tx::tab_modules))=="Module","缺失的键没有回退 en");
     Check(std::string(Tr(Tx::song_results))=="Results: {count}","占位符不一致的翻译没有被跳过");
     bool unknownKey=false,badPlaceholder=false;
     for(const auto& line:LocaleDiagnostics()) {
