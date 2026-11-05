@@ -17,6 +17,10 @@ std::string Trf(Tx id,std::initializer_list<TrArg> args);
 void InitLocale(const std::filesystem::path& home,std::string_view requested={});
 // 返回实际生效的语言代码，未初始化时为 zh-CN。
 const std::string& CurrentLocale();
+// 返回当前界面语言对应的游戏语言表代码：简中 cn、日文 jp、其余 en。
+const char* GameTableLanguage();
+// 当前界面是否优先显示英文歌名；简中和日文界面仍以原名为主。
+bool PrefersEnglishTitles();
 // 返回最近一次 InitLocale 的诊断信息，写入诊断日志，不显示给玩家。
 const std::vector<std::string>& LocaleDiagnostics();
 }

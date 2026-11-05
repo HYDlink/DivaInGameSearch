@@ -88,7 +88,7 @@ RecommendedModules SearchModulesWithSongs(const CustomizationCatalog& modules,co
     const auto allowed=SearchCustomization(modules,filter);const std::set<size_t> allowedSet(allowed.begin(),allowed.end());
     for(const auto& match:matches) {
         const auto& song=songs->songs[match.index];auto mapped=ResolveRecommendedModules(*recommendations,song.id,modules);
-        const auto title=song.name+" [PVID "+std::to_string(song.id)+"]";
+        const auto title=SongDisplayTitle(song)+" [PVID "+std::to_string(song.id)+"]";
         if(moduleQuery.domain==CustomizationDomain::Hair) {
             RecommendedModules hair;
             hair.unresolved=std::move(mapped.unresolved);

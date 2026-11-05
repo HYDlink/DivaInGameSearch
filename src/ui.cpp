@@ -207,7 +207,7 @@ void View::ReloadStyle() {
     }
     if(shortcut==0x47 || shortcut==0x4C || shortcut==0x53) { shortcut=0x46; status=Tr(Tx::song_status_hotkey_conflict); }
 }
-// 使用中日字体合并并建立青绿色主色调；参数 size 为基准字号。
+// 按界面语言选择字体并建立青绿色主色调；参数 size 为基准字号。
 void SetupStyle(float size) {
     auto& io=ImGui::GetIO(); io.IniFilename=nullptr; io.LogFilename=nullptr;
     // 下拉框弹层内用方向键选择；搜索框内方向键由列表统一处理。
@@ -218,9 +218,21 @@ void SetupStyle(float size) {
     builder.AddRanges(io.Fonts->GetGlyphRangesChineseFull());
     builder.AddRanges(io.Fonts->GetGlyphRangesJapanese()); builder.AddText("★☆·—↑↓←→…"); builder.BuildRanges(&ranges);
     wchar_t windows[MAX_PATH]{}; GetWindowsDirectoryW(windows,MAX_PATH);
-    auto font=fs::path(windows)/"Fonts/msyh.ttc";
-    if(fs::exists(font)) io.Fonts->AddFontFromFileTTF(Utf8(font.wstring()).c_str(),size,nullptr,ranges.Data);
-    else io.Fonts->AddFontDefault();
+    const auto fonts=fs::path(windows)/"Fonts";
+    const auto yahei=fonts/"msyh.ttc";
+    // 简中沿用雅黑；其他语言的歌名多为日文，优先日文字体，避免日文汉字显示成中文字形。
+    const bool chinese=CurrentLocale()=="zh-CN";
+    const std::vector<fs::path> candidates=chinese?std::vector<fs::path>{yahei,fonts/"YuGothM.ttc",fonts/"meiryo.ttc"}:std::vector<fs::path>{fonts/"YuGothM.ttc",fonts/"meiryo.ttc",yahei};
+    const auto primary=std::find_if(candidates.begin(),candidates.end(),[](const fs::path& path){return fs::exists(path);});
+    if(primary==candidates.end()) io.Fonts->AddFontDefault();
+    else {
+        io.Fonts->AddFontFromFileTTF(Utf8(primary->wstring()).c_str(),size,nullptr,ranges.Data);
+        // 日文字体缺少部分简体字，中文别名需要时由雅黑补齐。
+        if(!chinese && *primary!=yahei && fs::exists(yahei)) {
+            ImFontConfig merge;merge.MergeMode=true;
+            io.Fonts->AddFontFromFileTTF(Utf8(yahei.wstring()).c_str(),size,&merge,ranges.Data);
+        }
+    }
     auto& s=ImGui::GetStyle(); ImGui::StyleColorsDark();
     s.WindowPadding={24,18}; s.FramePadding={12,8}; s.ItemSpacing={10,10}; s.WindowRounding=12; s.FrameRounding=5;
     s.CellPadding={10,7}; s.ScrollbarSize=12;
@@ -411,11 +423,12 @@ void View::Draw() {
                 songBodyHit=true;ClickSongBody(song);
             }
             bool hovered=ImGui::IsItemHovered(); ImGui::SetCursorScreenPos(pos);
-            ClippedText(song.name,nameWidth);
+            ClippedText(SongDisplayTitle(song),nameWidth);
             ImGui::PushStyleColor(ImGuiCol_Text,SearchSecondaryTextColor);
-            auto alias=song.aliases.empty()?song.english:song.aliases;
+            // 英文界面的主标题已是英文名，第二行改为原名。
+            auto alias=PrefersEnglishTitles()?song.name:song.aliases.empty()?song.english:song.aliases;
             if(auto separator=alias.find('|');separator!=std::string::npos) alias.resize(separator);
-            if(alias==song.name) alias.clear();
+            if(alias==SongDisplayTitle(song)) alias.clear();
             ClippedText((alias.empty()?"":alias+" · ")+song.source,nameWidth); ImGui::PopStyleColor();
             if(hovered) {
                 ImGui::BeginTooltip(); ImGui::TextUnformatted(song.name.c_str()); ImGui::TextUnformatted(song.english.c_str()); ImGui::TextUnformatted(song.reading.c_str()); ImGui::TextUnformatted(song.aliases.c_str());

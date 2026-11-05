@@ -144,5 +144,13 @@ const std::string& CurrentLocale() {
     const auto* table=current.load(std::memory_order_acquire);
     return table?table->code:source;
 }
+const char* GameTableLanguage() {
+    const auto& code=CurrentLocale();
+    return code=="zh-CN"?"cn":code=="ja"?"jp":"en";
+}
+bool PrefersEnglishTitles() {
+    const auto& code=CurrentLocale();
+    return code!="zh-CN" && code!="ja";
+}
 const std::vector<std::string>& LocaleDiagnostics() {return diagnostics;}
 }

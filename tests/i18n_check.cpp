@@ -35,6 +35,14 @@ int main() {
     Check(Trf(Tx::song_results,{{"count","{count}"}})=="Results: {count}","占位符值被二次替换");
     Check(Trf(Tx::song_results,{})=="Results: {count}","缺少参数时没有保留占位符");
 
+    Check(std::string(GameTableLanguage())=="en" && PrefersEnglishTitles(),"en 的内容语言不对");
+    InitLocale(root,"zh-CN");
+    Check(std::string(GameTableLanguage())=="cn" && !PrefersEnglishTitles(),"zh-CN 的内容语言不对");
+
+    InitLocale(root,"ja");
+    Check(CurrentLocale()=="ja" && std::string(Tr(Tx::tab_modules))=="モジュール","ja 没有生效");
+    Check(std::string(GameTableLanguage())=="jp" && !PrefersEnglishTitles(),"ja 的内容语言不对");
+
     InitLocale(root,"xx-unknown");
     Check(CurrentLocale()=="en","未知语言没有回退 en");
     InitLocale(root,"../evil");

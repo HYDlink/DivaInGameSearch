@@ -3,11 +3,11 @@
 #include <iostream>
 #include <fstream>
 #include <map>
-// 参数 argc/argv 为插件目录、游戏目录和审计文件；只读磁盘，不访问游戏进程。
+// 参数 argc/argv 为插件目录、游戏目录、审计文件和可选语言表代码；只读磁盘，不访问游戏进程。
 int wmain(int argc,wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
-    if(argc!=4) {std::cout<<"用法：CustomizationAudit 插件目录 游戏目录 输出文件\n";return 2;}
-    auto catalog=diva::LoadCustomizationCatalog(argv[1],argv[2]);std::ofstream output(argv[3],std::ios::binary);
+    if(argc!=4 && argc!=5) {std::cout<<"用法：CustomizationAudit 插件目录 游戏目录 输出文件 [游戏语言表代码]\n";return 2;}
+    auto catalog=diva::LoadCustomizationCatalog(argv[1],argv[2],argc==5?diva::Utf8(argv[4]):std::string{});std::ofstream output(argv[3],std::ios::binary);
     output<<"领域\t编号\t名称\t原始角色\t部位令牌\t定义来源\n";
     // 按玩家可见领域统计：模型、发型（KAMI）、自定义道具（四部位）及未归类的未知部位。
     size_t modules=0,hair=0,accessories=0,unknown=0;

@@ -1,5 +1,6 @@
 #pragma once
 #include "core.h"
+#include "i18n.h"
 #include <optional>
 #include <functional>
 #include <memory>
@@ -35,7 +36,7 @@ struct CustomizationCatalog {
     std::vector<CustomizationItem> items;
     std::vector<CustomizationSource> sources;
     std::vector<std::string> diagnostics;
-    std::string configurationKey,dmlFingerprint,catalogFingerprint,language="cn";
+    std::string configurationKey,dmlFingerprint,catalogFingerprint,language=GameTableLanguage();
     bool stale=false;
     size_t orphanNames=0,unimportedArchives=0;
     bool importedDirectory=true;
@@ -98,7 +99,7 @@ struct OfficialTableSource {
 // 返回生产官方表来源：随包 CPK 桥接读取模型表及定制表。
 OfficialTableSource ProductionOfficialTables();
 // 参数 home/game 为插件和游戏目录；后台只读当前启用Mod归档与可选兼容导入。
-// 参数language为显式目录语言；玩家界面传cn，审计未提供时使用导入设置或中文。
+// 参数language为显式目录语言；玩家界面传界面语言对应的语言表，审计未提供时使用导入设置或界面语言。
 CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language="");
 // 参数 home/game/language 同上，official 为官方表来源；测试可注入合成官方表。
 CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language,const OfficialTableSource& official);

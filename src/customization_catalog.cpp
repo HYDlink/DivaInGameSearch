@@ -225,7 +225,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
 CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language,const OfficialTableSource& official) {
     CustomizationCatalog out;auto roots=Roots(game,out);out.dmlFingerprint=Hash(out.configurationKey);
     for(const auto& root:roots) out.sources.push_back({root.id,root.name,root.modDirectory,root.includeRoot,true});
-    auto manifest=Config(home/"customization_catalog.toml",out);out.language=language.empty()?manifest["language"].value_or<std::string>("cn"):language;
+    auto manifest=Config(home/"customization_catalog.toml",out);out.language=language.empty()?manifest["language"].value_or<std::string>(GameTableLanguage()):language;
     bool valid=manifest["schema_version"].value_or<int64_t>(0)==1;
     auto expectedFingerprint=manifest["dml_fingerprint"].value_or<std::string>("");
     if(!expectedFingerprint.empty() && expectedFingerprint!=out.dmlFingerprint) {out.stale=true;out.diagnostics.push_back("导入清单DML指纹不匹配，来源配置已变化；目录标为过期。");}
@@ -418,7 +418,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
     if(out.items.empty()) out.diagnostics.push_back("未检测到可读取的服装／饰品实体。请查看来源诊断。");
     if(out.unimportedArchives) out.diagnostics.push_back("发现 "+std::to_string(out.unimportedArchives)+" 个实体归档读取失败；详见来源诊断。");
     if(out.orphanNames) out.diagnostics.push_back("忽略 "+std::to_string(out.orphanNames)+" 个孤立名称补丁；名称不会创建实体。");
-    out.diagnostics.push_back("当前为磁盘元数据快照；磁盘刷新不等于游戏重载。官方PC地区表自动读取，未读取已购买或解锁状态。显示语言："+out.language+" → Mod通用名称 → 实体表原名；玩家界面默认使用简体中文。");
+    out.diagnostics.push_back("当前为磁盘元数据快照；磁盘刷新不等于游戏重载。官方PC地区表自动读取，未读取已购买或解锁状态。显示语言："+out.language+" → Mod通用名称 → 实体表原名；物品名称跟随 Mod 界面语言。");
     return out;
 }
 }

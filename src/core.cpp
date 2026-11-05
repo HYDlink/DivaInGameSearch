@@ -1,4 +1,5 @@
 #include "core.h"
+#include "i18n.h"
 #include <Windows.h>
 #include <algorithm>
 #include <fstream>
@@ -20,6 +21,9 @@ std::string Utf8(const std::wstring& text) {
     return out;
 }
 // 规范化检索字符；参数 text 为 UTF-8 文本。
+const std::string& SongDisplayTitle(const Song& song) {
+    return PrefersEnglishTitles() && !song.english.empty()?song.english:song.name;
+}
 std::string Normalize(const std::string& text) {
     auto w = Wide(text);
     if (w.empty()) return {};
@@ -143,10 +147,15 @@ std::vector<Result> Search(const Catalog& catalog, const Query& query, const std
         else if (!words.empty() && std::all_of(words.begin(),words.end(),[&](const std::string& t){ return key.find(t)!=std::string::npos; })) score=300;
         if (score) out.push_back({i,score});
     }
+    const bool englishTitles=PrefersEnglishTitles();
     std::stable_sort(out.begin(),out.end(),[&](const Result& a,const Result& b){
         const auto& x=catalog.songs[a.index]; const auto& y=catalog.songs[b.index];
         if (query.sort==0 && a.score!=b.score) return a.score>b.score;
-        if (query.sort==2 && x.nameKey!=y.nameKey) return x.nameKey<y.nameKey;
+        if (query.sort==2) {
+            const auto& left=englishTitles && !x.englishKey.empty()?x.englishKey:x.nameKey;
+            const auto& right=englishTitles && !y.englishKey.empty()?y.englishKey:y.nameKey;
+            if(left!=right) return left<right;
+        }
         if (query.sort==3 || query.sort==4) {
             int d=difficulty>=0?difficulty:3;
             const auto& cx=x.charts[style][d]; const auto& cy=y.charts[style][d];

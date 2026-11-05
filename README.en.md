@@ -4,7 +4,6 @@ English · [简体中文](README.md)
 
 A search mod for *Hatsune Miku: Project DIVA Mega Mix+*. Press **Ctrl+F** in-game to search songs, modules, hairstyles and accessories, then jump straight to what you picked.
 
-> **Language status:** the in-game interface is currently Simplified Chinese only, and module, hairstyle and accessory names are loaded from the Chinese tables whatever your game language is. An English interface is in progress.
 
 ![Song search panel](docs/images/search.png)
 
@@ -43,6 +42,10 @@ You can only switch to items you already own. The mod never buys anything for yo
 | Esc or click outside | Close |
 
 The hotkey, font size, row height and opacity can be changed in `settings.ini`.
+
+## Language
+
+The interface is available in English, Japanese and Simplified Chinese. By default it follows your Windows language, and anything other than Chinese or Japanese uses English. Module, hairstyle and accessory names use the same language. To choose one yourself, set `language` to `en`, `ja` or `zh-CN` in `settings.ini` and restart the game.
 
 ## Known issues
 

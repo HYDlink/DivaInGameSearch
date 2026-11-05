@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "module_assets.h"
 #include "farc.h"
 #include "sprite_resolver.h"
@@ -730,7 +731,7 @@ struct ModuleAssets::Impl {
                 exists=true;return ReadSmallFile(*path,logical.ends_with(".bin")?16*1024*1024:kMaximumReadBytes);
             }});
         }
-        const std::string locale=catalog?FoldPath(catalog->language):"cn";
+        const std::string locale=catalog?FoldPath(catalog->language):GameTableLanguage();
         environment.officialDatabaseSuffixes={"rom_steam_"+locale+"/rom/2d/spr_db.bin","rom_steam/rom/2d/spr_db.bin"};
         // 参数 suffix/label 为数据库后缀与来源说明；同后缀候选内容不同即拒绝，不任意挑选。
         environment.officialDatabase=[this](const std::string& suffix,std::string& label) -> std::optional<std::string> {

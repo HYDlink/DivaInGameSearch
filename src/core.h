@@ -47,6 +47,8 @@ std::wstring Wide(const std::string& text);
 std::string Utf8(const std::wstring& text);
 // 统一兼容字符、大小写、假名和分隔符；参数 text 为待检索文本。
 std::string Normalize(const std::string& text);
+// 参数 song 为歌曲，返回当前界面的主标题：英文界面优先英文名，其余使用原名。
+const std::string& SongDisplayTitle(const Song& song);
 // 从可靠假名读音产生罗马音，不推测汉字读音；参数 text 为数据库读音。
 std::string Romanize(const std::string& text);
 // 生成常见罗马音拼写变体（shi/si、tsu/tu 等）；参数 text 为 Romanize 输出的标准罗马音。

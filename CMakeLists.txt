@@ -53,6 +53,7 @@ add_test(NAME 核心自动验收 COMMAND SearchTests "${CMAKE_CURRENT_SOURCE_DIR
 add_executable(I18nCheck tests/i18n_check.cpp)
 target_link_libraries(I18nCheck PRIVATE search_core)
 add_test(NAME 多语言运行时验收 COMMAND I18nCheck)
+add_test(NAME 文案硬编码检查 COMMAND pwsh -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-i18n.ps1")
 add_executable(DllCheck tests/dll_check.cpp)
 add_executable(ReadProbe tests/read_probe.cpp)
 add_executable(NativeCapture tests/native_capture.cpp)
