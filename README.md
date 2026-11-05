@@ -1,5 +1,7 @@
 # DIVA 游戏内搜索
 
+[English](README.en.md) · 简体中文
+
 《初音未来 Project DIVA Mega Mix+》的搜索 Mod：在游戏里按 **Ctrl+F**，搜歌曲、服装、发型和道具，选中就跳过去。
 
 ![歌曲搜索界面](docs/images/search.png)
