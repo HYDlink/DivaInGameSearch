@@ -55,6 +55,18 @@ int main() {
     InitLocale(root,"en");
     Check(CurrentLocale()=="en","显式语言没有优先于设置文件");
 
+    // auto 时跟随游戏语言；显式设置优先，读不到游戏语言时保持原样。
+    Write(root/"settings.ini","language=auto\n");
+    InitLocale(root,"zh-CN");
+    Check(ApplyGameLanguage(root,"en") && CurrentLocale()=="en","auto 没有跟随英文游戏");
+    Check(!ApplyGameLanguage(root,"fr") && CurrentLocale()=="en","其他游戏语言应使用英文且不重复切换");
+    Check(ApplyGameLanguage(root,"jp") && CurrentLocale()=="ja","auto 没有跟随日文游戏");
+    Check(ApplyGameLanguage(root,"tw") && CurrentLocale()=="zh-CN","繁中游戏应使用简中");
+    Check(!ApplyGameLanguage(root,"") && CurrentLocale()=="zh-CN","读不到游戏语言时不应切换");
+    Write(root/"settings.ini","language=en\n");
+    InitLocale(root);
+    Check(!ApplyGameLanguage(root,"jp") && CurrentLocale()=="en","显式设置应优先于游戏语言");
+
     // 外部语言文件：部分覆盖、缺失回退 en、不合规条目被跳过而不是崩溃。
     Write(root/"lang/fr.toml","[tab]\nsongs = \"Chansons\"\nno_such_key = \"x\"\n[song]\nresults = \"{wrong} résultats\"\n");
     InitLocale(root,"fr");

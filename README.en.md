@@ -45,7 +45,7 @@ The hotkey, font size, row height and opacity can be changed in `settings.ini`.
 
 ## Language
 
-The interface is available in English, Japanese and Simplified Chinese. By default it follows your Windows language, and anything other than Chinese or Japanese uses English. Module, hairstyle and accessory names use the same language. To choose one yourself, set `language` to `en`, `ja` or `zh-CN` in `settings.ini` and restart the game.
+The interface is available in English, Japanese and Simplified Chinese. By default it follows the game's language: Chinese uses Simplified Chinese, Japanese uses Japanese, and anything else uses English. Module, hairstyle and accessory names use the same language. To choose one yourself, set `language` to `en`, `ja` or `zh-CN` in `settings.ini` and restart the game.
 
 ## Known issues
 

@@ -287,7 +287,7 @@ void CustomizationView::Refresh(const fs::path& h,const fs::path& g) {
     home=h;game=g;
     if(pending.valid()) return;
     status=Tr(Tx::catalog_status_loading);
-    // 物品名称跟随 Mod 界面语言，显示与检索使用同一份目录，不跟随游戏语言覆盖。
+    // 物品名称跟随 Mod 界面语言，显示与检索使用同一份目录。
     const std::string language=GameTableLanguage();
     pending=std::async(std::launch::async,[h,g,language]{return LoadCustomizationCatalog(h,g,language);});
 }

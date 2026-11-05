@@ -76,6 +76,8 @@ struct View {
     bool hasInitialConfiguration=false;
     std::function<void(Request,bool)> submit;
     std::function<void()> onOpen;
+    // 本次运行首次打开面板时调用一次，早于其他打开逻辑，用于确定界面语言。
+    std::function<void()> onFirstOpen;
     // 查询、目录、领域或输入上下文改变时取消尚未完成的歌曲路由。
     std::function<void()> invalidateSongNavigation;
     // 参数 mode 为搜索领域，返回游戏当前是否已在该领域的目标页；已在目标页时第二下 Enter 不再提交。

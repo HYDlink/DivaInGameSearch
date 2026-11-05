@@ -139,6 +139,14 @@ void InitLocale(const std::filesystem::path& home,std::string_view requested) {
     // 有意不释放旧表：Tr 返回的指针可能仍被保存。
     current.store(table.release(),std::memory_order_release);
 }
+bool ApplyGameLanguage(const std::filesystem::path& home,std::string_view gameLanguage) {
+    const auto setting=ReadLanguageSetting(home);
+    if((!setting.empty() && setting!="auto") || gameLanguage.empty()) return false;
+    const std::string locale=gameLanguage=="cn" || gameLanguage=="tw"?"zh-CN":gameLanguage=="jp"?"ja":"en";
+    if(locale==CurrentLocale()) return false;
+    InitLocale(home,locale);
+    return true;
+}
 const std::string& CurrentLocale() {
     static const std::string source="zh-CN";
     const auto* table=current.load(std::memory_order_acquire);

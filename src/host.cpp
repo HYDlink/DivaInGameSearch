@@ -325,7 +325,7 @@ LRESULT Host::HandleMessage(HWND hwnd,UINT message,WPARAM w,LPARAM l,bool& useDe
                 view.open=true; view.ClearActions();
                 view.listNavigation=true; view.horizontalNavigation=view.mode==SearchMode::Songs; releaseUntil=GetTickCount64()+120;
                 captures=true;
-                view.OnOpened();
+                if(view.onFirstOpen) {auto resolve=std::move(view.onFirstOpen);view.onFirstOpen=nullptr;resolve();} view.OnOpened();
                 if(view.onOpen) view.onOpen();
             }
             ImGui::GetIO().ClearInputKeys();

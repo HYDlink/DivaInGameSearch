@@ -111,6 +111,17 @@ __declspec(dllexport) void Init() {
         message=selector.message;return accepted;
     },[] {Selection().Cancel();});
     // 打开面板时沿用游戏当前的难度和风格。
+    // 首次打开时游戏已完成启动，读到的语言才可靠；界面、字体和歌曲来源名称随之切换。
+    host.view.onFirstOpen=[] {
+        auto& view=diva::App().view;
+        const auto language=diva::Game().CurrentLanguage();
+        Log("游戏语言："+(language.empty()?std::string("未读取到"):language));
+        if(!diva::ApplyGameLanguage(view.home,language)) return;
+        for(const auto& line:diva::LocaleDiagnostics()) Log(line);
+        view.fontDirty=true;
+        view.customization.contextReason=diva::Tr(diva::Tx::catalog_context_default);
+        view.Refresh();
+    };
     host.view.onOpen=[] {
         auto snapshot=diva::Game().Read(); auto& view=diva::App().view;
         const auto page=diva::CurrentNativePage();

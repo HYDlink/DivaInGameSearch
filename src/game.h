@@ -5,6 +5,8 @@
 namespace diva {
 class GameMemory:public Memory {
 public:
+    // 读取已核查 PC 构建的原生语言目录，返回 cn、en、jp 等语言表代码；未知构建或非法值返回空。
+    std::string CurrentLanguage() const;
     // 延迟到 DML PostInit 核查可执行文件与安装输入隔离。
     void Initialize();
     // 读取菜单字段与实际选中歌曲。
