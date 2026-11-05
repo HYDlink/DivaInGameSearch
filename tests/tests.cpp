@@ -53,6 +53,23 @@ static void TestSearch() {
     q={}; q.style=1; Check(Search(c,q,{}).empty(),"未生效风格过滤失败");
     q={}; q.sort=1; auto results=Search(c,q,{}); Check(c.songs[results.front().index].id==1,"全局编号排序失败");
     q.sort=3; results=Search(c,q,{}); Check(c.songs[results.front().index].id==637,"等级全局排序失败");
+    q.sort=4; results=Search(c,q,{}); Check(c.songs[results.front().index].id==1,"等级升序排序失败");
+    {
+        Catalog levels;
+        for(int id:{1,2,3}) {
+            Song song; song.id=id; song.name="曲"+std::to_string(id); song.sources={"曲包"};
+            song.charts[0][0].available=true;
+            if(id!=1) song.charts[0][3]={id==2?9.0f:6.0f,"x.dsc","曲包",true};
+            PrepareSong(song); levels.songs.push_back(std::move(song));
+        }
+        q={}; q.sort=4; auto ordered=Search(levels,q,{});
+        Check(levels.songs[ordered[0].index].id==3 && levels.songs[ordered[1].index].id==2 && levels.songs[ordered[2].index].id==1,"等级升序未把缺失难度排在最后");
+        q.sort=3; ordered=Search(levels,q,{});
+        Check(levels.songs[ordered[0].index].id==2 && levels.songs[ordered[1].index].id==3 && levels.songs[ordered[2].index].id==1,"等级降序未把缺失难度排在最后");
+    }
+    CountPackSongs(c);
+    Check(c.packSongCounts[0]["曲包甲"]==1 && c.packSongCounts[0]["曲包乙"]==2 && c.packSongCounts[1].empty(),"来源歌曲数未按风格统计");
+    q={};
     q.text="不存在的歌曲"; Check(Search(c,q,{}).empty(),"无结果处理失败");
     Catalog names;
     for(int id:{2,3,1}) {

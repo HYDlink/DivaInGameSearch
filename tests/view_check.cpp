@@ -222,6 +222,15 @@ int main(int argc,char** argv) {
         Check(firstReads==module.State().results.size() && metadataReads==firstReads,"静止帧反复遍历全量服装预览元数据");
         ++module.previewMetadataGeneration;Draw(view);
         Check(metadataReads==firstReads*2,"资源发布后未刷新布局尺寸缓存");
+        // 定制领域连按 Enter 的跨页身份要能通过导航网关。
+        view.PressEnter(1000);Draw(view);Draw(view);
+        Check(lastModuleRequest.origin==diva::CustomizationOrigin::Keyboard,"定制第一下Enter获得跨页权限");
+        view.PressEnter(1100);Draw(view);Draw(view);
+        Check(lastModuleRequest.origin==diva::CustomizationOrigin::CardDoubleClick && diva::CheckCustomizationNavigation(lastModuleRequest,true).empty(),"定制连按两次Enter未通过导航网关");
+        view.PressEnter(1150);Draw(view);Draw(view);
+        Check(lastModuleRequest.origin==diva::CustomizationOrigin::Keyboard,"定制第三下Enter累积出跨页权限");
+        view.RequestSearchFocus();for(int frame=0;frame<3;++frame)Draw(view);
+        Check(!module.State().selectText && !view.selectSearchText,"定制搜索框未消费全选请求");
         diva::View songs;songs.catalog=std::make_shared<diva::Catalog>(Fixture());songs.open=true;songs.currentDifficulty=3;
         songs.Poll();Complete(songs);std::vector<diva::Request> songRequests;
         // 参数request/available为真实歌曲名称和难度按钮提交，不跳过生产命中逻辑。
@@ -243,6 +252,36 @@ int main(int argc,char** argv) {
         Check(songRequests.back().origin==diva::SongOrigin::BodySingleClick,"歌曲首击失效后仍携带双击权限");
         songs.requestEnter=true;Draw(songs);
         Check(songRequests.back().origin==diva::SongOrigin::Keyboard && !songRequests.back().firstClickPvid,"歌曲Enter继承了主体跨页权限");
+        // 连按 Enter：第一下不跨页，同项第二下才带跨页权限；中途换选择或超时都重新计起。
+        songs.PressEnter(1000);Draw(songs);
+        Check(songRequests.back().origin==diva::SongOrigin::Keyboard,"第一下Enter获得跨页权限");
+        songs.PressEnter(1200);Draw(songs);
+        Check(songRequests.back().origin==diva::SongOrigin::BodyDoubleClick && songRequests.back().firstClickPvid==songRequests.back().pvid
+            && songRequests.back().firstClickRevision==songs.queryRevision,"连按两次Enter未绑定歌曲和修订");
+        songs.PressEnter(1300);Draw(songs);
+        Check(songRequests.back().origin==diva::SongOrigin::Keyboard,"第三下Enter累积出跨页权限");
+        songs.PressEnter(5000);Draw(songs);
+        Check(songRequests.back().origin==diva::SongOrigin::Keyboard,"超时后的Enter获得跨页权限");
+        songs.move=1;songs.Navigate();songs.PressEnter(5100);Draw(songs);
+        Check(songRequests.back().origin==diva::SongOrigin::Keyboard,"换选择后的Enter继承跨页权限");
+        songs.onTargetPage=[](diva::SearchMode){return true;};
+        songs.PressEnter(9000);Draw(songs);const auto onPage=songRequests.size();
+        songs.PressEnter(9100);Check(!songs.requestEnter,"目标页第二下Enter被再次提交");Draw(songs);
+        Check(songRequests.size()==onPage,"目标页第二下Enter产生了重复定位");
+        songs.onTargetPage=nullptr;
+        Check(songs.enterGuardUntil==9100+diva::kDoubleEnterMs,"第二下Enter后未延长游戏输入隔离");
+        // 再次 Ctrl+F：焦点已在搜索框时也要全选当前文字。
+        std::strcpy(songs.input,"Alpha");songs.QueueSearch(false);Complete(songs);
+        songs.RequestSearchFocus();for(int frame=0;frame<3;++frame)Draw(songs);
+        {
+            auto* textState=ImGui::GetInputTextState(ImGui::GetActiveID());
+            Check(textState && !songs.selectSearchText && textState->Stb.select_start==0 && textState->Stb.select_end==5,"Ctrl+F 未全选搜索文字");
+            ImGui::GetCurrentContext();
+            songs.RequestSearchFocus();Draw(songs);Draw(songs);
+            textState=ImGui::GetInputTextState(ImGui::GetActiveID());
+            Check(textState && !songs.selectSearchText && textState->Stb.select_end==5,"焦点在搜索框时再次 Ctrl+F 未全选");
+        }
+        std::strcpy(songs.input,"");songs.QueueSearch(false);Complete(songs);
         songs.songClickPvid=1;songs.songClickRevision=songs.queryRevision;songs.QueueSearch(false);
         Check(!songs.songClickPvid,"歌曲查询更新没有清除首击身份");Complete(songs);
         songs.songClickPvid=1;songs.composing=true;Draw(songs);

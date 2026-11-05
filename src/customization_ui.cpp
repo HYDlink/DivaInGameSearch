@@ -235,8 +235,15 @@ void SubmitPendingLocate(CustomizationView& view,CustomizationView::ModeState& s
     const bool models=view.domain==CustomizationDomain::Models;
     const auto& submit=models?view.submitModuleLocate:view.submitItemRequest;
     if(!submit) {view.status=models?"原生服装定位接口尚未接入。":"暂不支持此操作。";return;}
-    auto request=MakeRequest(view,state,item,CustomizationAction::Locate,view.locateOrigin);
-    if(request.origin==CustomizationOrigin::CardDoubleClick) {
+    const bool keyboard=view.locateOrigin==CustomizationOrigin::Keyboard;
+    // 第一下尚在等待查询时 enterKey 为空，两下目标相同；否则第二下必须落在第一下的同一项目和查询上。
+    const bool twice=keyboard && view.enterDouble
+        && (!view.enterKey || (*view.enterKey==item.key && view.enterDomain==view.domain && view.enterRevision==state.revision));
+    if(keyboard) {view.enterKey=item.key;view.enterDomain=view.domain;view.enterRevision=state.revision;view.enterDouble=false;}
+    auto request=MakeRequest(view,state,item,CustomizationAction::Locate,twice?CustomizationOrigin::CardDoubleClick:view.locateOrigin);
+    if(twice) {
+        request.firstClickKey=item.key;request.firstClickDomain=view.domain;request.firstClickRevision=state.revision;
+    } else if(request.origin==CustomizationOrigin::CardDoubleClick) {
         request.firstClickKey=view.bodyClickKey;request.firstClickDomain=view.bodyClickDomain;request.firstClickRevision=view.bodyClickRevision;
     }
     view.status="定位请求已提交，正在等待游戏上下文确认。";
@@ -472,11 +479,13 @@ bool CustomizationView::WantsHorizontalNavigation() const {
     return WantsListNavigation();
 }
 
-// Enter 在文本或单一卡片焦点下，等待最新搜索修订后提交当前领域所选项目；Enter 永远不获得跨页权限。
-void CustomizationView::RequestDetails() {
+// Enter 在文本或单一卡片焦点下，等待最新搜索修订后提交当前领域所选项目；单次 Enter 不获得跨页权限。
+void CustomizationView::RequestDetails(bool doubled) {
     if(composing) return;
     auto& state=State();
     pendingLocateKey.reset();locateOrigin=CustomizationOrigin::Keyboard;ResetBodyClick();
+    enterDouble=doubled;
+    if(!doubled) enterKey.reset();
     state.detailsRequested=true;state.locateRequested=true;locateRequestRevision=state.revision;locateRequestFrame=drawFrame+1;
     state.due=std::chrono::steady_clock::now();
 }
@@ -523,6 +532,15 @@ void CustomizationView::RequestAction(const CustomizationKey& key,CustomizationA
     request.contextGeneration=capability.contextGeneration;request.slot=capability.slot;
     request.scope=capability.scope;request.nativeScope=capability.nativeScope;
     submit(request);
+}
+
+// 参数 action 为预览或换装；已装备的发型与道具和卡片按钮一样改为卸除。
+void CustomizationView::RequestSelectedAction(CustomizationAction action) {
+    const auto& state=State();
+    if(!catalog || state.results.empty()) return;
+    const auto& item=catalog->items[state.results[std::min(state.cursor.selected,state.results.size()-1)]];
+    if(action==CustomizationAction::Equip && domain!=CustomizationDomain::Models && actionCapability && actionCapability(item.key).equipped) action=CustomizationAction::Remove;
+    RequestAction(item.key,action);
 }
 
 // Esc 优先取消尚未提交的定位请求；否则交由共享搜索窗口关闭。
@@ -594,7 +612,7 @@ void CustomizationView::Draw() {
     ImGui::SetNextItemWidth(-1);
     if(state.focus) {ImGui::SetKeyboardFocusHere();state.focus=false;}
     const char* hint=models?"服装名称、歌曲名称或 ID":domain==CustomizationDomain::Hair?"发型名称、歌曲名称或 ID":"道具名称、别名、假名、罗马音或 ID";
-    if(ImGui::InputTextWithHint("##item-search",hint,state.input,sizeof(state.input))) QueueSearch(true);
+    if(ImGui::InputTextWithHint("##item-search",hint,state.input,sizeof(state.input),ImGuiInputTextFlags_CallbackAlways,SelectSearchTextCallback,&state.selectText)) QueueSearch(true);
     textNavigation=ImGui::IsItemActive() || ImGui::IsItemFocused();
     // 自定义道具不按人物区分，不显示人物筛选；四个部位子标签就是主要分类。
     if(domain!=CustomizationDomain::Accessories) {
@@ -650,7 +668,8 @@ void CustomizationView::Draw() {
         if(ImGui::Button("刷新目录")) Refresh(home,game);
         ImGui::TextDisabled("%s",contextReason.c_str());
         ImGui::Separator();
-        ImGui::TextUnformatted("单击选择 · Enter 原位定位 · 双击跨页 · Esc 关闭");
+        ImGui::TextUnformatted("单击选择 · Enter 原位定位 · 双击或连按两次 Enter 跨页 · Esc 关闭");
+        ImGui::TextUnformatted("Ctrl+P 预览 · Ctrl+E 换装 · Ctrl+F 全选搜索文字");
         ImGui::TextUnformatted("方向键浏览 · Tab 切换焦点");
         ImGui::TextUnformatted("Home / End 首尾 · PageUp / PageDown 翻页");
         ImGui::Separator();

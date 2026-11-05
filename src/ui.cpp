@@ -80,7 +80,7 @@ void View::Requery() {
 }
 // 上下保留难度偏好；左右跳过无谱面的难度，到边界停止。
 void View::Navigate() {
-    if(move || difficultyMove) {ResetSongBodyClick();if(invalidateSongNavigation) invalidateSongNavigation();}
+    if(move || difficultyMove) {enterPressTick=0;enterDouble=false;ResetSongBodyClick();if(invalidateSongNavigation) invalidateSongNavigation();}
     if(!catalog || results.empty()) { move=difficultyMove=0; return; }
     auto it=std::find_if(results.begin(),results.end(),[&](const Result& r){ return catalog->songs[r.index].id==selectedId; });
     int at=it==results.end()?0:(int)(it-results.begin());
@@ -107,7 +107,7 @@ void View::SetMode(SearchMode next) {
     if(mode==next) return;
     ResetSongBodyClick();if(invalidateSongNavigation) invalidateSongNavigation();
     customization.HandleEscape();
-    mode=next; ClearActions(); focus=true; listNavigation=true;
+    mode=next; ClearActions(); enterPressTick=0; focus=true; listNavigation=true;
     horizontalNavigation=mode==SearchMode::Songs;
     if(mode!=SearchMode::Songs) customization.SetDomain(SearchModeDomain(mode));
 }
@@ -115,7 +115,7 @@ void View::SetMode(SearchMode next) {
 void View::OnOpened() {
     ResetSongBodyClick();if(invalidateSongNavigation) invalidateSongNavigation();
     customization.OnOpen(TryReadCustomizationContext());
-    focus=true; listNavigation=true; horizontalNavigation=mode==SearchMode::Songs; ClearActions();
+    enterPressTick=0; RequestSearchFocus(); listNavigation=true; horizontalNavigation=mode==SearchMode::Songs; ClearActions();
 }
 // 参数 preferred/context 为已识别的当前页面和可选角色；打开时覆盖上次领域，保留各领域查询。
 void View::ApplyOpeningContext(SearchMode preferred,std::optional<CustomizationContext> context) {
@@ -124,7 +124,21 @@ void View::ApplyOpeningContext(SearchMode preferred,std::optional<CustomizationC
     focus=true;listNavigation=true;horizontalNavigation=mode==SearchMode::Songs;ClearActions();
 }
 // 只清理尚未处理的 UI 动作，不改变条件或歌曲目标难度。
-void View::ClearActions() { requestEnter=requestEscape=false; move=difficultyMove=0; itemMoves.clear(); }
+void View::ClearActions() { requestEnter=requestEscape=enterDouble=requestPreview=requestEquip=false; move=difficultyMove=0; itemMoves.clear(); }
+// 第二下 Enter 可能落在定位成功、面板关闭之后，enterGuardUntil 让宿主把它隔离，避免漏给游戏开始演奏。
+void View::PressEnter(uint64_t now) {
+    enterGuardUntil=now+kDoubleEnterMs;
+    const bool twice=enterPressTick && now-enterPressTick<=kDoubleEnterMs;
+    // 第三下重新计起，连续敲击不会累积出新的跨页。
+    enterPressTick=twice?0:now;
+    if(!twice) {enterPvid=0;enterRevision=0;}
+    // 已在目标页时第一下已原位定位，第二下不重复提交。
+    if(twice && onTargetPage && onTargetPage(mode)) return;
+    enterDouble=enterDouble || twice;
+    requestEnter=true;
+}
+// 焦点已在搜索框时 ImGui 不会重新激活，全选由输入框回调完成。
+void View::RequestSearchFocus() { focus=true; selectSearchText=true; }
 // 提交确切的风格和难度，缺失难度不降级；参数 song/difficulty 为歌曲与请求等级。
 void View::Locate(const Song& song,int difficulty,SongOrigin origin) {
     selectedId=song.id;
@@ -138,7 +152,7 @@ void View::Locate(const Song& song,int difficulty,SongOrigin origin) {
     if(origin!=SongOrigin::BodySingleClick) ResetSongBodyClick();
     if(submit) submit(request,available);
 }
-// 首击只保留稳定身份和时序，不能由Enter或难度按钮继承跨页权限。
+// 首击只保留稳定身份和时序，单次Enter或难度按钮不能继承跨页权限。
 void View::ResetSongBodyClick() {songClickPvid=0;songClickRevision=songClickGeneration=0;songClickTime=-1;}
 // 参数song为名称主体；仅左键双击且首击身份、修订、目录、时间和距离全部匹配时跨页。
 void View::ClickSongBody(const Song& song) {
@@ -236,6 +250,12 @@ static void ClippedText(const std::string& text,float width) {
 static void ControlGroupLabel(const char* text) {
     DrawSearchGroupLabel(text);
 }
+// 参数 catalog/pack/style 为曲库、来源名和当前风格，返回带歌曲数的下拉框标签，与服装来源筛选格式一致。
+static std::string PackFilterLabel(const Catalog& catalog,const std::string& pack,int style) {
+    const auto& counts=catalog.packSongCounts[std::clamp(style,0,2)];
+    const auto count=counts.find(pack);
+    return pack+"（关联 "+std::to_string(count==counts.end()?0:count->second)+"）";
+}
 // 旧版 ImGui 默认只 Tab 到文本输入框；复用其公开焦点 API 所用的导航请求标志。
 void EnableControlTabNavigation() {
     auto& g=*GImGui;
@@ -292,9 +312,14 @@ void View::Draw() {
         customization.EnsureLoaded(home,game); customization.composing=composing;
         customization.Poll();
         if(focus) { customization.State().focus=true; focus=false; }
+        if(selectSearchText) { customization.State().selectText=true; selectSearchText=false; }
         if(!composing && !imeGuard) {
+            // 方向键改变了选择，第一下 Enter 的目标已失效。
+            if(!itemMoves.empty()) {enterPressTick=0;enterDouble=false;}
             for(const auto& [action,repeats]:itemMoves) for(int i=0;i<std::min(repeats,1000);++i) customization.Navigate(action);
-            if(requestEnter) customization.RequestDetails();
+            if(requestEnter) customization.RequestDetails(enterDouble);
+            if(requestPreview) customization.RequestSelectedAction(CustomizationAction::Preview);
+            if(requestEquip) customization.RequestSelectedAction(CustomizationAction::Equip);
             if(requestEscape && !customization.HandleEscape()) open=false;
         }
         ClearActions(); customization.Draw();
@@ -305,16 +330,23 @@ void View::Draw() {
     horizontalNavigation=true;
     ImGui::SetNextItemWidth(-1);
     if(focus) { ImGui::SetKeyboardFocusHere(); focus=false; }
-    if(ImGui::InputTextWithHint("##查询","输入原名、英文、中文别名、假名、罗马音或 PVID",input,sizeof(input))) QueueSearch(true);
+    if(ImGui::InputTextWithHint("##查询","输入原名、英文、中文别名、假名、罗马音或 PVID",input,sizeof(input),ImGuiInputTextFlags_CallbackAlways,SelectSearchTextCallback,&selectSearchText)) QueueSearch(true);
     bool searchActive=ImGui::IsItemActive();
     const char* styles[]={"街机 ARCADE","主机 CONSOLE","混合 MIXED"};
     const char* difficulties[]={"EASY","NORMAL","HARD","EXTREME","EXTRA EXTREME"};
-    const char* sorts[]={"相关度","PVID 升序","名称","等级 降序"};
+    const char* sorts[]={"相关度","PVID 升序","名称","等级 降序","等级 升序"};
     ControlGroupLabel("筛选：");
-    ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("曲包"); ImGui::SameLine(); ImGui::SetNextItemWidth(170);
-    if(ImGui::BeginCombo("##曲包筛选",query.pack.empty()?"全部来源":query.pack.c_str())) {
+    ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("曲包"); ImGui::SameLine(); ImGui::SetNextItemWidth(230);
+    const std::string packPreview=query.pack.empty()?"全部来源":catalog?PackFilterLabel(*catalog,query.pack,query.style):query.pack;
+    if(ImGui::BeginCombo("##曲包筛选",packPreview.c_str())) {
         if(ImGui::Selectable("全部来源",query.pack.empty())) { query.pack.clear(); dirty=true; }
-        if(catalog) for(const auto& p:catalog->packs) if(ImGui::Selectable(p.c_str(),p==query.pack)) { query.pack=p; dirty=true; }
+        if(catalog) for(const auto& p:catalog->packs) {
+            // 当前风格下没有歌曲的来源不列出；已选中的保留，便于看到并改回。
+            const auto& counts=catalog->packSongCounts[std::clamp(query.style,0,2)];
+            if(p!=query.pack && !counts.contains(p)) continue;
+            const auto label=PackFilterLabel(*catalog,p,query.style)+"##"+p;
+            if(ImGui::Selectable(label.c_str(),p==query.pack)) { query.pack=p; dirty=true; }
+        }
         ImGui::EndCombo();
     }
     ImGui::SameLine(); ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("风格"); ImGui::SameLine(); ImGui::SetNextItemWidth(170);
@@ -326,18 +358,26 @@ void View::Draw() {
         ImGui::EndCombo();
     }
     ControlGroupLabel("排序：");
-    ImGui::SetNextItemWidth(190); if(ImGui::Combo("##结果排序",&query.sort,sorts,4)) dirty=true;
+    ImGui::SetNextItemWidth(190); if(ImGui::Combo("##结果排序",&query.sort,sorts,5)) dirty=true;
     ImGui::SameLine(); if(ImGui::Button("刷新曲库")) Refresh();
     ImGui::SameLine(); if(ImGui::Button("重载样式")) ReloadStyle();
     // Enter 跳过防抖，但仍不等待后台；查询完成后才提交最新结果。
     if(requestEnter) queryDue=std::chrono::steady_clock::time_point{};
     Poll();
-    ImGui::Separator(); ImGui::TextColored(SearchResultTextColor,"%zu 首结果%s  ·  %s",results.size(),SearchPending()?"（搜索中…）":"",composing?"输入法组词中":"↑↓ 选择（可长按） / ←→ 难度 / Enter 定位 / Esc 关闭 / Tab 控件");
+    ImGui::Separator(); ImGui::TextColored(SearchResultTextColor,"%zu 首结果%s  ·  %s",results.size(),SearchPending()?"（搜索中…）":"",composing?"输入法组词中":"↑↓ 选择（可长按） / ←→ 难度 / Enter 定位（其他页面连按两次跳转） / Esc 关闭 / Tab 控件");
     Navigate();
     if(requestEscape && !composing) { open=false; requestEnter=false; }
     if(requestEnter && !composing && catalog && !SearchPending()) {
-        for(const auto& r:results) if(catalog->songs[r.index].id==selectedId) { Locate(catalog->songs[r.index],currentDifficulty); break; }
-        requestEnter=false;
+        for(const auto& r:results) if(catalog->songs[r.index].id==selectedId) {
+            const auto& song=catalog->songs[r.index];
+            // 第二下只有落在第一下的同一歌曲和查询上才跨页；第一下尚在等待查询时两下目标相同。
+            const bool twice=enterDouble && (!enterPvid || (enterPvid==song.id && enterRevision==queryRevision));
+            enterPvid=song.id;enterRevision=queryRevision;
+            if(twice) {songClickPvid=song.id;songClickRevision=queryRevision;Locate(song,currentDifficulty,SongOrigin::BodyDoubleClick);}
+            else Locate(song,currentDifficulty);
+            break;
+        }
+        requestEnter=enterDouble=false;
     }
     requestEscape=false;
     const ImVec4 colors[]={{0.3f,0.7f,1,1},{0.4f,0.85f,0.52f,1},{1,0.74f,0.25f,1},{1,0.35f,0.43f,1},{0.76f,0.52f,1,1}};

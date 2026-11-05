@@ -127,6 +127,12 @@ __declspec(dllexport) void Init() {
             if(snapshot.style>=0 && snapshot.style<3) { view.query.style=snapshot.style; view.dirty=true; }
         }
     };
+    // 参数 mode 为搜索领域；只读当前原生页，决定第二下 Enter 是否需要跨页。
+    host.view.onTargetPage=[](diva::SearchMode mode) {
+        const auto page=diva::CurrentNativePage();
+        if(mode==diva::SearchMode::Songs) return page==diva::NativePage::Song || diva::Game().IsSongSearchPage();
+        return page==(mode==diva::SearchMode::Modules?diva::NativePage::Module:mode==diva::SearchMode::Hair?diva::NativePage::Hair:diva::NativePage::Accessory);
+    };
     // 参数 request/available 为界面验证后的动作与谱面可用性。
     host.view.submit=[](diva::Request request,bool available) {
         auto snapshot=diva::Game().Read();Log("定位请求：目标="+std::to_string(request.pvid)+"，难度="+std::to_string(request.difficulty)+"；"+diva::DescribeSnapshot(snapshot));
@@ -217,7 +223,8 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
             diva::CompleteSongNavigation(selection.succeeded,selection.message);
             Log(selection.message);
             if(selection.succeeded && host.view.closeOnSuccess) {
-                host.view.open=false; host.view.ClearActions(); host.releaseUntil=GetTickCount64()+120;
+                // 隔离至少覆盖连按 Enter 的窗口，第二下不会漏给游戏开始演奏。
+                host.view.open=false; host.view.ClearActions(); host.releaseUntil=std::max(GetTickCount64()+120,host.view.enterGuardUntil);
                 Log("定位成功后关闭搜索："+host.DescribeInputState());
             }
         }

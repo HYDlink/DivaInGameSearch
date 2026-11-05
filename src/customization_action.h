@@ -31,7 +31,7 @@ struct CustomizationLocateRequest {
 };
 
 // 参数 request/requiresNavigation 为稳定请求和运行时独立计算的跨页需求；返回中文拒绝原因。
-// 只有锁定同一 {种类,ID,领域,查询修订} 的鼠标左键主体双击可以跨页；按钮、单击、Enter 与底栏均不放宽。
+// 只有锁定同一 {种类,ID,领域,查询修订} 的主体双击或连按两次 Enter（共用 CardDoubleClick）可以跨页；按钮、单击、单次 Enter 与底栏均不放宽。
 inline std::string CheckCustomizationNavigation(const CustomizationLocateRequest& request,bool requiresNavigation) {
     if(!requiresNavigation) return {};
     const std::string page=CustomizationDomainPageName(request.domain);
@@ -39,7 +39,7 @@ inline std::string CheckCustomizationNavigation(const CustomizationLocateRequest
     if(request.origin!=CustomizationOrigin::CardDoubleClick || !request.firstClickKey
         || *request.firstClickKey!=request.key || !request.firstClickDomain || *request.firstClickDomain!=request.domain
         || !request.queryRevision || request.firstClickRevision!=request.queryRevision)
-        return "双击同一结果卡片进入"+page+"；当前输入只允许原位定位。";
+        return "双击结果卡片或连按两次 Enter 进入"+page+"；当前输入只允许原位定位。";
     return {};
 }
 

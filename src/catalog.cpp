@@ -191,6 +191,7 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
         PrepareSong(song); out.songs.push_back(std::move(song));
     }
     out.packs.assign(packs.begin(),packs.end());
+    CountPackSongs(out);
     if(out.songs.empty()) out.diagnostics.push_back("未读取到歌曲，请检查发行包 data 目录。");
     out.milliseconds=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
     return out;

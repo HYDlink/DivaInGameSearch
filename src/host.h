@@ -55,6 +55,8 @@ struct Host {
     std::string DescribeInputState() const;
     // 关闭面板并清空隔离；参数 reason 为失焦、重绑或失败等清理原因。
     void ResetInputState(const char* reason);
+    // 松开 Enter 时核对输入法：仍有组合串则请求提交，已无组合串则清除组词状态；参数 hwnd 为游戏窗口。
+    void FinishComposition(HWND hwnd);
     // 参数 now 为单调毫秒，keyDown 可注入物理按键状态以复现丢失释放消息。
     void UpdateInputCapture(uint64_t now,bool (*keyDown)(int)=nullptr);
     // 根据服装目录代数异步构建资源索引，并在当前帧接入完成的快照。

@@ -711,7 +711,7 @@ bool SubmitSongNavigation(const Request& request,bool available,std::string& mes
         && request.firstClickPvid==request.pvid && request.firstClickRevision==request.queryRevision;
     const bool difficultyButton=request.origin==SongOrigin::DifficultyButton;
     if(s.page!=NativePage::Song && !doubleBody && !difficultyButton) {
-        message="双击同一歌曲名称或点击难度进入选曲页；名称单击和Enter仅原位定位。";return false;
+        message="双击歌曲名称、连按两次 Enter 或点击难度进入选曲页；单击名称和单次 Enter 不跨页。";return false;
     }
     if(SongBusy() && songRoute.cancelled==songCancellation.load()) {message="上一条歌曲请求仍在处理中。";return false;}
     if(previewContinuation.waiting) {message="服装预览后续操作正在退出准备中。";return false;}

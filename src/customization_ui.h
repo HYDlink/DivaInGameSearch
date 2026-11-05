@@ -41,7 +41,7 @@ struct CustomizationView {
         uint64_t revision=1,applied=0;
         SearchTiming searchTiming;
         std::chrono::steady_clock::time_point due{};
-        bool scroll=true,focus=true,details=false,detailsRequested=false,locateRequested=false;
+        bool scroll=true,focus=true,selectText=false,details=false,detailsRequested=false,locateRequested=false;
         float scrollY=0;
         std::map<CustomizationKey,std::vector<std::string>> recommendationReasons;
         std::vector<std::string> recommendationWarnings;
@@ -110,6 +110,11 @@ struct CustomizationView {
     bool suppressActionRelease=false;
     std::optional<CustomizationKey> actionPressKey;
     CustomizationOrigin locateOrigin=CustomizationOrigin::Keyboard;
+    // 连按 Enter 标记与第一下实际定位的项目；第二下必须落在同一项目、领域和查询修订上才跨页。
+    bool enterDouble=false;
+    std::optional<CustomizationKey> enterKey;
+    CustomizationDomain enterDomain=CustomizationDomain::Models;
+    uint64_t enterRevision=0;
     std::function<CustomizationActionCapability(const CustomizationKey&)> actionCapability;
     std::function<void(const CustomizationLocateRequest&)> submitModuleAction;
     // 以稳定服装项为参数，返回轻量缓存快照；requestVisible=true 时可异步请求可见项及邻近项资源。
@@ -159,8 +164,10 @@ struct CustomizationView {
     bool WantsListNavigation() const;
     // 文本和卡片焦点均支持左右浏览结果，与歌曲搜索一致。
     bool WantsHorizontalNavigation() const;
-    // Enter 在最新查询完成后提交当前领域所选项目的原位定位。
-    void RequestDetails();
+    // Enter 在最新查询完成后提交当前领域所选项目；参数 doubled 为是否连按两次，连按才可能跨页。
+    void RequestDetails(bool doubled=false);
+    // 参数 action 为预览或换装；对当前选中卡片执行与卡片按钮相同的动作和能力检查。
+    void RequestSelectedAction(CustomizationAction action);
     // 参数 key/origin 为所选项目与输入来源；在最新结果有效后调用当前领域注入的定位适配器。
     void RequestLocate(const CustomizationKey& key,CustomizationOrigin origin=CustomizationOrigin::Footer);
     // 参数 key/action 为按钮所在卡片的稳定身份与原生动作，不改变搜索选择。

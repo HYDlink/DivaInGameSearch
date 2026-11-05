@@ -10,6 +10,8 @@
 #include <chrono>
 
 namespace diva {
+// 连按两次 Enter 的最长间隔（毫秒），超过则视为两次独立按键。
+inline constexpr uint64_t kDoubleEnterMs=400;
 // 顶部四个独立领域：歌曲｜模型｜发型｜自定义道具；切换领域只改变插件界面，不操作游戏页面。
 enum class SearchMode { Songs,Modules,Hair,Accessories };
 // 参数 mode 为非歌曲领域，返回对应定制检索领域。
@@ -48,6 +50,12 @@ struct View {
     float fontSize=19, rowHeight=68, opacity=0.97f;
     bool open=false,focus=true,dirty=true,composing=false,imeGuard=false,closeOnSuccess=true;
     bool requestEnter=false,requestEscape=false,fontDirty=false;
+    // 连按 Enter 的按下时刻与跨页标记；enterPvid/enterRevision 为第一下实际定位的目标，第二下必须一致。
+    uint64_t enterPressTick=0,enterGuardUntil=0,enterRevision=0;
+    int enterPvid=0;
+    bool enterDouble=false;
+    // Ctrl+F 请求全选搜索文字；Ctrl+P／Ctrl+E 请求对当前选中卡片执行预览、换装。
+    bool selectSearchText=false,requestPreview=false,requestEquip=false;
     int move=0,difficultyMove=0;
     bool listNavigation=true,horizontalNavigation=true,scrollSelection=false;
     SearchMode mode=SearchMode::Songs;
@@ -63,6 +71,8 @@ struct View {
     std::function<void()> onOpen;
     // 查询、目录、领域或输入上下文改变时取消尚未完成的歌曲路由。
     std::function<void()> invalidateSongNavigation;
+    // 参数 mode 为搜索领域，返回游戏当前是否已在该领域的目标页；已在目标页时第二下 Enter 不再提交。
+    std::function<bool(SearchMode)> onTargetPage;
     // 发起后台重建；不在绘制帧扫描磁盘。
     void Refresh();
     // 接收后台结果并维护有效选择。
@@ -83,6 +93,10 @@ struct View {
     void ApplyOpeningContext(SearchMode preferred,std::optional<CustomizationContext> context={});
     // 清除跨帧确认及方向请求，防止关闭或模式切换后漏到其他领域。
     void ClearActions();
+    // 记录一次 Enter 按下；参数 now 为单调毫秒时刻。不在目标页时连按两次才获得跨页权限。
+    void PressEnter(uint64_t now);
+    // 聚焦当前领域的搜索框并全选文字，便于直接重新输入。
+    void RequestSearchFocus();
     // 提交定位请求；参数 song/difficulty 为逻辑歌曲和确切难度。
     void Locate(const Song& song,int difficulty,SongOrigin origin=SongOrigin::Keyboard);
     // 清除歌曲首击证据，不改变当前查询和搜索选择。

@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string>
 namespace diva {
-// 歌曲主体双击、难度按钮与键盘分别标记；前两者按用户指令允许跨页。
+// 歌曲主体双击、难度按钮与键盘分别标记；前两者按用户指令允许跨页，连按两次 Enter 与主体双击共用 BodyDoubleClick。
 enum class SongOrigin { Keyboard, BodySingleClick, BodyDoubleClick, DifficultyButton };
 struct Request {
     int pvid=0, difficulty=0, style=0; uint64_t serial=0;

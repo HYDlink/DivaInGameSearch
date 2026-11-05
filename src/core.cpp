@@ -105,6 +105,18 @@ void PrepareSong(Song& song) {
     song.modKey.clear();
     for (const auto& source : song.sources) song.modKey += Normalize(source)+"\n";
 }
+// 与 Search 的可见条件保持一致，只计未隐藏且该风格有谱面的歌曲；参数 catalog 为待发布的曲库。
+void CountPackSongs(Catalog& catalog) {
+    for(auto& counts:catalog.packSongCounts) counts.clear();
+    for(const auto& song:catalog.songs) {
+        if(song.hidden) continue;
+        for(size_t style=0;style<catalog.packSongCounts.size();++style) {
+            const auto& charts=song.charts[style];
+            if(std::none_of(charts.begin(),charts.end(),[](const Chart& c){ return c.available; })) continue;
+            for(const auto& source:song.sources) ++catalog.packSongCounts[style][source];
+        }
+    }
+}
 // 完整过滤后进行稳定全局排序；参数 catalog/query/favorites 为曲库、条件与收藏。
 std::vector<Result> Search(const Catalog& catalog, const Query& query, const std::set<int>& favorites) {
     std::vector<Result> out;
@@ -135,10 +147,12 @@ std::vector<Result> Search(const Catalog& catalog, const Query& query, const std
         const auto& x=catalog.songs[a.index]; const auto& y=catalog.songs[b.index];
         if (query.sort==0 && a.score!=b.score) return a.score>b.score;
         if (query.sort==2 && x.nameKey!=y.nameKey) return x.nameKey<y.nameKey;
-        if (query.sort==3) {
+        if (query.sort==3 || query.sort==4) {
             int d=difficulty>=0?difficulty:3;
-            auto lx=x.charts[style][d].level, ly=y.charts[style][d].level;
-            if(lx!=ly) return lx>ly;
+            const auto& cx=x.charts[style][d]; const auto& cy=y.charts[style][d];
+            // 没有该难度的歌曲无论升降序都排在最后，不能因等级为 0 排到升序最前。
+            if(cx.available!=cy.available) return cx.available;
+            if(cx.level!=cy.level) return query.sort==3?cx.level>cy.level:cx.level<cy.level;
         }
         return x.id<y.id;
     }); return out;

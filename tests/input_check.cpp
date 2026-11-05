@@ -137,6 +137,26 @@ int wmain(int argc,wchar_t** argv) {
         host.Message(window,WM_ACTIVATEAPP,TRUE,0);host.Message(window,WM_ACTIVATE,WA_ACTIVE,0);
         Check(host.view.open && host.captures,"恢复激活错误关闭仍打开的搜索");
         host.ResetInputState("截图失活回归完成");
+        {
+            // 用线程键盘状态模拟按住 Ctrl，验证快捷键不依赖真实键盘。
+            host.ResetInputState("测试快捷键");host.view.mode=diva::SearchMode::Modules;host.view.open=true;
+            BYTE keyboard[256]{};GetKeyboardState(keyboard);keyboard[VK_CONTROL]=0x80;SetKeyboardState(keyboard);
+            Check(host.Message(window,WM_KEYDOWN,'P',0)==0 && host.view.requestPreview,"Ctrl+P 未请求预览");
+            Check(host.Message(window,WM_KEYDOWN,'E',0)==0 && host.view.requestEquip,"Ctrl+E 未请求换装");
+            host.view.ClearActions();host.view.selectSearchText=false;
+            host.Message(window,WM_KEYDOWN,'P',1LL<<30);Check(!host.view.requestPreview,"Ctrl+P 长按重复触发预览");
+            host.Message(window,WM_KEYDOWN,host.view.shortcut,0);
+            Check(host.view.open && host.view.focus && host.view.selectSearchText,"已打开时 Ctrl+F 未全选或关闭了面板");
+            keyboard[VK_CONTROL]=0;SetKeyboardState(keyboard);
+            host.ResetInputState("测试连按隔离");host.view.mode=diva::SearchMode::Songs;
+            host.releaseUntil=GetTickCount64()+60000;
+            Check(host.Message(window,WM_KEYDOWN,VK_RETURN,0)==0 && host.swallowed[VK_RETURN],"关闭隔离期的 Enter 漏给游戏");
+            Check(host.Message(window,WM_KEYUP,VK_RETURN,0)==0,"隔离的 Enter 释放漏给游戏");
+            host.ResetInputState("测试输入法兜底");host.view.open=true;
+            host.Message(window,WM_IME_STARTCOMPOSITION,0,0);host.Message(window,WM_KEYUP,VK_RETURN,0);
+            Check(!host.view.composing && !host.view.imeGuard,"松开 Enter 后组词状态未清除，搜索会一直暂停");
+            host.ResetInputState("测试结束");
+        }
         if(messagesOnly) {
             auto oldContext=ImGui::GetCurrentContext(); ImGui::SetCurrentContext((ImGuiContext*)host.context);
             ImGui_ImplWin32_Shutdown(); host.initialized=false; ImGui::SetCurrentContext(oldContext);

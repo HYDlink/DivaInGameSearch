@@ -28,12 +28,14 @@ struct Catalog {
     // 不可变曲库快照与中文诊断信息。
     std::vector<Song> songs;
     std::vector<std::string> packs, diagnostics;
+    // 每种风格下各来源关联的歌曲数，与同风格下筛选该来源的结果数一致。
+    std::array<std::map<std::string,size_t>,3> packSongCounts;
     std::string configurationKey;
     bool requiresRestart=false;
     double milliseconds = 0;
 };
 struct Query {
-    // 查询文本、来源过滤、搜索模式、风格、难度和全局排序。
+    // 查询文本、来源过滤、搜索模式、风格、难度和全局排序（0 相关度、1 PVID、2 名称、3 等级降序、4 等级升序）。
     std::string text, pack;
     bool modMode = false, favoritesOnly = false;
     int style = 0, difficulty = -1, sort = 0;
@@ -51,6 +53,8 @@ std::string Romanize(const std::string& text);
 std::string RomanizeVariant(std::string text);
 // 构建检索键；参数 song 为完整合并后的歌曲。
 void PrepareSong(Song& song);
+// 统计各来源在三种风格下关联的歌曲数；参数 catalog 为待发布的曲库。
+void CountPackSongs(Catalog& catalog);
 // 在完整曲库执行过滤与排序；参数 catalog/query/favorites 分别为快照、条件和收藏。
 std::vector<Result> Search(const Catalog& catalog, const Query& query, const std::set<int>& favorites);
 // 后台读取基础元数据与实际 DML 配置；参数 home/game 为本 Mod 和游戏根目录。

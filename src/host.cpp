@@ -5,6 +5,7 @@
 #include <imm.h>
 #include <algorithm>
 #include <limits>
+#pragma comment(lib,"imm32.lib")
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND,UINT,WPARAM,LPARAM);
 namespace diva {
@@ -46,6 +47,15 @@ void Host::ResetInputState(const char* reason) {
     releasedKeys.fill(false); releasedMouse.fill(false);
     if(context) { ContextScope scope(context); ImGui::GetIO().ClearInputKeys(); }
     if(hadState && diagnostic) diagnostic(std::string("输入状态清理：")+reason+"；"+DescribeInputState());
+}
+// 输入法可能没有接管 Enter，也可能没有发送结束组词消息；查询在组词期间暂停，不能一直等待。
+void Host::FinishComposition(HWND hwnd) {
+    HIMC ime=ImmGetContext(hwnd);
+    const LONG length=ime?ImmGetCompositionStringW(ime,GCS_COMPSTR,nullptr,0):0;
+    if(length>0) ImmNotifyIME(ime,NI_COMPOSITIONSTR,CPS_COMPLETE,0);
+    else view.composing=false;
+    if(ime) ImmReleaseContext(hwnd,ime);
+    if(diagnostic) diagnostic("输入法 Enter 兜底：组合串字节="+std::to_string(length)+"，组词="+std::to_string(view.composing));
 }
 // 关闭后允许补收丢失的释放；参数 now/keyDown 为时刻及可选测试探针。
 void Host::UpdateInputCapture(uint64_t now,bool (*keyDown)(int)) {
@@ -276,11 +286,15 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     if(message==WM_MBUTTONDOWN) releasedMouse[2]=false;
     if(key && down && w==(WPARAM)view.shortcut && (GetKeyState(VK_CONTROL)&0x8000) && !(l&(1LL<<30))) {
         if(!view.composing) {
-            view.open=!view.open; view.focus=view.open; view.ClearActions();
-            view.listNavigation=true; view.horizontalNavigation=view.mode==SearchMode::Songs; releaseUntil=GetTickCount64()+120;
-            captures=true;
-            if(view.open) view.OnOpened();
-            if(view.open && view.onOpen) view.onOpen();
+            // 已打开时不关闭，改为全选搜索文字；关闭用 Esc 或点击窗口外部。
+            if(view.open) view.RequestSearchFocus();
+            else {
+                view.open=true; view.ClearActions();
+                view.listNavigation=true; view.horizontalNavigation=view.mode==SearchMode::Songs; releaseUntil=GetTickCount64()+120;
+                captures=true;
+                view.OnOpened();
+                if(view.onOpen) view.onOpen();
+            }
             ImGui::GetIO().ClearInputKeys();
         }
         swallowed[w&255]=true; UpdateInputCapture(GetTickCount64());
@@ -293,6 +307,8 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     // 截图覆盖层可能只发送顶层失活，不能只依赖编辑焦点的 WM_KILLFOCUS。
     if(message==WM_ACTIVATEAPP && !w) ResetInputState("应用失活");
     if(message==WM_ACTIVATE && LOWORD(w)==WA_INACTIVE) ResetInputState("窗口失活");
+    // 连按两次的第二下可能落在定位成功、面板关闭之后；隔离期内的 Enter 不能漏给游戏开始演奏。
+    if(key && down && w==VK_RETURN && !view.open && GetTickCount64()<releaseUntil) { swallowed[VK_RETURN]=true; UpdateInputCapture(GetTickCount64()); return 0; }
     if(view.open) {
         bool popup=ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopup);
         bool navigate=view.listNavigation && !popup;
@@ -308,8 +324,13 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
         if(key && down) {
             if(w!=VK_PROCESSKEY) swallowed[w&255]=true;
             bool ime=view.composing || view.imeGuard;
+            // 搜索框要接收字母输入，预览和换装用 Ctrl 组合键，且只响应首次按下。
+            if(!ime && !popup && view.mode!=SearchMode::Songs && !(l&(1LL<<30)) && (w=='P' || w=='E') && (GetKeyState(VK_CONTROL)&0x8000)) {
+                (w=='P'?view.requestPreview:view.requestEquip)=true;
+                return 0;
+            }
             if(!ime && !(l&(1LL<<30))) {
-                if(navigate && w==VK_RETURN) view.requestEnter=true;
+                if(navigate && w==VK_RETURN) view.PressEnter(GetTickCount64());
                 if(!popup && w==VK_ESCAPE) view.requestEscape=true;
             }
             if(!ime && navigate) {
@@ -336,6 +357,7 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
             // IME 组合键不交给 ImGui 导航，但系统仍需接收以取消组词和显示候选。
             if(ime && (w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_UP || w==VK_DOWN || w==VK_LEFT || w==VK_RIGHT)) return DefWindowProcW(hwnd,message,w,l);
         }
+        if(key && !down && w==VK_RETURN && view.composing) FinishComposition(hwnd);
         if(key && !down && !view.composing && (w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_PROCESSKEY)) view.imeGuard=false;
         // 列表快捷键只进入 View 的动作队列，避免同时触发 ImGui 光标或焦点导航。
         if(key && !view.composing && !view.imeGuard
