@@ -16,7 +16,7 @@ QuantumSwitch 对选曲研究的原作者致谢包括 hiki8man 的 Select Song w
 
 data/base_pv_db.txt 与 data/dlc_pv_db.txt 仅保留官方地区数据库中的歌曲名称、英文名称、读音、逻辑 PVID 与谱面路径及等级元数据；不包含音频、图像、脚本或模型。来源是已经定向解出的 pv_db.txt 和 mdata_pv_db.txt，未重新解包。游戏内容权利属于原权利人；这些元数据不随本项目代码许可证重新授权。成品不依赖开发环境的资产导出目录。
 
-中文别名为少量可编辑示例，不声称覆盖所有 Mod 的中文译名；在 aliases.toml 按 PVID 扩展。没有数据库读音的汉字不推测唯一罗马音。
+中文名只来自已启用 Mod 提供的 use_song_name，不声称覆盖全部歌曲。没有数据库读音的汉字不推测唯一罗马音。
 
 中日字体在运行时只读使用 Windows 安装的微软雅黑，不重新分发字体。依赖文件 SHA-256 清单由打包脚本生成，见发行包 dependencies.sha256。
 

@@ -174,11 +174,15 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
             }
         }
     }
-    // 用户别名独立于来源覆盖；每个 PVID 对应竖线分隔的多个别名。
+    // aliases.toml 已废弃，读取逻辑封存在 DIVA_ENABLE_USER_ALIASES 后；中文名只来自 Mod 的 use_song_name。
+#ifdef DIVA_ENABLE_USER_ALIASES
     auto aliases=Config(home/"aliases.toml",out.diagnostics);
+#endif
     std::set<std::string> packs;
     for(auto& [id,song]:songs) {
+#ifdef DIVA_ENABLE_USER_ALIASES
         song.aliases=aliases["aliases"][std::to_string(id)].value_or<std::string>("");
+#endif
         for(const auto& translated:translatedNames[id]) {
             if(!song.aliases.empty()) song.aliases+='|';
             song.aliases+=translated;

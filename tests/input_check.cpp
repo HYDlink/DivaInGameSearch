@@ -151,6 +151,7 @@ int wmain(int argc,wchar_t** argv) {
             Check(host.Message(window,WM_KEYDOWN,VK_LEFT,1)==0 && host.view.textRequest.cursorMove==-1 && host.view.itemMoves.empty(),"Ctrl+← 未移动光标或误触发结果导航");
             host.view.ClearActions();
             Check(host.Message(window,WM_KEYDOWN,VK_TAB,0)==0 && host.view.tabMove==-1,"Ctrl+Tab 未回切主标签");
+            host.Message(window,WM_KEYDOWN,VK_F9,0);Check(!host.view.requestPerformanceRecord,"性能录制入口关闭后仍响应 Ctrl+F9");
             host.view.ClearActions();
             keyboard[VK_CONTROL]=0;SetKeyboardState(keyboard);
             Check(host.Message(window,WM_KEYDOWN,VK_TAB,0)==0 && host.view.tabMove==1,"Tab 未切换主标签");

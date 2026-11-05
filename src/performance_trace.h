@@ -9,6 +9,8 @@
 #include <algorithm>
 
 namespace diva {
+// 性能录制入口开关；关闭时不响应 Ctrl+F9，样本不会写入文件。需要测量时改为 true。
+inline constexpr bool kPerformanceRecordingEnabled=false;
 // 返回单调毫秒时刻；不依赖系统时区或墙上时钟调整。
 inline double PerformanceNow() {return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();}
 // 一条查询携带自身时序，后台线程只填写副本，不访问UI或记录器。

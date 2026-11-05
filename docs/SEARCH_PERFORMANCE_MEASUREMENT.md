@@ -59,7 +59,7 @@ wpr -stop 'D:\Work\Projects\VibeCoding\DivaResearcher\DivaInGameSearch\artifacts
 
 ## 录制输入法样本
 
-搜索面板打开时按 **Ctrl+F9**，录制 15 秒后自动导出到本 Mod 目录的 `search-performance-时分秒.tsv`，状态栏会显示路径。分别用微软拼音和纯英文各录一份，不记录查询文字。
+录制入口默认关闭，需要时把 `kPerformanceRecordingEnabled` 改为 `true` 并重新构建。搜索面板打开时按 **Ctrl+F9**，录制 15 秒后自动导出到本 Mod 目录的 `search-performance-时分秒.tsv`，状态栏会显示路径。分别用微软拼音和纯英文各录一份，不记录查询文字。
 
 判断方法：
 
@@ -74,4 +74,4 @@ wpr -stop 'D:\Work\Projects\VibeCoding\DivaResearcher\DivaInGameSearch\artifacts
 
 三份 15 秒手动输入样本（两份微软拼音、一份英文）：帧间隔 P50 约 16.65 毫秒，最大约 36 毫秒；输入法默认处理最大 9.72 毫秒；窗口消息与帧回调同线程。消息排队最高 1515 毫秒（拼音）、1031 毫秒（英文）。字符消息大多在对应按键消息的下一帧到达，据此推断游戏每帧约只取一条消息；排队的具体来源未确认。
 
-因此面板打开时由 `Host::PumpInputMessages` 每帧取完键盘和输入法消息。修复效果需重新录制样本确认。
+因此面板打开时由 `Host::PumpInputMessages` 每帧取完键盘和输入法消息。用户实机确认输入卡顿消失，但修复后没有留下性能采样。

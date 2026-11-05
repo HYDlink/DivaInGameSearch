@@ -362,8 +362,8 @@ LRESULT Host::HandleMessage(HWND hwnd,UINT message,WPARAM w,LPARAM l,bool& useDe
                 (w=='P'?view.requestPreview:view.requestEquip)=true;
                 return 0;
             }
-            // 面板打开时录制 15 秒性能数据，结束后自动导出；不面向普通玩家显示。
-            if(w==VK_F9 && message==WM_KEYDOWN && !(l&(1LL<<30)) && (GetKeyState(VK_CONTROL)&0x8000)) {view.requestPerformanceRecord=true;return 0;}
+            // 面板打开时录制 15 秒性能数据，结束后自动导出；入口由 kPerformanceRecordingEnabled 控制。
+            if(kPerformanceRecordingEnabled && w==VK_F9 && message==WM_KEYDOWN && !(l&(1LL<<30)) && (GetKeyState(VK_CONTROL)&0x8000)) {view.requestPerformanceRecord=true;return 0;}
             // Tab 只切顶部主标签，Ctrl+Tab 回切；Shift+Tab 是 Steam 覆盖层快捷键，只吞掉不响应。
             if(!ime && w==VK_TAB && message==WM_KEYDOWN) {
                 if(!popup && !(l&(1LL<<30)) && !(GetKeyState(VK_SHIFT)&0x8000)) view.tabMove+=(GetKeyState(VK_CONTROL)&0x8000)?-1:1;

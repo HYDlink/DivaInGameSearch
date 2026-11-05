@@ -19,7 +19,7 @@ $files=@('DivaInGameSearch.dll','MmlCpkBridge.dll','DivaTextureDecoder.dll','con
 $backupFiles=@($files | Where-Object { Test-Path -LiteralPath (Join-Path $target $_) })
 $newFiles=@($files | Where-Object { -not (Test-Path -LiteralPath (Join-Path $target $_)) })
 if($null -ne $ShortcutVk){ $backupFiles+=@('settings.ini') }
-$preserved=@('aliases.toml','settings.ini','favorites.txt')
+$preserved=@('settings.ini','favorites.txt')
 $originalSettings=@{}
 foreach($file in $preserved){
   $path=Join-Path $target $file
@@ -29,6 +29,9 @@ $loaderConfig=Join-Path $GameDirectory 'config.toml'
 $loaderHash=(Get-FileHash $loaderConfig).Hash
 foreach($file in $backupFiles){ Copy-Item -LiteralPath (Join-Path $target $file) -Destination $backup }
 if(Test-Path -LiteralPath (Join-Path $target 'search-diagnostics.log')){ Copy-Item -LiteralPath (Join-Path $target 'search-diagnostics.log') -Destination $backup }
+# aliases.toml 已废弃：备份后移除，不再随本 Mod 部署。
+$legacyAliases=Join-Path $target 'aliases.toml'
+if(Test-Path -LiteralPath $legacyAliases){ Copy-Item -LiteralPath $legacyAliases -Destination $backup; Remove-Item -LiteralPath $legacyAliases }
 try{
   foreach($file in $files){
     $source=Join-Path $projectRoot "artifacts/release/DivaInGameSearch/$file"
@@ -48,11 +51,11 @@ try{
   }
   foreach($file in $originalSettings.Keys){ if((Get-FileHash (Join-Path $target $file)).Hash -ne $originalSettings[$file]){ throw "用户设置意外变更：$file" } }
   if((Get-FileHash $loaderConfig).Hash -ne $loaderHash){ throw '全局加载器配置意外变化。' }
-  $record=[ordered]@{ 时间=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); 版本='1.2.0'; 部署目录=$target; 备份=$backup; 更新文件=$backupFiles; 快捷键更新=$ShortcutVk; 预期设置哈希=$originalSettings; 全局配置哈希=$loaderHash; DLL哈希=(Get-FileHash (Join-Path $target 'DivaInGameSearch.dll')).Hash; 结果='文件更新与读回校验通过，实际游戏效果待重启复测' }
+  $record=[ordered]@{ 时间=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); 版本='1.2.1'; 部署目录=$target; 备份=$backup; 更新文件=$backupFiles; 快捷键更新=$ShortcutVk; 预期设置哈希=$originalSettings; 全局配置哈希=$loaderHash; DLL哈希=(Get-FileHash (Join-Path $target 'DivaInGameSearch.dll')).Hash; 结果='文件更新与读回校验通过，实际游戏效果待重启复测' }
   $record | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $backup 'update.json')
-  Write-Output '已更新本 Mod 至 1.2.0，默认快捷键为 Ctrl+F。'
+  Write-Output '已更新本 Mod 至 1.2.1，默认快捷键为 Ctrl+F。'
   Write-Output "旧版 DLL 和诊断备份：$backup"
-  Write-Output '别名、收藏、其他界面设置和全局曲包加载配置保持不变。'
+  Write-Output '收藏、界面设置和全局曲包加载配置保持不变。'
 }catch{
   foreach($file in $backupFiles){ Copy-Item -LiteralPath (Join-Path $backup $file) -Destination (Join-Path $target $file) -Force }
   # 只回滚本次新增且内容仍匹配本次发行包的文件，避免覆盖外部新修改。

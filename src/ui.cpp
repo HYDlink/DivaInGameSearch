@@ -302,19 +302,6 @@ void View::Draw() {
     ImGui::SameLine(0,4); if(SearchSegment("模型##领域",mode==SearchMode::Modules,100)) SetMode(SearchMode::Modules);
     ImGui::SameLine(0,4); if(SearchSegment("发型##领域",mode==SearchMode::Hair,100)) SetMode(SearchMode::Hair);
     ImGui::SameLine(0,4); if(SearchSegment("自定义道具##领域",mode==SearchMode::Accessories,128)) SetMode(SearchMode::Accessories);
-    if(ImGui::BeginPopup("搜索性能监测")) {
-        const auto& f=performance->last;
-        ImGui::Text("当前防抖：%lld 毫秒",static_cast<long long>(kSearchDebounce.count()));
-        ImGui::Text("帧间隔 %.2f ms / 本Mod回调 %.2f ms",f.gap,f.total);
-        ImGui::Text("输入锁 %.2f ms / 界面构建 %.2f ms / DX11提交 %.2f ms",f.inputLock,f.draw,f.render);
-        ImGui::Text("纹理上传 %u 张 / %.2f ms",f.uploads,f.upload);
-        ImGui::TextWrapped("先记录，再逐字输入复现卡顿。记录只保存在内存，不采集查询文字；导出后可分析防抖、排队、查询、发布和绘制各段。");
-        if(ImGui::Button("开始15秒记录")) {performance->Start();ImGui::CloseCurrentPopup();}
-        ImGui::Text("已记录 %zu 帧 / %zu 条已发布查询%s",performance->frames.size(),performance->queries.size(),performance->recording?"（记录中）":"");
-        ImGui::BeginDisabled(performance->recording || performance->frames.empty() || performanceExport.valid());
-        if(ImGui::Button("导出报告")) {ExportPerformance();ImGui::CloseCurrentPopup();}
-        ImGui::EndDisabled();ImGui::EndPopup();
-    }
     ImGui::Spacing();ImGui::Separator();ImGui::Spacing();
     if(mode!=SearchMode::Songs) {
         customization.EnsureLoaded(home,game); customization.composing=composing;
