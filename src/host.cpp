@@ -221,7 +221,7 @@ void Host::Init(const fs::path& home,const fs::path& game) {
         if(modulePreviewStyle!=view.customization.previewStyle) {ClearPreviewTextures();modulePreviewStyle=view.customization.previewStyle;}
         const auto asset=moduleAssets->Peek(item,requestVisible,modulePreviewStyle);
         preview.width=asset.width;preview.height=asset.height;preview.source=asset.source;
-        preview.fallback=asset.fallback;
+        preview.fallback=asset.fallback;preview.loading=asset.loading;
         preview.contentX=asset.contentX;preview.contentY=asset.contentY;preview.contentWidth=asset.contentWidth;preview.contentHeight=asset.contentHeight;
         if(asset.rgbaOwner && !asset.rgbaOwner->empty() && asset.width>0 && asset.height>0
             && asset.width<=kPreviewMaximumDimension && asset.height<=kPreviewMaximumDimension) {

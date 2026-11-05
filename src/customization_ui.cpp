@@ -683,7 +683,7 @@ void CustomizationView::Draw() {
             const auto& item=catalog->items[state.results[std::min(state.cursor.selected,state.results.size()-1)]];
             ImGui::PushTextWrapPos(ImGui::GetFontSize()*28);
             for(const auto& contribution:item.sources)
-                ImGui::TextDisabled("%s：%s%s",contribution.role.c_str(),SourceLabel(*catalog,contribution.source).c_str(),contribution.effective?"":"（已被覆盖）");
+                ImGui::TextDisabled("%s：%s%s",CustomizationContributionRoleName(contribution.role),SourceLabel(*catalog,contribution.source).c_str(),contribution.effective?"":"（已被覆盖）");
             ImGui::PopTextWrapPos();
         }
         ImGui::EndPopup();
@@ -870,7 +870,7 @@ void CustomizationView::Draw() {
                     }
                 } else {
                     // 资源读取中或确实缺图时显示简短占位，不显示其他种类图片，也不冒充原生 3D 预览。
-                    const char* missing=preview.source=="图片读取中。"?"读取中…":"暂无图片";
+                    const char* missing=preview.loading?"读取中…":"暂无图片";
                     const ImVec2 labelSize=ImGui::CalcTextSize(missing);
                     draw->AddText(ImVec2(imageMin.x+(cellWidth-labelSize.x)*0.5f,imageMin.y+imageHeight*0.5f-labelSize.y*0.5f),IM_COL32(141,163,174,255),missing);
                     if(preview.width>0 && preview.height>0) {

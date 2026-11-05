@@ -95,7 +95,7 @@ int main(int argc,char** argv) {
         for(int id=0;id<20;++id) {
             diva::CustomizationItem item;item.key={diva::CustomizationKind::Module,id};item.name="Module "+std::to_string(id);
             item.character=diva::CustomizationCharacter::Miku;item.definitionSource=item.nameSource="fixture";
-            item.sources.push_back({"fixture","定义",true});diva::PrepareCustomizationItem(item,*items);items->items.push_back(item);
+            item.sources.push_back({"fixture",diva::CustomizationContributionRole::Definition,true});diva::PrepareCustomizationItem(item,*items);items->items.push_back(item);
         }
         int moduleSubmitted=0;int moduleSubmittedId=-1;
         diva::CustomizationLocateRequest lastModuleRequest;

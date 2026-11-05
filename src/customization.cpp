@@ -51,6 +51,9 @@ const char* CustomizationDomainName(CustomizationDomain domain) {
 const char* CustomizationDomainPageName(CustomizationDomain domain) {
     return domain==CustomizationDomain::Models?"模型页":domain==CustomizationDomain::Hair?"发型页":"自定义道具页";
 }
+const char* CustomizationContributionRoleName(CustomizationContributionRole role) {
+    return role==CustomizationContributionRole::Name?"名称":"定义";
+}
 namespace {
 // 参数 normalized 为 Normalize 后文本；含平假名（片假名已统一为平假名）时才视为可靠假名来源。
 bool ContainsKana(const std::string& normalized) {

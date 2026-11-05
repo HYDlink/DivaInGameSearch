@@ -15,7 +15,9 @@ enum class CustomizationPart { Head,Face,Neck,Back,Hair,Unknown };
 enum class CustomizationDomain { Models, Hair, Accessories };
 struct CustomizationKey { CustomizationKind kind=CustomizationKind::Module; int id=0; auto operator<=>(const CustomizationKey&) const=default; };
 struct CustomizationSource { std::string id,name,modDirectory,includeRoot; bool currentMod=false; };
-struct CustomizationContribution { std::string source,role; bool effective=false; };
+// 来源贡献的角色；逻辑判断只用枚举，显示文字由 CustomizationContributionRoleName 提供。
+enum class CustomizationContributionRole { Definition, Name };
+struct CustomizationContribution { std::string source; CustomizationContributionRole role=CustomizationContributionRole::Definition; bool effective=false; };
 struct PreviewDescriptor { enum class State { Unavailable }; State state=State::Unavailable; std::string style,source,assetKey; };
 struct CustomizationItem {
     CustomizationKey key;
@@ -72,6 +74,8 @@ size_t CustomizationDomainIndex(CustomizationDomain domain);
 const char* CustomizationDomainName(CustomizationDomain domain);
 // 参数 domain 为检索领域，返回对应原生子页名称，用于跨页提示。
 const char* CustomizationDomainPageName(CustomizationDomain domain);
+// 参数 role 为来源贡献角色，返回玩家可见的角色名称。
+const char* CustomizationContributionRoleName(CustomizationContributionRole role);
 // 参数 item/catalog 为实体和来源快照，缓存规范化检索键。
 void PrepareCustomizationItem(CustomizationItem& item,const CustomizationCatalog& catalog);
 // 参数 catalog/query 为不可变快照和完整条件，结果为快照索引。

@@ -31,6 +31,8 @@ struct ModuleAssetPreview {
     // 专用图不可用时回退同 ID 通用图；fallbackReason 保留专用图失败原因。
     bool fallback = false;
     std::string fallbackReason;
+    // 图片仍在后台读取时为 true；界面据此显示占位，不比较显示文字。
+    bool loading = false;
     // 有效内容的透明边界；宽高为 0 表示未知，按整张画布显示。
     int contentX = 0, contentY = 0, contentWidth = 0, contentHeight = 0;
     void* texture = nullptr;

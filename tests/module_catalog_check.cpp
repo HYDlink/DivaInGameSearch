@@ -96,7 +96,7 @@ void AutomaticCatalog(const diva::fs::path& root) {
     Check(one.definitionSource=="dml:High:content" && one.character==CustomizationCharacter::Teto && one.characterToken=="TETO" && one.cos=="COS_HIGH","高优先追加表未整条覆盖低优先定义");
     Check(one.name=="高追加定义中文名","自动实体名称补丁未映射到实体ID");
     size_t highDefinitions=0,lowDefinitions=0;
-    for(const auto& contribution:one.sources) if(contribution.role=="定义") {
+    for(const auto& contribution:one.sources) if(contribution.role==diva::CustomizationContributionRole::Definition) {
         if(contribution.source=="dml:High:content") ++highDefinitions;
         if(contribution.source=="dml:Low:.") ++lowDefinitions;
     }
@@ -181,7 +181,7 @@ path='dump/high_replace_steam/gm_module_id.bin'
         && appended.definitionSource=="dml:High:." && appended.name=="高优先兼容追加",
         "高优先兼容追加没有覆盖低优先自动追加定义");
     size_t highDefinitions=0,lowDefinitions=0;bool highEffective=false,lowEffective=true;
-    for(const auto& contribution:appended.sources) if(contribution.role=="定义") {
+    for(const auto& contribution:appended.sources) if(contribution.role==diva::CustomizationContributionRole::Definition) {
         if(contribution.source=="dml:High:.") {++highDefinitions;highEffective=contribution.effective;}
         if(contribution.source=="dml:Low:.") {++lowDefinitions;lowEffective=contribution.effective;}
     }

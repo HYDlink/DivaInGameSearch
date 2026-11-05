@@ -840,7 +840,7 @@ struct ModuleAssets::Impl {
         if(requestVisible && !stopping && !failed.contains(key) && !queued.contains(key) && queue.size()<kMaximumQueuedImages) {
             queue.push_back({item,style});queued.insert(key);wake.notify_one();
         }
-        preview.source=failed.contains(key)?"图片不可用："+failureReasons[key]:"图片读取中。";
+        preview.loading=!failed.contains(key);preview.source=failed.contains(key)?"图片不可用："+failureReasons[key]:"图片读取中。";
         return preview;
     }
 

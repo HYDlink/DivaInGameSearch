@@ -49,8 +49,8 @@ static diva::CustomizationCatalog DemoCustomizationCatalog() {
             if(n%4==0) item.character=diva::CustomizationCharacter::All;
         }
         item.definitionSource=item.nameSource=n%2?"demo:a":"demo:b";
-        item.sources.push_back({item.definitionSource,"演示定义",true});
-        if(n%3==0) item.sources.push_back({n%2?"demo:b":"demo:a","名称",false});
+        item.sources.push_back({item.definitionSource,diva::CustomizationContributionRole::Definition,true});
+        if(n%3==0) item.sources.push_back({n%2?"demo:b":"demo:a",diva::CustomizationContributionRole::Name,false});
         item.sortIndex=n;
         diva::PrepareCustomizationItem(item,catalog); catalog.items.push_back(std::move(item));
     }

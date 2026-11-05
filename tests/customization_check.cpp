@@ -183,7 +183,7 @@ void DefaultSearchLanguages() {
     using namespace diva;CustomizationCatalog catalog;catalog.language="cn";
     CustomizationItem item;item.key={CustomizationKind::Module,1};item.name="中文服装";item.character=CustomizationCharacter::Miku;
     item.namesByLanguage={{"en","English Module"},{"jp","カタカナ"},{"fr","RobeFrancaise"}};
-    item.aliases={"AutreNomFrancais"};item.sources={{"official:pc-region","定义",false},{"official:pc-region-dlc","定义",true}};
+    item.aliases={"AutreNomFrancais"};item.sources={{"official:pc-region",diva::CustomizationContributionRole::Definition,false},{"official:pc-region-dlc",diva::CustomizationContributionRole::Definition,true}};
     PrepareCustomizationItem(item,catalog);catalog.items.push_back(std::move(item));
     CustomizationQuery query;query.source="official";
     Check(SearchCustomization(catalog,query).size()==1,"合并官方入口没有唯一匹配官方条目");
@@ -291,8 +291,8 @@ diva::CustomizationCatalog ItemDomainCatalog() {
     catalog.sources={{"synthetic:a","合成来源A","","",false},{"synthetic:b","合成来源B","","",false}};
     auto add=[&](CustomizationKind kind,int id,CustomizationPart part,CustomizationCharacter character,const std::string& name) {
         CustomizationItem item;item.key={kind,id};item.part=part;item.character=character;item.name=name;item.sortIndex=id;
-        item.definitionSource=item.nameSource=id%2?"synthetic:a":"synthetic:b";item.sources.push_back({item.definitionSource,"定义",true});
-        if(id%5==0) item.sources.push_back({"synthetic:a","名称",false});
+        item.definitionSource=item.nameSource=id%2?"synthetic:a":"synthetic:b";item.sources.push_back({item.definitionSource,diva::CustomizationContributionRole::Definition,true});
+        if(id%5==0) item.sources.push_back({"synthetic:a",diva::CustomizationContributionRole::Name,false});
         PrepareCustomizationItem(item,catalog);catalog.items.push_back(std::move(item));
     };
     for(int n=0;n<30;++n) add(CustomizationKind::Accessory,100+n,CustomizationPart::Hair,n%3?CustomizationCharacter::Miku:CustomizationCharacter::Rin,"合成发型"+std::to_string(n));

@@ -79,7 +79,7 @@ std::optional<CustomizationItem> Item(const std::map<std::string,std::string>& f
     item.part=ParseCustomizationPart(item.partToken);
     item.cos=Get(fields,"cos");item.sortIndex=Integer(Get(fields,"sort_index"));item.objectId=Integer(Get(fields,"obj_id"));item.bindModule=Integer(Get(fields,"bind_module"));
     if(!item.name.empty()) item.aliases.push_back(item.name);
-    item.definitionSource=source;item.nameSource=source;item.sources.push_back({source,"定义",true});return item;
+    item.definitionSource=source;item.nameSource=source;item.sources.push_back({source,CustomizationContributionRole::Definition,true});return item;
 }
 struct Root {fs::path path;std::string id,name,modDirectory,includeRoot;};
 // 参数 game/out 为游戏目录和快照；只扫描DML明确启用的Mod和include。
@@ -378,8 +378,8 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
                 CustomizationKey key{std::string(group)=="module"?CustomizationKind::Module:CustomizationKind::Accessory,*id};auto item=merged.find(key);
                 if(item==merged.end()) {++out.orphanNames;continue;}
                 item->second.aliases.push_back(*name);
-                if(std::none_of(item->second.sources.begin(),item->second.sources.end(),[&](const auto& contribution){return contribution.source==root.id && contribution.role=="名称";})) item->second.sources.push_back({root.id,"名称",false});
-                if(named.insert(key).second) {item->second.name=*name;item->second.nameSource=root.id;for(auto& contribution:item->second.sources) if(contribution.source==root.id && contribution.role=="名称") contribution.effective=true;}
+                if(std::none_of(item->second.sources.begin(),item->second.sources.end(),[&](const auto& contribution){return contribution.source==root.id && contribution.role==CustomizationContributionRole::Name;})) item->second.sources.push_back({root.id,CustomizationContributionRole::Name,false});
+                if(named.insert(key).second) {item->second.name=*name;item->second.nameSource=root.id;for(auto& contribution:item->second.sources) if(contribution.source==root.id && contribution.role==CustomizationContributionRole::Name) contribution.effective=true;}
             }
         }
         // 其他真实语言名称仅用于搜索，不能抢占显示语言优先级。
@@ -388,7 +388,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
             auto item=merged.find({std::string(group)=="module"?CustomizationKind::Module:CustomizationKind::Accessory,*id});
             if(item!=merged.end()) {
                 item->second.aliases.push_back(*name);item->second.namesByLanguage.try_emplace(std::string(language.str()),*name);
-                if(std::none_of(item->second.sources.begin(),item->second.sources.end(),[&](const auto& contribution){return contribution.source==root.id && contribution.role=="名称";})) item->second.sources.push_back({root.id,"名称",false});
+                if(std::none_of(item->second.sources.begin(),item->second.sources.end(),[&](const auto& contribution){return contribution.source==root.id && contribution.role==CustomizationContributionRole::Name;})) item->second.sources.push_back({root.id,CustomizationContributionRole::Name,false});
             }
         }
     }

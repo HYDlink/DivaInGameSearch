@@ -25,6 +25,8 @@ struct CustomizationPreview {
     std::string source;
     // 专用图不可用而使用同 ID 通用图时为 true；界面只做轻量标注，不冒充专用图。
     bool fallback=false;
+    // 图片仍在后台读取时为 true；界面据此显示占位，不比较显示文字。
+    bool loading=false;
     // 有效内容透明边界；宽高为 0 表示未知，按整张画布显示。
     int contentX=0,contentY=0,contentWidth=0,contentHeight=0;
 };
