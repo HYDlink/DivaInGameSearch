@@ -276,6 +276,16 @@ int main(int argc,char** argv) {
             request.cursorMove=2;diva::ApplySearchTextRequest(&data);Check(data.CursorPos==6,"右移越过文本末尾");
         }
         {
+            // 性能报告要带上判断输入法卡顿所需的列和线程说明，不记录查询文字。
+            diva::PerformanceFrame frame;frame.queueDelay=12;frame.imeDefault=34;frame.frameLock=56;
+            const auto report=diva::PerformanceTrace::Report({frame},{},"窗口消息线程 1，帧回调线程 1（相同）");
+            Check(report.find("消息排队\t输入法默认处理")!=std::string::npos && report.find("线程\t窗口消息线程 1")!=std::string::npos
+                && report.find("12.000\t34.000\n")!=std::string::npos && report.find("56.000\t12.000\t34.000")!=std::string::npos,"性能报告缺少输入法测量列");
+            diva::PerformanceTrace trace;trace.ImeDefault(1.5);trace.QueueDelay(7);trace.Begin(1);trace.End(2);
+            Check(trace.last.imeDefault==1.5 && trace.last.queueDelay==7,"输入法测量未计入当前帧");
+            trace.Begin(3);trace.End(4);Check(trace.last.imeDefault==0 && trace.last.queueDelay==0,"输入法测量跨帧残留");
+        }
+        {
             diva::View cycle;
             for(auto expected:{diva::SearchMode::Modules,diva::SearchMode::Hair,diva::SearchMode::Accessories,diva::SearchMode::Songs}) {cycle.CycleMode(1);Check(cycle.mode==expected,"Tab 未按顶部顺序循环主标签");}
             cycle.CycleMode(-1);Check(cycle.mode==diva::SearchMode::Accessories,"Ctrl+Tab 未回切到上一个主标签");

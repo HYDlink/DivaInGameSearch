@@ -10,6 +10,20 @@
 
 namespace diva {
 // 在后台生成独立快照，不持有界面状态引用。
+void View::ExportPerformance() {
+    auto frames=performance->frames;auto queries=performance->queries;
+    SYSTEMTIME time{};GetLocalTime(&time);
+    char stamp[32];snprintf(stamp,sizeof(stamp),"%02d%02d%02d",time.wHour,time.wMinute,time.wSecond);
+    auto path=home/("search-performance-"+std::string(stamp)+".tsv");
+    const auto messageThread=performance->messageThread.load(),frameThread=performance->frameThread.load();
+    const auto note="窗口消息线程 "+std::to_string(messageThread)+"，帧回调线程 "+std::to_string(frameThread)+"（"+(messageThread==frameThread?"相同":"不同")+"）";
+    // 参数均为样本副本，后台格式化与写入，不访问实时UI或游戏对象。
+    performanceExport=searchExecutor->Submit([frames=std::move(frames),queries=std::move(queries),path,note] {
+        std::ofstream out(path,std::ios::binary|std::ios::trunc);
+        out<<"\xEF\xBB\xBF"<<PerformanceTrace::Report(frames,queries,note);out.close();
+        return out?"性能报告已保存："+Utf8(path.wstring()):"性能报告写入失败。";
+    });
+}
 void View::Refresh() {
     if(pending.valid()) return;
     ResetSongBodyClick();if(invalidateSongNavigation) invalidateSongNavigation();
@@ -20,7 +34,12 @@ void View::Refresh() {
 }
 // 发布后台曲库并刷新完整查询结果。
 void View::Poll() {
-    ConsumeSearchReply(performanceExport,[&](std::string result){status=std::move(result);},[&]{status="性能报告导出失败。";});
+    ConsumeSearchReply(performanceExport,[&](std::string result){status=result;customization.status=std::move(result);},[&]{status=customization.status="性能报告导出失败。";});
+    if(requestPerformanceRecord) {
+        requestPerformanceRecord=false;
+        if(!performance->recording) {performance->Start();performanceAutoExport=true;status=customization.status="正在录制性能数据（15 秒），请开始输入。";}
+    }
+    if(performanceAutoExport && !performance->recording && !performanceExport.valid()) {performanceAutoExport=false;ExportPerformance();}
     customization.songCatalog=catalog;customization.songCriteria.style=query.style;customization.songFavorites=favorites;
     customization.composing=composing; customization.Poll();
     if(pending.valid() && pending.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
@@ -293,15 +312,7 @@ void View::Draw() {
         if(ImGui::Button("开始15秒记录")) {performance->Start();ImGui::CloseCurrentPopup();}
         ImGui::Text("已记录 %zu 帧 / %zu 条已发布查询%s",performance->frames.size(),performance->queries.size(),performance->recording?"（记录中）":"");
         ImGui::BeginDisabled(performance->recording || performance->frames.empty() || performanceExport.valid());
-        if(ImGui::Button("导出报告")) {
-            auto frames=performance->frames;auto queries=performance->queries;auto path=home/"search-performance.tsv";
-            // 参数均为样本副本，后台格式化与写入，不访问实时UI或游戏对象。
-            performanceExport=searchExecutor->Submit([frames=std::move(frames),queries=std::move(queries),path] {
-                std::ofstream out(path,std::ios::binary|std::ios::trunc);
-                out<<"\xEF\xBB\xBF"<<PerformanceTrace::Report(frames,queries);out.close();
-                return out?"性能报告已保存："+Utf8(path.wstring()):"性能报告写入失败。";
-            });ImGui::CloseCurrentPopup();
-        }
+        if(ImGui::Button("导出报告")) {ExportPerformance();ImGui::CloseCurrentPopup();}
         ImGui::EndDisabled();ImGui::EndPopup();
     }
     ImGui::Spacing();ImGui::Separator();ImGui::Spacing();

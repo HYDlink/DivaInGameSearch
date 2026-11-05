@@ -272,8 +272,28 @@ LRESULT CALLBACK SearchWndProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) { retur
 LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     const bool inputMessage=message==WM_CHAR || message==WM_IME_COMPOSITION;
     const auto arrived=PerformanceNow();if(inputMessage) view.performance->Input();
-    std::lock_guard lock(mutex);
-    if(inputMessage) view.performance->InputLock(PerformanceNow()-arrived);
+    view.performance->messageThread.store(GetCurrentThreadId(),std::memory_order_relaxed);
+    bool useDefault=false;
+    LRESULT result=0;
+    {
+        std::lock_guard lock(mutex);
+        if(inputMessage) view.performance->InputLock(PerformanceNow()-arrived);
+        if(message==WM_KEYDOWN || message==WM_CHAR) {
+            // 测试或非队列消息没有有效的消息时间，异常大的差值不计入。
+            const DWORD waited=GetTickCount()-static_cast<DWORD>(GetMessageTime());
+            if(waited<60000) view.performance->QueueDelay(waited);
+        }
+        result=HandleMessage(hwnd,message,w,l,useDefault);
+    }
+    if(!useDefault) return result;
+    // 系统输入法的默认处理可能跨进程等待，放到锁外，不让帧回调跟着等。
+    const auto started=PerformanceNow();
+    result=DefWindowProcW(hwnd,message,w,l);
+    if(message!=WM_INPUT) view.performance->ImeDefault(PerformanceNow()-started);
+    return result;
+}
+// 参数 hwnd/message/w/l 为系统消息，useDefault 置位表示需要在锁外调用系统默认处理。
+LRESULT Host::HandleMessage(HWND hwnd,UINT message,WPARAM w,LPARAM l,bool& useDefault) {
     // 关闭面板仍消费已捕获按键的释放，防止游戏收到孤立 key-up。
     bool key=message==WM_KEYDOWN || message==WM_SYSKEYDOWN || message==WM_KEYUP || message==WM_SYSKEYUP;
     bool down=message==WM_KEYDOWN || message==WM_SYSKEYDOWN;
@@ -329,6 +349,8 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
                 (w=='P'?view.requestPreview:view.requestEquip)=true;
                 return 0;
             }
+            // 面板打开时录制 15 秒性能数据，结束后自动导出；不面向普通玩家显示。
+            if(w==VK_F9 && message==WM_KEYDOWN && !(l&(1LL<<30)) && (GetKeyState(VK_CONTROL)&0x8000)) {view.requestPerformanceRecord=true;return 0;}
             // Tab 只切顶部主标签，Ctrl+Tab 回切；Shift+Tab 是 Steam 覆盖层快捷键，只吞掉不响应。
             if(!ime && w==VK_TAB && message==WM_KEYDOWN) {
                 if(!popup && !(l&(1LL<<30)) && !(GetKeyState(VK_SHIFT)&0x8000)) view.tabMove+=(GetKeyState(VK_CONTROL)&0x8000)?-1:1;
@@ -365,7 +387,7 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
                 }
             }
             // IME 组合键不交给 ImGui 导航，但系统仍需接收以取消组词和显示候选。
-            if(ime && (w==VK_TAB || w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_UP || w==VK_DOWN || w==VK_LEFT || w==VK_RIGHT)) return DefWindowProcW(hwnd,message,w,l);
+            if(ime && (w==VK_TAB || w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_UP || w==VK_DOWN || w==VK_LEFT || w==VK_RIGHT)) {useDefault=true;return 0;}
         }
         if(key && !down && w==VK_RETURN && view.composing) FinishComposition(hwnd);
         if(key && !down && !view.composing && (w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_PROCESSKEY)) view.imeGuard=false;
@@ -379,11 +401,10 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
             return 0;
         }
         ImGui_ImplWin32_WndProcHandler(hwnd,message,w,l);
-        if(message>=WM_IME_STARTCOMPOSITION && message<=WM_IME_COMPOSITION) return DefWindowProcW(hwnd,message,w,l);
-        if(message>=WM_IME_SETCONTEXT && message<=WM_IME_KEYUP) return DefWindowProcW(hwnd,message,w,l);
+        if((message>=WM_IME_STARTCOMPOSITION && message<=WM_IME_COMPOSITION) || (message>=WM_IME_SETCONTEXT && message<=WM_IME_KEYUP)) {useDefault=true;return 0;}
         if(key || message==WM_CHAR || message==WM_SYSCHAR || message==WM_INPUT || (message>=WM_MOUSEFIRST && message<=WM_MOUSELAST)) {
             if(key && !down) swallowed[w&255]=false;
-            return message==WM_INPUT?DefWindowProcW(hwnd,message,w,l):0;
+            useDefault=message==WM_INPUT;return 0;
         }
     } else if(message==WM_LBUTTONUP && (swallowedMouse[0] || releasedMouse[0])) { swallowedMouse[0]=releasedMouse[0]=false; return 0; }
     else if(message==WM_RBUTTONUP && (swallowedMouse[1] || releasedMouse[1])) { swallowedMouse[1]=releasedMouse[1]=false; return 0; }
@@ -396,6 +417,7 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
 void Host::Frame(IDXGISwapChain* chain) {
     std::lock_guard lock(mutex); if(!initialized) return;
     PerformanceFrameScope performance(*view.performance,!view.performance->active);
+    view.performance->frameThread.store(GetCurrentThreadId(),std::memory_order_relaxed);
     ++modulePreviewFrame;
     if(!preview && !previous) {
         auto current=(WNDPROC)GetWindowLongPtrW(window,GWLP_WNDPROC);

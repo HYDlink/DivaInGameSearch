@@ -77,6 +77,8 @@ struct Host {
     void Frame(IDXGISwapChain* chain);
     // 处理本窗口输入；参数 hwnd/message/w/l 为原始 Win32 消息。
     LRESULT Message(HWND hwnd,UINT message,WPARAM w,LPARAM l);
+    // 在 Host 锁内处理消息；参数 useDefault 置位时由 Message 在锁外调用系统默认处理。
+    LRESULT HandleMessage(HWND hwnd,UINT message,WPARAM w,LPARAM l,bool& useDefault);
     // 正常退出预览时清理资源；游戏进程退出不在 DllMain 等待后台任务。
     void Shutdown();
 };

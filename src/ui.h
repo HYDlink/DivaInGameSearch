@@ -60,6 +60,8 @@ struct View {
     bool requestPreview=false,requestEquip=false;
     // Tab／Ctrl+Tab 请求切换顶部主标签的步数，在下一帧绘制前消费。
     int tabMove=0;
+    // Ctrl+F9 请求录制性能数据；录制结束后自动导出一次。
+    bool requestPerformanceRecord=false,performanceAutoExport=false;
     int move=0,difficultyMove=0;
     bool listNavigation=true,horizontalNavigation=true,scrollSelection=false;
     SearchMode mode=SearchMode::Songs;
@@ -77,6 +79,8 @@ struct View {
     std::function<void()> invalidateSongNavigation;
     // 参数 mode 为搜索领域，返回游戏当前是否已在该领域的目标页；已在目标页时第二下 Enter 不再提交。
     std::function<bool(SearchMode)> onTargetPage;
+    // 把已录制的样本交给后台写入带时间戳的文件，不在帧内格式化或写磁盘。
+    void ExportPerformance();
     // 发起后台重建；不在绘制帧扫描磁盘。
     void Refresh();
     // 接收后台结果并维护有效选择。
