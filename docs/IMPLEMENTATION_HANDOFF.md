@@ -19,7 +19,7 @@
 
 先执行 scripts/build.ps1。scripts/verify.ps1 和 scripts/check-profile.ps1 必须显式提供 GameDirectory，不能假定固定盘符。部署与更新脚本也要求显式目录，运行中游戏会被拒绝更新。
 
-服装／饰品实现依据在 [CUSTOMIZATION_SEARCH_PLAN.md](CUSTOMIZATION_SEARCH_PLAN.md)，实际导入范围在 [CUSTOMIZATION_IMPORT.md](CUSTOMIZATION_IMPORT.md)。`SearchPreview --customization-demo` 只为独立预览显式生成合成数据；游戏宿主没有导入数据时必须为空库。未验证的当前角色读取、原生定位和纹理能力保持禁用。`InputCheck --messages-only <项目目录>` 可单独验证 Win32 消息生命周期，但不替代 DX11 和实际游戏输入验收。
+服装／饰品实际导入范围在 [CUSTOMIZATION_IMPORT.md](CUSTOMIZATION_IMPORT.md)。`SearchPreview --customization-demo` 只为独立预览显式生成合成数据；游戏宿主没有导入数据时必须为空库。未验证的当前角色读取、原生定位和纹理能力保持禁用。`InputCheck --messages-only <项目目录>` 可单独验证 Win32 消息生命周期，但不替代 DX11 和实际游戏输入验收。
 
 ## 修改定位之前
 
@@ -29,4 +29,4 @@
 
 ## 发布
 
-保持 CMakeLists.txt、config/config.toml、初始化日志和打包脚本版本一致。运行相关检查，检查原生预览，更新 STATUS、ACCEPTANCE 与 RELEASE_NOTES。scripts/package.ps1 生成包含运行文件、许可证和可重建源码的 ZIP。公开发行不包含 artifacts 下的私人日志、审计表和部署记录。
+保持 CMakeLists.txt、config/config.toml、初始化日志和打包脚本版本一致。运行相关检查，检查原生预览，更新 ACCEPTANCE 与 RELEASE_NOTES。scripts/package.ps1 生成包含运行文件、许可证和可重建源码的 ZIP。公开发行不包含 artifacts 下的私人日志、审计表和部署记录。

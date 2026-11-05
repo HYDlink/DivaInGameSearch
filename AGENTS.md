@@ -1,10 +1,10 @@
 # 开发与 Agent 协作约定
 
-本项目为 Windows x64 原生 C++ DivaModLoader 插件，当前版本 1.0.11。这是人与 AI 协作开发的 Vibe Coding 项目，所有提交仍需可审阅的代码和可复现的验证。
+本项目为 Windows x64 原生 C++ DivaModLoader 插件，这是人与 AI 协作开发的 Vibe Coding 项目，所有提交仍需可审阅的代码和可复现的验证。
 
 ## 先读什么
 
-先读 README.md、docs/STATUS.md、docs/IMPLEMENTATION_HANDOFF.md、design/INTERACTION_SPEC.md；修改定位时同时阅读 docs/research/NATIVE_SELECTION_METHODS.md。docs/ACCEPTANCE.md 区分自动测试与实际游戏测试。
+先读 README.md、docs/IMPLEMENTATION_HANDOFF.md、design/INTERACTION_SPEC.md；修改定位时同时阅读 docs/research/NATIVE_SELECTION_METHODS.md。docs/ACCEPTANCE.md 区分自动测试与实际游戏测试。
 
 ## 工作约定
 
