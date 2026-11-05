@@ -37,8 +37,11 @@ __declspec(dllexport) void Init() {
     HMODULE self=nullptr; GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCWSTR)&Init,&self);
     wchar_t path[32768]{}; GetModuleFileNameW(self,path,32768);
     wchar_t executable[32768]{}; GetModuleFileNameW(nullptr,executable,32768);
+    // 语言须先于 App() 确定：界面对象构造时就会取默认文案。
+    diva::InitLocale(diva::fs::path(path).parent_path());
     auto& host=diva::App(); host.Init(diva::fs::path(path).parent_path(),diva::fs::path(executable).parent_path());
     host.diagnostic=Log;
+    for(const auto& line:diva::LocaleDiagnostics()) Log(line);
     // 条件或卡片选择改变时只发布取消代数，原生操作始终留在模型帧处理。
     host.view.customization.invalidateModuleLocate=[] {diva::CancelNativePageRouter();};
     // 参数key是按钮所在卡片，不借用搜索选择或原生高亮。

@@ -133,6 +133,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
     std::string moduleSource;bool moduleSourceApplied=false;
     // 可选初始检索文本，用共用原生界面离线检查实际歌曲或服装结果。
     std::string initialQuery;bool initialQueryApplied=false;
+    // 可选界面语言，如 en 或伪翻译 qps；空时按 settings.ini。
+    std::string language;
     auto searchMode=diva::SearchMode::Songs;
     for(int i=1;i<argc;++i) {
         std::wstring arg=argv[i];
@@ -142,6 +144,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         else if(arg==L"--customization") searchMode=diva::SearchMode::Modules;
         else if(arg==L"--module-source" && i+1<argc) {moduleSource=diva::Utf8(argv[++i]);searchMode=diva::SearchMode::Modules;}
         else if(arg==L"--query" && i+1<argc) initialQuery=diva::Utf8(argv[++i]);
+        else if(arg==L"--language" && i+1<argc) language=diva::Utf8(argv[++i]);
         else if(arg==L"--recommendation-demo") {recommendationDemo=true;searchMode=diva::SearchMode::Modules;}
         else if(arg==L"--accessories") searchMode=diva::SearchMode::Accessories;
         else if(arg==L"--hair") searchMode=diva::SearchMode::Hair;
@@ -149,6 +152,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         else if(arg==L"--game" && i+1<argc) game=argv[++i];
         else if(arg==L"--output" && i+1<argc) output=argv[++i];
     } LocalFree(argv);
+    diva::InitLocale(home,language);
     auto& host=diva::App(); host.preview=true; host.Init(home,game); host.view.open=true; host.view.OnOpened(); host.view.SetMode(searchMode);
     // 推荐样例在目录就绪后才填入文本，先避免空输入框占用ImGui编辑缓冲。
     if(recommendationDemo || !initialQuery.empty()) {host.view.focus=false;host.view.customization.State().focus=false;}

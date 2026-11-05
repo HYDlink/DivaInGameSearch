@@ -15,9 +15,19 @@ add_library(detours STATIC ${DETOURS_DIR}/detours.cpp ${DETOURS_DIR}/modules.cpp
 target_include_directories(detours PUBLIC ${DETOURS_DIR})
 set_property(TARGET detours PROPERTY CXX_STANDARD 14)
 target_compile_options(detours PRIVATE /permissive)
-add_library(search_core STATIC src/core.cpp src/catalog.cpp src/selector.cpp
+# 由 locales/*.toml 生成文本 ID 和内嵌语言数据；键或占位符不一致时构建失败。
+add_executable(I18nGen tools/i18n_gen.cpp)
+target_include_directories(I18nGen PRIVATE third_party/vendor/toml)
+file(GLOB I18N_LOCALES CONFIGURE_DEPENDS locales/*.toml)
+set(I18N_OUT ${CMAKE_CURRENT_BINARY_DIR}/generated)
+add_custom_command(OUTPUT ${I18N_OUT}/i18n_keys.h ${I18N_OUT}/i18n_data.inc
+  COMMAND I18nGen ${CMAKE_CURRENT_SOURCE_DIR}/locales ${I18N_OUT}
+  DEPENDS I18nGen ${I18N_LOCALES})
+add_custom_target(i18n_generated DEPENDS ${I18N_OUT}/i18n_keys.h ${I18N_OUT}/i18n_data.inc)
+add_library(search_core STATIC src/core.cpp src/i18n.cpp src/catalog.cpp src/selector.cpp
   src/customization.cpp src/customization_catalog.cpp src/recommendation.cpp src/recommendation_runtime.cpp src/farc.cpp src/sprite_resolver.cpp src/module_assets.cpp third_party/vendor/miniz/miniz_tinfl.cpp)
-target_include_directories(search_core PUBLIC src PRIVATE third_party/vendor/toml third_party/vendor/miniz)
+add_dependencies(search_core i18n_generated)
+target_include_directories(search_core PUBLIC src ${I18N_OUT} PRIVATE third_party/vendor/toml third_party/vendor/miniz)
 target_link_libraries(search_core PUBLIC normaliz advapi32)
 add_library(search_ui STATIC src/ui.cpp src/host.cpp src/customization_ui.cpp
   third_party/vendor/imgui/imgui.cpp third_party/vendor/imgui/imgui_draw.cpp
@@ -40,6 +50,9 @@ add_executable(SearchDispatchCheck tests/search_dispatch_check.cpp)
 target_include_directories(SearchDispatchCheck PRIVATE src)
 add_test(NAME 共用查询调度验收 COMMAND SearchDispatchCheck)
 add_test(NAME 核心自动验收 COMMAND SearchTests "${CMAKE_CURRENT_SOURCE_DIR}")
+add_executable(I18nCheck tests/i18n_check.cpp)
+target_link_libraries(I18nCheck PRIVATE search_core)
+add_test(NAME 多语言运行时验收 COMMAND I18nCheck)
 add_executable(DllCheck tests/dll_check.cpp)
 add_executable(ReadProbe tests/read_probe.cpp)
 add_executable(NativeCapture tests/native_capture.cpp)

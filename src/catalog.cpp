@@ -1,4 +1,5 @@
 #include "core.h"
+#include "i18n.h"
 #include <toml.hpp>
 #include <algorithm>
 #include <chrono>
@@ -56,8 +57,8 @@ static std::pair<bool,std::string> Resolve(const std::string& script,const std::
 // 生成配置对应的曲库快照；参数 home/game 为本 Mod 和游戏目录。
 Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
     auto start=std::chrono::steady_clock::now(); Catalog out; Fields fields;
-    Overlay(fields,ReadPvdb(home/"data/base_pv_db.txt","原版"));
-    if(fs::exists(game/"diva_dlc00.cpk")) Overlay(fields,ReadPvdb(home/"data/dlc_pv_db.txt","官方 DLC"));
+    Overlay(fields,ReadPvdb(home/"data/base_pv_db.txt",Tr(Tx::source_base_game)));
+    if(fs::exists(game/"diva_dlc00.cpk")) Overlay(fields,ReadPvdb(home/"data/dlc_pv_db.txt",Tr(Tx::source_official_dlc)));
     // 官方脚本身份与后续PVDB字段来源分开：Mod复制同一路径并不会让CPK内原版谱面消失。
     std::map<std::string,std::string> officialScripts;
     for(const auto& [id,attributes]:fields) {

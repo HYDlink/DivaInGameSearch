@@ -2,6 +2,7 @@
 #include "search_dispatch.h"
 #include "performance_trace.h"
 #include "core.h"
+#include "i18n.h"
 #include "selector.h"
 #include "customization_ui.h"
 #include "search_ui_style.h"
@@ -70,7 +71,7 @@ struct View {
     View(){customization.searchExecutor=searchExecutor;customization.performance=performance;}
     std::vector<std::pair<CustomizationNavigation,int>> itemMoves;
     uint64_t serial=0;
-    std::string status="正在建立本地曲库……";
+    std::string status=Tr(Tx::song_status_building);
     std::string initialConfiguration;
     bool hasInitialConfiguration=false;
     std::function<void(Request,bool)> submit;

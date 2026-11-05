@@ -1,4 +1,5 @@
 #include "customization.h"
+#include "i18n.h"
 #include <algorithm>
 #include <limits>
 #include <sstream>
@@ -20,8 +21,8 @@ CustomizationPart ParseCustomizationPart(const std::string& token) {
     return CustomizationPart::Unknown;
 }
 const char* CustomizationCharacterName(CustomizationCharacter value) {
-    static const char* names[]={"初音未来","镜音铃","镜音连","巡音流歌","亚北音留","弱音白","KAITO","MEIKO","咲音美子","重音Teto","共通 ALL","未知角色","衍生角色","随机"};
-    auto index=static_cast<size_t>(value); return names[std::min(index,size_t(13))];
+    static const Tx names[]={Tx::character_miku,Tx::character_rin,Tx::character_len,Tx::character_luka,Tx::character_neru,Tx::character_haku,Tx::character_kaito,Tx::character_meiko,Tx::character_sakine,Tx::character_teto,Tx::character_all,Tx::character_unknown,Tx::character_extra,Tx::character_random};
+    auto index=static_cast<size_t>(value); return Tr(names[std::min(index,size_t(13))]);
 }
 // 参数 value 为原始角色，返回服装搜索使用的游戏界面分类。
 CustomizationCharacter ModuleSearchCharacter(CustomizationCharacter value) {
@@ -30,8 +31,8 @@ CustomizationCharacter ModuleSearchCharacter(CustomizationCharacter value) {
 }
 const char* CustomizationPartName(CustomizationPart value) {
     // 玩家界面沿用原生自定义道具页的“头／脸／胸口／背部”；内部 Neck 枚举保持不变。
-    static const char* names[]={"头","脸","胸口","背部","发型","未知部位"};
-    return names[std::min(static_cast<size_t>(value),size_t(5))];
+    static const Tx names[]={Tx::part_head,Tx::part_face,Tx::part_chest,Tx::part_back,Tx::part_hair,Tx::part_unknown};
+    return Tr(names[std::min(static_cast<size_t>(value),size_t(5))]);
 }
 std::optional<CustomizationDomain> CustomizationItemDomain(const CustomizationItem& item) {
     if(item.key.kind==CustomizationKind::Module) return CustomizationDomain::Models;
@@ -46,13 +47,13 @@ size_t CustomizationDomainIndex(CustomizationDomain domain) {
     return domain==CustomizationDomain::Models?0:domain==CustomizationDomain::Hair?1:2;
 }
 const char* CustomizationDomainName(CustomizationDomain domain) {
-    return domain==CustomizationDomain::Models?"模型":domain==CustomizationDomain::Hair?"发型":"自定义道具";
+    return Tr(domain==CustomizationDomain::Models?Tx::tab_modules:domain==CustomizationDomain::Hair?Tx::tab_hair:Tx::tab_accessories);
 }
 const char* CustomizationDomainPageName(CustomizationDomain domain) {
-    return domain==CustomizationDomain::Models?"模型页":domain==CustomizationDomain::Hair?"发型页":"自定义道具页";
+    return Tr(domain==CustomizationDomain::Models?Tx::page_module:domain==CustomizationDomain::Hair?Tx::page_hair:Tx::page_accessory);
 }
 const char* CustomizationContributionRoleName(CustomizationContributionRole role) {
-    return role==CustomizationContributionRole::Name?"名称":"定义";
+    return Tr(role==CustomizationContributionRole::Name?Tx::role_name:Tx::role_definition);
 }
 namespace {
 // 参数 normalized 为 Normalize 后文本；含平假名（片假名已统一为平假名）时才视为可靠假名来源。

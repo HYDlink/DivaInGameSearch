@@ -3,6 +3,7 @@
 #include "performance_trace.h"
 #include "search_dispatch.h"
 #include "customization.h"
+#include "i18n.h"
 #include "customization_action.h"
 #include "recommendation.h"
 #include <imgui.h>
@@ -77,7 +78,7 @@ struct CustomizationView {
     uint64_t generation=0,runningRevision=0,runningGeneration=0,locateSerial=0,drawFrame=0,locateRequestFrame=0,locateRequestRevision=0;
     size_t runningMode=0;
     bool composing=false;
-    std::string status,contextReason="搜索默认全部角色；打开时保留筛选。";
+    std::string status,contextReason=Tr(Tx::catalog_context_default);
     std::string initialCatalogFingerprint;
     bool hasInitialCatalogFingerprint=false,catalogRequiresRestart=false;
     int columns=1,pageRows=1;
