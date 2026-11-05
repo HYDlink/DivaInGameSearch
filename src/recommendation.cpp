@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "recommendation.h"
 #include <algorithm>
 #include <charconv>
@@ -34,25 +35,25 @@ RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snaps
     RecommendedModules result;
     if(!snapshot.ready) {result.unresolved.push_back(snapshot.reason);return result;}
     const auto song=snapshot.songs.find(pvid);
-    if(song==snapshot.songs.end()) {result.unresolved.push_back("这首歌曲尚无已加载的推荐记录。");return result;}
-    if(song->second.empty()) {result.unresolved.push_back("这首歌曲未提供演出角色推荐。");return result;}
+    if(song==snapshot.songs.end()) {result.unresolved.push_back(Tr(Tx::reco_no_record));return result;}
+    if(song->second.empty()) {result.unresolved.push_back(Tr(Tx::reco_no_performer));return result;}
     // PV人物编号与菜单分类不同，显式转换，禁止将未知人物回退为初音。
     const auto& characters=kPerformerCharacters;
     const char* difficulties[]={"EASY","NORMAL","HARD","EXTREME","ENCORE"};
     for(size_t slot=0;slot<song->second.size();++slot) {
         const auto& performer=song->second[slot];
-        const auto prefix="演出角色 "+std::to_string(slot+1)+"：";
+        const auto prefix=Trf(Tx::reco_performer,{{"n",std::to_string(slot+1)}});
         const int character=PerformerCharacterIndex(song->second,slot);
         if(character<0) {
-            result.unresolved.push_back(prefix+"人物或继承引用无效，未回退为默认人物。");continue;
+            result.unresolved.push_back(prefix+Tr(Tx::reco_ref_invalid));continue;
         }
         if(performer.type==3 || performer.type==4) {
-            result.unresolved.push_back(prefix+"特殊泳装推荐转换尚未认证，保留为未解析推荐。");continue;
+            result.unresolved.push_back(prefix+Tr(Tx::reco_swimsuit));continue;
         }
         std::map<int,std::vector<int>> variants;
         for(int d=0;d<5;++d) variants[performer.costumes[d]].push_back(d);
         for(const auto& [costume,difficultiesForCostume]:variants) {
-            if(costume<0) {result.unresolved.push_back(prefix+"未指定推荐服装。");continue;}
+            if(costume<0) {result.unresolved.push_back(prefix+Tr(Tx::reco_no_costume));continue;}
             std::vector<size_t> matches;
             for(size_t i=0;i<catalog.items.size();++i) {
                 const auto& item=catalog.items[i];
@@ -62,12 +63,12 @@ RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snaps
                 if(parsed.ec==std::errc{} && parsed.ptr==end && oneBased>0 && oneBased-1==costume) matches.push_back(i);
             }
             if(matches.size()!=1) {
-                result.unresolved.push_back(prefix+CustomizationCharacterName(characters[character])+" / COS_"+std::to_string(static_cast<int64_t>(costume)+1)+(matches.empty()?" 未匹配有效服装目录。":" 对应多个服装，未猜测目标。"));continue;
+                result.unresolved.push_back(prefix+CustomizationCharacterName(characters[character])+" / COS_"+std::to_string(static_cast<int64_t>(costume)+1)+(matches.empty()?Tr(Tx::reco_no_match):Tr(Tx::reco_multi_match)));continue;
             }
             const auto index=matches.front();
             if(std::find(result.items.begin(),result.items.end(),index)==result.items.end()) result.items.push_back(index);
             std::string label=prefix+CustomizationCharacterName(characters[character]);
-            if(variants.size()>1) {label+=" · 原生推荐分支 ";for(int d:difficultiesForCostume) {label+=difficulties[d];label+=' ';}}
+            if(variants.size()>1) {label+=Tr(Tx::reco_branch);for(int d:difficultiesForCostume) {label+=difficulties[d];label+=' ';}}
             result.reasons[catalog.items[index].key].push_back(std::move(label));
         }
     }
@@ -77,12 +78,12 @@ RecommendedModules ResolveRecommendedModules(const RecommendationSnapshot& snaps
 RecommendedModules SearchModulesWithSongs(const CustomizationCatalog& modules,const CustomizationQuery& moduleQuery,const Catalog* songs,Query songQuery,const std::set<int>& favorites,const RecommendationSnapshot* recommendations) {
     RecommendedModules result;result.items=SearchCustomization(modules,moduleQuery);
     if(moduleQuery.domain==CustomizationDomain::Accessories || moduleQuery.modMode || Normalize(moduleQuery.text).empty()) return result;
-    if(!songs) {result.unresolved.push_back("歌曲目录正在加载，歌曲推荐暂不可用。");return result;}
-    if(songs->requiresRestart || modules.stale) {result.unresolved.push_back("目录配置已改变，重启游戏后读取歌曲推荐。");return result;}
+    if(!songs) {result.unresolved.push_back(Tr(Tx::reco_catalog_loading));return result;}
+    if(songs->requiresRestart || modules.stale) {result.unresolved.push_back(Tr(Tx::reco_restart));return result;}
     songQuery.text=moduleQuery.text;
     const auto matches=Search(*songs,songQuery,favorites);result.matchedSongs=matches.size();
     if(matches.empty()) return result;
-    if(!recommendations || !recommendations->ready) {result.unresolved.push_back(recommendations?recommendations->reason:"等待游戏推荐数据。");return result;}
+    if(!recommendations || !recommendations->ready) {result.unresolved.push_back(recommendations?recommendations->reason:Tr(Tx::reco_waiting));return result;}
     auto filter=moduleQuery;filter.text.clear();filter.character.reset();
     const auto allowed=SearchCustomization(modules,filter);const std::set<size_t> allowedSet(allowed.begin(),allowed.end());
     for(const auto& match:matches) {
@@ -100,8 +101,8 @@ RecommendedModules SearchModulesWithSongs(const CustomizationCatalog& modules,co
                         && item.character==module.character && item.bindModule==module.key.id) candidates.push_back(index);
                 }
                 if(candidates.size()!=1) {
-                    hair.unresolved.push_back(std::string(CustomizationCharacterName(module.character))+" / 模型 ID "+std::to_string(module.key.id)
-                        +(candidates.empty()?" 未匹配绑定发型。":" 对应多个绑定发型，未猜测目标。"));continue;
+                    hair.unresolved.push_back(std::string(CustomizationCharacterName(module.character))+Tr(Tx::reco_module_id)+std::to_string(module.key.id)
+                        +(candidates.empty()?Tr(Tx::reco_no_hair):Tr(Tx::reco_multi_hair)));continue;
                 }
                 const size_t index=candidates.front();
                 if(std::find(hair.items.begin(),hair.items.end(),index)==hair.items.end()) hair.items.push_back(index);

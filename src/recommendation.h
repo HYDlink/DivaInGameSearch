@@ -1,4 +1,5 @@
 #pragma once
+#include "i18n.h"
 #include "customization.h"
 #include <array>
 
@@ -14,7 +15,7 @@ struct RecommendationSnapshot {
     std::map<int,std::vector<RecommendedPerformer>> songs;
     uint64_t generation=0;
     bool ready=false;
-    std::string reason="等待游戏推荐数据。";
+    std::string reason=Tr(Tx::reco_waiting);
 };
 struct RecommendedModules {
     std::vector<size_t> items;

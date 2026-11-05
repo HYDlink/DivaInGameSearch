@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "module_action.h"
 #include "native_page_router.h"
 #include "module_category.h"
@@ -122,11 +123,11 @@ bool CertifiedContext(const Snapshot& s) {
 }
 // 参数s为当前真实快照；把范围限制与独立装备读取失败分别说明，避免统一误报为角色不支持。
 std::string ContextRejection(const Snapshot& s) {
-    if(s.page.nativeScope!=3) return "当前为共通设置；换装与预览仅开放曲目单独设置。";
-    if(s.page.slot<0 || s.page.slot>=s.page.slotCount || s.page.slotCount<1 || s.page.slotCount>6) return "当前歌者槽位未能确认。";
-    if(!s.valid || s.equippedId<0) return "当前槽位的独立装备配置暂不可读，请等待模型页就绪。";
-    if(s.models[s.page.slot]!=s.equippedId) return "模型仍在加载或预览中，等待恢复当前装备。";
-    return "当前歌曲或服装分类身份未能确认。";
+    if(s.page.nativeScope!=3) return Tr(Tx::moduleop_shared_scope);
+    if(s.page.slot<0 || s.page.slot>=s.page.slotCount || s.page.slotCount<1 || s.page.slotCount>6) return Tr(Tx::moduleop_slot_unknown);
+    if(!s.valid || s.equippedId<0) return Tr(Tx::moduleop_config_unreadable);
+    if(s.models[s.page.slot]!=s.equippedId) return Tr(Tx::moduleop_model_loading);
+    return Tr(Tx::moduleop_identity_unknown);
 }
 // 参数id为稳定服装；特殊原生模型项使用不同菜单规则，不能套用普通服装动作。
 bool OrdinaryModule(int id) {
@@ -251,77 +252,77 @@ bool InvokePreviewExit(const Snapshot& s) {
 void Execute(const Snapshot& s,const std::function<bool(int,Ownership&)>& ownershipReader=ReadOwnership,
     const std::function<bool(const Snapshot&,const Card&,CustomizationAction)>& invoke=Invoke) {
     if(!SameContext(active.before,s) || !CertifiedContext(s) || !s.page.idle
-        || s.equippedId!=active.before.equippedId || s.models!=active.before.models) {Finish("服装动作前范围、槽位、装备或页面已变化，旧请求已取消。");return;}
+        || s.equippedId!=active.before.equippedId || s.models!=active.before.models) {Finish(Tr(Tx::moduleop_context_changed));return;}
     Card card;const int id=active.request.key.id;
     if(s.category!=active.targetCategory || !FindActionTarget(s,id,card) || !OrdinaryModule(id)
         || !ownershipReader(id,card.owned) || (active.request.action==CustomizationAction::Equip && card.owned!=Ownership::Owned)) {
-        Finish("目标不是当前歌者可用的唯一普通服装，或尚未拥有，未执行动作。");return;
+        Finish(Tr(Tx::moduleop_target_invalid));return;
     }
     active.before=s;active.card=card;
-    if(!invoke(s,card,active.request.action)) {Finish("原生服装操作未受理，未继续加载或自动恢复装备。");return;}
+    if(!invoke(s,card,active.request.action)) {Finish(Tr(Tx::moduleop_rejected));return;}
     active.phase=Phase::Loading;active.deadline=GetTickCount64()+15000;
-    status.message=active.request.action==CustomizationAction::Preview?"正在加载原生模型预览……":"正在更换服装并核对实际装备……";
+    status.message=active.request.action==CustomizationAction::Preview?Tr(Tx::moduleop_preview_loading):Tr(Tx::moduleop_equipping);
     status.phase=ModuleLocatePhase::Confirming;
 }
 // 参数s/message为已独立确认的结果；跨人物动作先恢复原分类和高亮，再完成反馈或恢复搜索。
 void CompleteAction(const Snapshot& s,const std::string& message) {
     if(active.origin.valid && active.origin.category!=s.category) {
         active.phase=Phase::Restoring;active.expected=s;active.categorySteps=0;active.completionMessage=message;
-        active.deadline=GetTickCount64()+5000;status.previewReady=false;status.message="原生动作已确认，正在恢复原分类与高亮……";return;
+        active.deadline=GetTickCount64()+5000;status.previewReady=false;status.message=Tr(Tx::moduleop_restoring);return;
     }
     Finish(message,true,active.request.action==CustomizationAction::Preview && !active.abandoned);
 }
 // 参数s/move/capture/restore为本帧快照及原生适配器；隔离测试可替换操作，生产只在模型帧调用。
 void ProcessActionModelFrame(const Snapshot& s,const std::function<bool(int)>& move,const std::function<Snapshot()>& capture,const std::function<bool(const Snapshot&,int)>& restore) {
     if(active.phase!=Phase::Preparing && active.phase!=Phase::Restoring) return;
-    if(active.phase==Phase::Preparing && active.cancelled!=cancelled.load()) {Finish("搜索条件已变化，取消跨人物动作。");return;}
+    if(active.phase==Phase::Preparing && active.cancelled!=cancelled.load()) {Finish(Tr(Tx::moduleop_search_changed));return;}
     if(!s.page.idle || !SameContext(active.expected,s) || !SameActionConfiguration(active.expected,s)
-        || s.highlightId!=active.expected.highlightId) {Finish("跨人物动作期间页面、槽位、装备或高亮已被改变，停止旧动作。");return;}
+        || s.highlightId!=active.expected.highlightId) {Finish(Tr(Tx::moduleop_changed_during));return;}
     const int target=active.phase==Phase::Preparing?active.targetCategory:active.origin.category;
     if(s.category==target) {
         if(active.phase==Phase::Preparing) {
-            active.phase=Phase::Waiting;active.before=s;status.phase=ModuleLocatePhase::WaitingForFrame;status.message="目标人物列表已就绪，等待核对并执行原生动作。";return;
+            active.phase=Phase::Waiting;active.before=s;status.phase=ModuleLocatePhase::WaitingForFrame;status.message=Tr(Tx::moduleop_list_ready_check);return;
         }
-        if(s.highlightId!=active.origin.highlightId && !restore(s,active.origin.highlightId)) {Finish("动作已执行，但原列表高亮未能安全恢复；未反向更换装备。");return;}
+        if(s.highlightId!=active.origin.highlightId && !restore(s,active.origin.highlightId)) {Finish(Tr(Tx::moduleop_restore_failed));return;}
         const auto restored=capture();
-        if(!restored.page.idle || !SameActionConfiguration(s,restored) || restored.category!=target || restored.highlightId!=active.origin.highlightId) {Finish("恢复原分类后读回不符；未继续改变装备。");return;}
+        if(!restored.page.idle || !SameActionConfiguration(s,restored) || restored.category!=target || restored.highlightId!=active.origin.highlightId) {Finish(Tr(Tx::moduleop_restore_mismatch));return;}
         latest=restored;lastFrame=GetTickCount64();
         Finish(active.completionMessage,true,active.request.action==CustomizationAction::Preview && !active.abandoned);return;
     }
     const int direction=ModuleCategoryDirection(s.category,target);
-    if(!direction || active.categorySteps>=6 || !move(direction)) {Finish("原生人物分类准备失败，未继续动作或自动反向换装。");return;}
+    if(!direction || active.categorySteps>=6 || !move(direction)) {Finish(Tr(Tx::moduleop_category_failed));return;}
     const auto after=capture();
-    if(!after.page.idle || !SameActionConfiguration(s,after) || after.category!=s.category+direction) {Finish("原生分类切换后上下文不符，已停止后续动作。");return;}
+    if(!after.page.idle || !SameActionConfiguration(s,after) || after.category!=s.category+direction) {Finish(Tr(Tx::moduleop_category_mismatch));return;}
     ++active.categorySteps;active.expected=after;
     if(active.phase==Phase::Preparing && after.category==target) {
-        active.before=after;active.phase=Phase::Waiting;status.phase=ModuleLocatePhase::WaitingForFrame;status.message="目标人物列表已就绪，等待执行原生动作。";
+        active.before=after;active.phase=Phase::Waiting;status.phase=ModuleLocatePhase::WaitingForFrame;status.message=Tr(Tx::moduleop_list_ready);
     }
 }
 // 参数s为加载后的真实读回，区分临时预览、装备标记及加载态，不把320相等单独当成功。
 void Confirm(const Snapshot& s) {
-    if(!SameContext(active.before,s) || !OtherSlotsUnchanged(s)) {Finish("动作期间范围、槽位或对象已改变；未自动覆盖玩家装备。");return;}
-    if(s.highlight!=active.before.highlight) {Finish("原生高亮已变化，已停止旧动作反馈；未反向换装。");return;}
+    if(!SameContext(active.before,s) || !OtherSlotsUnchanged(s)) {Finish(Tr(Tx::moduleop_slots_changed));return;}
+    if(s.highlight!=active.before.highlight) {Finish(Tr(Tx::moduleop_highlight_changed));return;}
     const int loaded=s.models[s.page.slot];
     if(active.phase==Phase::Loading && active.request.action==CustomizationAction::Equip) {
         if(s.page.internal==0 && s.page.popup==-1 && s.equippedIndex==active.card.index && s.equippedId==active.request.key.id && loaded==active.request.key.id) {
-            if(++active.stable>=2) CompleteAction(s,"已更换服装 · ID "+std::to_string(s.equippedId));
+            if(++active.stable>=2) CompleteAction(s,Trf(Tx::moduleop_equipped,{{"id",std::to_string(s.equippedId)}}));
         } else active.stable=0;
         return;
     }
     // 分类内的装备标记索引可能因跨人物预览变化；是否改装只由独立槽位配置核对，不能拿列表标记代替。
     if(active.phase==Phase::Loading && s.page.internal==2 && loaded==active.request.key.id && s.equippedId==active.before.equippedId) {
-        active.phase=Phase::Preview;status.previewReady=true;status.message="原生预览中，按 Esc 退出后返回搜索。";active.stable=0;return;
+        active.phase=Phase::Preview;status.previewReady=true;status.message=Tr(Tx::moduleop_previewing);active.stable=0;return;
     }
     if((active.phase==Phase::Preview || active.phase==Phase::Exiting) && s.page.internal==0 && s.page.popup==-1) {
-        if(s.equippedId!=active.before.equippedId || loaded!=active.before.models[s.page.slot]) {Finish("预览退出后装备已由原生操作改变；未自动写回旧装备。");return;}
-        if(++active.stable>=2) CompleteAction(s,"已退出原生预览，原装备读回一致。");
+        if(s.equippedId!=active.before.equippedId || loaded!=active.before.models[s.page.slot]) {Finish(Tr(Tx::moduleop_preview_changed));return;}
+        if(++active.stable>=2) CompleteAction(s,Tr(Tx::moduleop_preview_exited));
     }
 }
 // 参数current/exit为预览当前快照与原生退出适配器；只提交一次退出，恢复仍由跨帧独立读回确认。
 void ProcessPreviewExit(const Snapshot& current,const std::function<bool(const Snapshot&)>& exit=InvokePreviewExit) {
     if(!active.exitSubmitted && current.page.internal==2) {
         if(!SameContext(active.before,current) || !OtherSlotsUnchanged(current) || current.equippedId!=active.before.equippedId
-            || current.models[current.page.slot]!=active.request.key.id || !exit(current)) Finish("原生退出预览未受理，已停止后续操作。");
+            || current.models[current.page.slot]!=active.request.key.id || !exit(current)) Finish(Tr(Tx::moduleop_exit_rejected));
         else active.exitSubmitted=true;
     } else Confirm(current);
 }
@@ -339,7 +340,7 @@ void OnModuleActionModelFrame(uintptr_t page) {
     using namespace action_runtime;
     std::unique_lock lock(mutex,std::try_to_lock);if(!lock.owns_lock() || !base || (active.phase!=Phase::Preparing && active.phase!=Phase::Restoring)) return;
     const auto current=Capture();
-    if(current.page.scene!=page || (frameThread && frameThread!=GetCurrentThreadId())) {Finish("原生模型页或线程已改变，停止跨人物动作。");return;}
+    if(current.page.scene!=page || (frameThread && frameThread!=GetCurrentThreadId())) {Finish(Tr(Tx::moduleop_page_changed));return;}
     // 三个适配器只接收已在本帧验证的模型页，不接受UI传入地址。
     ProcessActionModelFrame(current,[page](int direction) {return MoveActionCategory(page,direction);},[] {return Capture();},RestoreActionHighlight);
 }
@@ -350,10 +351,10 @@ void OnModuleActionStateFrame(uintptr_t state) {
     if((active.phase==Phase::Idle || active.phase==Phase::Done) && GetTickCount64()>capabilityDemandUntil) return;
     const auto current=Capture();if(current.page.state!=state) return;
     const auto thread=GetCurrentThreadId();
-    if(frameThread && thread!=frameThread) {cards.clear();latest={};++generation;Finish("原生模型线程已改变，动作已停止。");return;}
+    if(frameThread && thread!=frameThread) {cards.clear();latest={};++generation;Finish(Tr(Tx::moduleop_thread_changed));return;}
     frameThread=thread;lastFrame=GetTickCount64();
     if(active.phase==Phase::Waiting) {
-        if(active.cancelled!=cancelled.load() || active.request.uiGeneration!=uiGeneration) Finish("搜索条件或目录已变化，旧动作已取消。");
+        if(active.cancelled!=cancelled.load() || active.request.uiGeneration!=uiGeneration) Finish(Tr(Tx::moduleop_cancelled_changed));
         else Execute(current);
     } else if(active.phase==Phase::Exiting) {
         ProcessPreviewExit(current);
@@ -372,28 +373,28 @@ void OnModuleActionStateFrame(uintptr_t state) {
 bool SubmitModuleAction(const CustomizationLocateRequest& request,std::string& message) {
     using namespace action_runtime;
     std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock()) {message="模型动作正在处理，请稍候。";return false;}
+    if(!lock.owns_lock()) {message=Tr(Tx::moduleop_processing);return false;}
     const auto reject=[&](const char* reason) {message=reason;return false;};
-    if((request.action!=CustomizationAction::Preview && request.action!=CustomizationAction::Equip) || request.key.kind!=CustomizationKind::Module || request.key.id<0) return reject("原生动作目标无效。");
-    if(active.phase!=Phase::Idle && active.phase!=Phase::Done) return reject("已有原生服装动作正在进行。");
-    if(!base || !latest.page.idle || !CertifiedContext(latest) || GetTickCount64()-lastFrame>500) return reject("当前槽位或设置范围尚未认证，未执行服装动作。");
+    if((request.action!=CustomizationAction::Preview && request.action!=CustomizationAction::Equip) || request.key.kind!=CustomizationKind::Module || request.key.id<0) return reject(Tr(Tx::moduleop_target_bad));
+    if(active.phase!=Phase::Idle && active.phase!=Phase::Done) return reject(Tr(Tx::moduleop_already_running));
+    if(!base || !latest.page.idle || !CertifiedContext(latest) || GetTickCount64()-lastFrame>500) return reject(Tr(Tx::moduleop_not_certified));
     if(request.contextGeneration!=generation || request.slot!=latest.page.slot || request.nativeScope!=latest.page.nativeScope
-        || request.scope!=CustomizationScope::Song || request.uiGeneration!=uiGeneration) return reject("服装动作上下文已过期，请重新点击卡片按钮。");
+        || request.scope!=CustomizationScope::Song || request.uiGeneration!=uiGeneration) return reject(Tr(Tx::moduleop_context_expired));
     if(!request.serial || request.serial<=lastSerial || request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256
-        || (!lockedCatalogFingerprint.empty() && lockedCatalogFingerprint!=request.catalogFingerprint)) return reject("服装动作序号或目录身份无效。");
+        || (!lockedCatalogFingerprint.empty() && lockedCatalogFingerprint!=request.catalogFingerprint)) return reject(Tr(Tx::moduleop_identity_bad));
     const int targetCategory=ModuleMenuCategory(request.character);
-    if(targetCategory<0 || !OrdinaryModule(request.key.id)) return reject("目标人物或普通服装身份无效。");
+    if(targetCategory<0 || !OrdinaryModule(request.key.id)) return reject(Tr(Tx::moduleop_target_character_bad));
     const auto found=cards.find(request.key.id);const auto target=targets.find(request.key.id);
     Ownership ownership=Ownership::Unknown;
     if(target!=targets.end() && target->second.category==targetCategory && GetTickCount64()-target->second.checked<=2500) ownership=target->second.owned;
     else if(found!=cards.end() && found->second.record && ModuleRecordCategory(found->second.character)==targetCategory) ownership=found->second.owned;
-    else if(target==targets.end() || target->second.category!=targetCategory) return reject("目标人物信息已过期，请重新点击该服装按钮。");
-    if(request.action==CustomizationAction::Equip && ownership!=Ownership::Owned) return reject("目标未拥有或拥有状态未知，禁止换装。");
+    else if(target==targets.end() || target->second.category!=targetCategory) return reject(Tr(Tx::moduleop_target_expired));
+    if(request.action==CustomizationAction::Equip && ownership!=Ownership::Owned) return reject(Tr(Tx::moduleop_not_owned_block));
     lockedCatalogFingerprint=request.catalogFingerprint;
     lastSerial=request.serial;active={};active.phase=targetCategory==latest.category?Phase::Waiting:Phase::Preparing;
     active.request=request;active.before=active.origin=active.expected=latest;active.targetCategory=targetCategory;
     active.cancelled=cancelled.load();active.deadline=GetTickCount64()+15000;
-    status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,generation,false,false,"等待原生模型帧核验服装动作。"};
+    status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,generation,false,false,Tr(Tx::moduleop_waiting_frame)};
     status.action=request.action;message=status.message;return true;
 }
 
@@ -402,10 +403,10 @@ void TickModuleAction(uint64_t now,uint64_t currentGeneration) {
     std::unique_lock lock(mutex,std::try_to_lock);if(!lock.owns_lock()) return;
     uiGeneration=currentGeneration;
     if(active.phase==Phase::Idle || active.phase==Phase::Done) return;
-    if((active.phase==Phase::Waiting || active.phase==Phase::Preparing) && (active.cancelled!=cancelled.load() || active.request.uiGeneration!=uiGeneration)) {Finish("旧服装动作已取消。");return;}
+    if((active.phase==Phase::Waiting || active.phase==Phase::Preparing) && (active.cancelled!=cancelled.load() || active.request.uiGeneration!=uiGeneration)) {Finish(Tr(Tx::moduleop_cancelled));return;}
     if(active.phase==Phase::Restoring && (active.cancelled!=cancelled.load() || active.request.uiGeneration!=uiGeneration)) active.abandoned=true;
-    if(lastFrame && now-lastFrame>1000) {latest={};cards.clear();++generation;Finish("已离开原生模型页，停止动作反馈；未自动恢复旧装备。");return;}
-    if(active.phase!=Phase::Preview && now>active.deadline) Finish("原生服装加载超时；未继续提交动作或反向换装。");
+    if(lastFrame && now-lastFrame>1000) {latest={};cards.clear();++generation;Finish(Tr(Tx::moduleop_page_left));return;}
+    if(active.phase!=Phase::Preview && now>active.deadline) Finish(Tr(Tx::moduleop_load_timeout));
 }
 
 CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey& key,CustomizationCharacter targetCharacter) {
@@ -418,18 +419,18 @@ CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey&
     c.contextGeneration=generation;c.slot=latest.page.slot;c.nativeScope=latest.page.nativeScope;
     c.scope=c.nativeScope==3?CustomizationScope::Song:c.nativeScope>=0 && c.nativeScope<3?CustomizationScope::Common:CustomizationScope::Unknown;
     if(!CertifiedContext(latest)) {c.previewReason=c.equipReason=ContextRejection(latest);return c;}
-    if(c.busy) {c.previewReason=c.equipReason="请先完成当前原生预览或换装。";return c;}
+    if(c.busy) {c.previewReason=c.equipReason=Tr(Tx::moduleop_finish_first);return c;}
     const auto found=cards.find(key.id);int targetCategory=ModuleMenuCategory(targetCharacter);
     if(targetCategory<0 && found!=cards.end() && found->second.record) targetCategory=ModuleRecordCategory(found->second.character);
-    if(targetCategory<0 || key.id<0 || (targets.size()>=10000 && !targets.contains(key.id))) {c.previewReason=c.equipReason="目标人物信息不可用。";return c;}
+    if(targetCategory<0 || key.id<0 || (targets.size()>=10000 && !targets.contains(key.id))) {c.previewReason=c.equipReason=Tr(Tx::moduleop_target_unavailable);return c;}
     auto& target=targets[key.id];if(target.category!=targetCategory) {target={};target.category=targetCategory;}
     target.demandUntil=std::max(target.demandUntil,GetTickCount64()+1500);
     if(target.checked && GetTickCount64()-target.checked<=2500) c.ownership=target.owned;
     else if(found!=cards.end() && found->second.record && ModuleRecordCategory(found->second.character)==targetCategory && GetTickCount64()-found->second.checked<=2500) c.ownership=found->second.owned;
     c.equipped=latest.page.idle && latest.equippedId==key.id && latest.models[latest.page.slot]==key.id;
     c.preview=OrdinaryModule(key.id);c.equip=c.preview && c.ownership==Ownership::Owned && !c.equipped;
-    c.previewReason=c.preview?"临时原生模型预览；可自动准备目标人物分类，Esc退出后恢复搜索与原分类。":"该特殊服装的原生动作尚未认证。";
-    c.equipReason=c.equipped?"当前槽位已装备。":c.ownership==Ownership::Owned?"更换当前歌者的已拥有服装。":c.ownership==Ownership::Unowned?"尚未拥有，不能换装；不会购买。":"拥有状态未知，不能换装。";
+    c.previewReason=c.preview?Tr(Tx::moduleop_preview_reason):Tr(Tx::moduleop_preview_uncertified);
+    c.equipReason=c.equipped?Tr(Tx::moduleop_slot_equipped):c.ownership==Ownership::Owned?Tr(Tx::moduleop_equip_owned):c.ownership==Ownership::Unowned?Tr(Tx::moduleop_equip_unowned):Tr(Tx::moduleop_equip_unknown);
     return c;
 }
 
@@ -443,21 +444,21 @@ bool ModulePreviewCanExit() {
 // 参数request为后续稳定目标；延长其拥有缓存需求，等待原生退出完成后由统一网关重新验证。
 bool RequestModulePreviewExit(const CustomizationLocateRequest& request,std::string& message) {
     using namespace action_runtime;std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock() || active.phase!=Phase::Preview || !status.previewReady) {message="预览状态已改变，请等待当前操作完成。";return false;}
+    if(!lock.owns_lock() || active.phase!=Phase::Preview || !status.previewReady) {message=Tr(Tx::moduleop_preview_state_wait);return false;}
     if(request.serial<=active.request.serial || request.catalogFingerprint!=active.request.catalogFingerprint || request.uiGeneration!=uiGeneration
         || (request.action!=CustomizationAction::Locate && (request.slot!=active.before.page.slot || request.nativeScope!=active.before.page.nativeScope || request.scope!=CustomizationScope::Song))) {
-        message="后续目标或预览上下文已过期，未退出预览。";return false;
+        message=Tr(Tx::moduleop_continuation_expired);return false;
     }
     active.phase=Phase::Exiting;active.abandoned=true;active.exitSubmitted=false;active.stable=0;active.deadline=GetTickCount64()+15000;
     if(auto target=targets.find(request.key.id);target!=targets.end()) target->second.demandUntil=GetTickCount64()+20000;
-    status.previewReady=false;status.message="正在原生退出预览并核对原装备……";message=status.message;return true;
+    status.previewReady=false;status.message=Tr(Tx::moduleop_exiting_preview);message=status.message;return true;
 }
 // 歌曲跨页接续与服装按钮使用同一个原生退出阶段，保留旧预览的分类／高亮恢复。
 bool RequestModulePreviewExitForSong(std::string& message) {
     using namespace action_runtime;std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock() || active.phase!=Phase::Preview || !status.previewReady) {message="原生预览状态已改变。";return false;}
+    if(!lock.owns_lock() || active.phase!=Phase::Preview || !status.previewReady) {message=Tr(Tx::moduleop_preview_state_changed);return false;}
     active.phase=Phase::Exiting;active.abandoned=true;active.exitSubmitted=false;active.stable=0;active.deadline=GetTickCount64()+15000;
-    status.previewReady=false;status.message="正在退出旧预览，随后进入所选歌曲。";message=status.message;return true;
+    status.previewReady=false;status.message=Tr(Tx::moduleop_exit_then_song);message=status.message;return true;
 }
 void CancelModuleAction() {action_runtime::cancelled.fetch_add(1);}
 }

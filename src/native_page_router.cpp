@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "native_page_router.h"
 #include "customization_item_locator.h"
 #include "customization_item_profiles.h"
@@ -98,7 +99,7 @@ int PageKey(NativePage page) {
 }
 // 参数 page 为目标子页，返回中文页名，用于阶段反馈。
 const char* PageName(NativePage page) {
-    return page==NativePage::Module?"模型页":page==NativePage::Hair?"发型页":page==NativePage::Accessory?"自定义道具页":page==NativePage::Parent?"自定义父页":"目标页";
+    return Tr(page==NativePage::Module?Tx::page_module:page==NativePage::Hair?Tx::page_hair:page==NativePage::Accessory?Tx::page_accessory:page==NativePage::Parent?Tx::route_page_parent:Tx::route_page_target);
 }
 // 参数 from/target 为兄弟子页；直接同层边取实机链“模型→发型→道具→模型”与既有发型→模型。
 // 模型→道具沿用交接报告“父页光标0→模型→目标兄弟页”方案及同一 0x6968D0 协议，但该单边未在实机链中单独记录，待本机确认。
@@ -255,53 +256,53 @@ bool InvokeEnterSong() {return nativeCalls.outerRequest(2);}
 // 参数boundary/object为真实原生帧边界；歌曲和服装共享Hook、页面读取器与事务互斥。
 void OnSongBoundary(int boundary,uintptr_t object) {
     if(!SongBusy() || songRoute.phase==SongPhase::PreviewExit || songRoute.phase==SongPhase::Ready || songRoute.phase==SongPhase::Selecting) return;
-    if(songRoute.cancelled!=songCancellation.load()) {FinishSong("旧歌曲跨页请求已取消。");return;}
-    if(GetTickCount64()>songRoute.deadline) {FinishSong("进入选曲页超时，已停止旧歌曲请求。");return;}
+    if(songRoute.cancelled!=songCancellation.load()) {FinishSong(Tr(Tx::songroute_cancelled));return;}
+    if(GetTickCount64()>songRoute.deadline) {FinishSong(Tr(Tx::songroute_enter_timeout));return;}
     const auto s=ReadNativePage(imageBase);
     if(boundary!=0 && !((boundary==1 && object==s.song) || (boundary==2 && object==s.state))) return;
     const auto thread=GetCurrentThreadId();
-    if(songRoute.thread && songRoute.thread!=thread) {FinishSong("歌曲原生导航线程已改变，已停止请求。");return;}
+    if(songRoute.thread && songRoute.thread!=thread) {FinishSong(Tr(Tx::songroute_thread_changed));return;}
     if(songRoute.phase==SongPhase::Boundary || songRoute.phase==SongPhase::HomeBoundary) {
         const bool home=s.page==NativePage::Home;
         if((home && boundary!=0) || (!home && boundary!=2)) return;
-        if(!SameSource(songRoute.source,s) || !s.idle) {FinishSong("歌曲请求来源页面、范围或槽位已变化。");return;}
+        if(!SameSource(songRoute.source,s) || !s.idle) {FinishSong(Tr(Tx::songroute_source_changed));return;}
         songRoute.thread=thread;
         if(home) {
-            if(!InvokeEnterSong()) {FinishSong("原生选曲入口未受理。");return;}
-            AdvanceSong(SongPhase::SongArrival,"正在进入选曲页……");return;
+            if(!InvokeEnterSong()) {FinishSong(Tr(Tx::songroute_enter_rejected));return;}
+            AdvanceSong(SongPhase::SongArrival,Tr(Tx::songroute_entering));return;
         }
         const bool parent=s.page==NativePage::Parent;
-        if(!InvokeSongExit(s,parent)) {FinishSong("原生自定义退出请求未受理，已停止导航。");return;}
-        AdvanceSong(parent?SongPhase::OuterArrival:SongPhase::ParentArrival,"正在退出自定义页面……");return;
+        if(!InvokeSongExit(s,parent)) {FinishSong(Tr(Tx::songroute_exit_rejected));return;}
+        AdvanceSong(parent?SongPhase::OuterArrival:SongPhase::ParentArrival,Tr(Tx::songroute_exiting));return;
     }
     if(songRoute.phase==SongPhase::ParentArrival) {
         if(s.page==NativePage::Parent && s.idle && s.parentPhase==1) {
-            if(!SameConfiguration(songRoute.source,s)) {FinishSong("返回父页期间曲目、范围或歌者槽位已改变。");return;}
-            songRoute.source=s;AdvanceSong(SongPhase::FinishBoundary,"正在返回自定义来源页……");
-        } else if(s.idle && (s.page==NativePage::Home || s.page==NativePage::Song)) FinishSong("用户已离开预期父页，旧歌曲请求已停止。");
+            if(!SameConfiguration(songRoute.source,s)) {FinishSong(Tr(Tx::songroute_parent_changed));return;}
+            songRoute.source=s;AdvanceSong(SongPhase::FinishBoundary,Tr(Tx::songroute_returning));
+        } else if(s.idle && (s.page==NativePage::Home || s.page==NativePage::Song)) FinishSong(Tr(Tx::songroute_user_left));
         return;
     }
     if(songRoute.phase==SongPhase::FinishBoundary) {
         if(boundary!=2) return;
-        if(!SameSource(songRoute.source,s) || !InvokeSongExit(s,true)) {FinishSong("父页已变化或原生退出未受理。");return;}
-        AdvanceSong(SongPhase::OuterArrival,"正在等待原生自定义退出……");return;
+        if(!SameSource(songRoute.source,s) || !InvokeSongExit(s,true)) {FinishSong(Tr(Tx::songroute_parent_exit_failed));return;}
+        AdvanceSong(SongPhase::OuterArrival,Tr(Tx::songroute_waiting_exit));return;
     }
     if(songRoute.phase==SongPhase::OuterArrival) {
         if(s.page==NativePage::Song && s.idle) {
-            if(songRoute.returnMode!=2 || s.pvid!=songRoute.sourcePvid) {FinishSong("退出后的选曲来源与原事务不符。");return;}
-            songRoute.source=s;AdvanceSong(SongPhase::SongArrival,"已返回选曲，正在等待列表就绪……");
+            if(songRoute.returnMode!=2 || s.pvid!=songRoute.sourcePvid) {FinishSong(Tr(Tx::songroute_song_mismatch));return;}
+            songRoute.source=s;AdvanceSong(SongPhase::SongArrival,Tr(Tx::songroute_back_song));
         } else if(s.page==NativePage::Home && s.idle) {
-            if(songRoute.returnMode!=7) {FinishSong("退出后的主页来源与原事务不符。");return;}
-            songRoute.source=s;AdvanceSong(SongPhase::HomeBoundary,"已返回主页，正在进入选曲……");
+            if(songRoute.returnMode!=7) {FinishSong(Tr(Tx::songroute_home_mismatch));return;}
+            songRoute.source=s;AdvanceSong(SongPhase::HomeBoundary,Tr(Tx::songroute_back_home));
         }
         return;
     }
     if(songRoute.phase==SongPhase::SongArrival) {
         if(s.page!=NativePage::Song || !s.idle) return;
         if(!songRoute.stable) songRoute.source=s;
-        else if(!SameSource(songRoute.source,s)) {FinishSong("选曲列表就绪期间对象或当前歌曲已改变。");return;}
+        else if(!SameSource(songRoute.source,s)) {FinishSong(Tr(Tx::songroute_list_changed));return;}
         if(boundary!=0 || ++songRoute.stable<2) return;
-        AdvanceSong(SongPhase::Ready,"选曲页已到达，正在核对歌曲定位上下文……");
+        AdvanceSong(SongPhase::Ready,Tr(Tx::songroute_arrived));
         songRoute.readyAfter=GetTickCount64()+250;
     }
 }
@@ -311,11 +312,11 @@ bool DispatchArrival(const NativePageSnapshot& s,std::string& message) {
     auto frame=ItemFrame(s);frame.thread=GetCurrentThreadId();
     // 到达发型页后按实际歌者重验：其他角色的发型只到达页面、不定位，筛选不授予切换歌者的权限。
     if(route.target==NativePage::Hair && frame.singer && !CompatibleWithSinger(route.request.character,frame.singer)) {
-        message=std::string("已进入")+PageName(route.target)+"；该发型属于其他角色，仅供浏览。";return false;
+        message=Trf(Tx::route_entered_other_character,{{"page",PageName(route.target)}});return false;
     }
     if(SubmitCustomizationItemRequest(route.request,frame,message)) return true;
     // 页面到达不等于定位成功：未认证 Profile 时如实说明停留在原生列表当前位置。
-    message=std::string("已进入")+PageName(route.target)+"；"+message;return false;
+    message=Trf(Tx::route_entered_with_note,{{"page",PageName(route.target)},{"note",message}});return false;
 }
 // 参数 boundary/object 是原生帧类型与真实this；每次只在匹配边界提交一步。
 void OnBoundary(int boundary,uintptr_t object) {
@@ -323,23 +324,23 @@ void OnBoundary(int boundary,uintptr_t object) {
     if(!lock.owns_lock() || !installed) return;
     OnSongBoundary(boundary,object);
     if(route.phase==RoutePhase::Idle || route.phase==RoutePhase::Done || route.phase==RoutePhase::Locating) return;
-    if(route.cancelled!=cancellation.load() || route.request.uiGeneration!=currentUiGeneration) {Finish("查询、目录或面板已变化，旧跨页请求已取消。");return;}
+    if(route.cancelled!=cancellation.load() || route.request.uiGeneration!=currentUiGeneration) {Finish(Tr(Tx::route_cancelled_changed));return;}
     const auto now=GetTickCount64();
-    if(now>route.deadline) {Finish(std::string("进入")+PageName(route.target)+"超时，已停止请求；可在当前页面重新搜索。");return;}
+    if(now>route.deadline) {Finish(Trf(Tx::route_enter_timeout,{{"page",PageName(route.target)}}));return;}
     const auto s=ReadNativePage(imageBase);
     const bool matches=boundary==0 || (boundary==1 && object==s.song) || (boundary==2 && object==s.state);
     if(!matches) return;
     const auto thread=GetCurrentThreadId();
-    if(route.thread && route.thread!=thread) {Finish("原生路由线程发生变化，已取消请求。");return;}
-    const std::string entering=std::string("正在进入")+PageName(route.target)+"……";
+    if(route.thread && route.thread!=thread) {Finish(Tr(Tx::route_thread_changed));return;}
+    const std::string entering=Trf(Tx::route_entering,{{"page",PageName(route.target)}});
     if(route.phase==RoutePhase::Boundary) {
         const bool correct=(s.page==NativePage::Home && boundary==0) || (s.page==NativePage::Song && boundary==1)
             || ((s.page==NativePage::Parent || s.page==NativePage::Module || s.page==NativePage::Hair || s.page==NativePage::Accessory) && boundary==2);
         if(!correct) return;
-        if(!SameSource(route.source,s) || !SupportedSource(s,route.target)) {Finish("提交后原生页面、曲目或配置已改变，旧双击已取消。");return;}
+        if(!SameSource(route.source,s) || !SupportedSource(s,route.target)) {Finish(Tr(Tx::route_source_changed));return;}
         route.thread=thread;
         const auto next=NextHop(s.page,route.target);
-        if(!InvokeRoute(s,next)) {Finish("原生页面请求未受理，已停止后续操作。");return;}
+        if(!InvokeRoute(s,next)) {Finish(Tr(Tx::route_page_rejected));return;}
         if(next==NativePage::Parent) {Advance(RoutePhase::ParentArrival,entering);return;}
         route.expect=next;Advance(RoutePhase::PageArrival,entering);return;
     }
@@ -347,57 +348,57 @@ void OnBoundary(int boundary,uintptr_t object) {
         if(s.page==NativePage::Parent && s.idle && s.parentPhase==1) {
             const bool expected=route.source.page==NativePage::Home?s.mode==7
                 :s.mode==2 && s.sourcePvid==route.source.pvid;
-            if(!expected) {Finish("到达的自定义页与原双击来源不符，已取消旧目标。");return;}
+            if(!expected) {Finish(Tr(Tx::route_unexpected_page));return;}
             // 父页直接进入发型／道具的主动协议未独立验收；只走已验证的光标0→模型→兄弟页。
-            if(s.parentCursor!=0) {Finish("已进入自定义父页；原生光标不在“模型”，暂不支持从此光标继续进入，请将光标移到模型后再次双击。");return;}
+            if(s.parentCursor!=0) {Finish(Tr(Tx::route_parent_cursor));return;}
             route.source=s;Advance(RoutePhase::ParentConfirm,entering);
         } else if(s.page==NativePage::Hair || s.page==NativePage::Accessory || s.page==NativePage::Module
             || (s.page==NativePage::Song && (route.source.page!=NativePage::Song || s.pvid!=route.source.pvid))
-            || (s.page==NativePage::Home && route.source.page!=NativePage::Home)) Finish("进入自定义期间页面被改变，已停止自动操作。");
+            || (s.page==NativePage::Home && route.source.page!=NativePage::Home)) Finish(Tr(Tx::route_changed_entering));
         return;
     }
     if(route.phase==RoutePhase::ParentConfirm) {
         if(boundary!=2) return;
-        if(!SameSource(route.source,s) || !SupportedSource(s,route.target)) {Finish("自定义父页已改变，已停止进入模型。");return;}
-        if(!InvokeRoute(s,NativePage::Module)) {Finish("原生模型确认未受理，已停止。");return;}
+        if(!SameSource(route.source,s) || !SupportedSource(s,route.target)) {Finish(Tr(Tx::route_parent_changed));return;}
+        if(!InvokeRoute(s,NativePage::Module)) {Finish(Tr(Tx::route_module_rejected));return;}
         route.expect=NativePage::Module;Advance(RoutePhase::PageArrival,entering);return;
     }
     if(route.phase==RoutePhase::PageArrival) {
         if(s.page==route.expect && s.idle) {
-            if(!SameConfiguration(route.source,s)) {Finish(std::string("进入")+PageName(route.target)+"期间曲目、范围或槽位已改变，旧目标已取消。");return;}
+            if(!SameConfiguration(route.source,s)) {Finish(Trf(Tx::route_changed_during,{{"page",PageName(route.target)}}));return;}
             route.source=s;
-            if(route.expect==route.target) {Advance(RoutePhase::LocateReady,std::string(PageName(route.target))+"已到达，正在核对目标列表……");return;}
-            Advance(RoutePhase::SiblingBoundary,std::string("已到达")+PageName(route.expect)+"，正在进入"+PageName(route.target)+"……");return;
+            if(route.expect==route.target) {Advance(RoutePhase::LocateReady,Trf(Tx::route_arrived_checking,{{"page",PageName(route.target)}}));return;}
+            Advance(RoutePhase::SiblingBoundary,Trf(Tx::route_arrived_next,{{"from",PageName(route.expect)},{"page",PageName(route.target)}}));return;
         }
-        if(s.page==NativePage::Song || s.page==NativePage::Home) Finish(std::string(PageName(route.target))+"路径被离开，已取消旧定位。");
+        if(s.page==NativePage::Song || s.page==NativePage::Home) Finish(Trf(Tx::route_path_left,{{"page",PageName(route.target)}}));
         return;
     }
     if(route.phase==RoutePhase::SiblingBoundary) {
         if(s.page!=route.expect || !s.idle) {
-            if(s.idle && s.page!=route.expect) Finish("中转页已被改变，已停止自动操作。");
+            if(s.idle && s.page!=route.expect) Finish(Tr(Tx::route_transit_changed));
             return;
         }
         if(boundary!=2) return;
-        if(!SameSource(route.source,s)) {Finish("中转页配置已变化，旧目标已取消。");return;}
+        if(!SameSource(route.source,s)) {Finish(Tr(Tx::route_transit_config));return;}
         // 中转页需连续两次空闲状态帧，避免在列表初始化帧内请求下一兄弟页。
         if(++route.stable<2) return;
         const auto next=NextHop(s.page,route.target);
-        if(!InvokeRoute(s,next)) {Finish("原生同层页面请求未受理，已停止后续操作。");return;}
+        if(!InvokeRoute(s,next)) {Finish(Tr(Tx::route_sibling_rejected));return;}
         route.expect=next;Advance(RoutePhase::PageArrival,entering);return;
     }
     if(route.phase==RoutePhase::LocateReady) {
         if(s.page!=route.target || !s.idle) {
-            if(s.page!=route.target) Finish(std::string(PageName(route.target))+"被离开，已取消旧定位。");
+            if(s.page!=route.target) Finish(Trf(Tx::route_page_left,{{"page",PageName(route.target)}}));
             return;
         }
-        if(!SameSource(route.source,s)) {Finish(std::string(PageName(route.target))+"配置已变化，旧目标已取消。");return;}
+        if(!SameSource(route.source,s)) {Finish(Trf(Tx::route_page_changed,{{"page",PageName(route.target)}}));return;}
         if(boundary!=0) return;
         if(route.target==NativePage::Module && !ReadModuleLocatorContext()) {route.stable=0;return;}
         if(++route.stable<2) return;
         std::string message;
         // 未能交给定位器时只确认“已进入页面”，不显示定位成功；开发原因只写日志细节。
         if(!DispatchArrival(s,message)) {Finish(message,false,CustomizationStage::PageEntered,route.target==NativePage::Module?std::string{}:PollCustomizationItemLocator().detail);return;}
-        Advance(RoutePhase::Locating,std::string("已进入")+PageName(route.target)+"，正在定位"+(route.target==NativePage::Module?"服装":route.target==NativePage::Hair?"发型":"道具")+"……");
+        Advance(RoutePhase::Locating,Trf(Tx::route_entered_locating,{{"page",PageName(route.target)},{"item",Tr(route.target==NativePage::Module?Tx::item_module:route.target==NativePage::Hair?Tx::item_hair:Tx::item_accessory)}}));
     }
 }
 // 参数 object 为原生内部状态机；仅当发型／道具执行器有事务时读取页面并转交本帧，不扫描驻留对象。
@@ -485,13 +486,13 @@ NativePage TargetPage(CustomizationDomain domain) {
 bool ResolveTarget(CustomizationLocateRequest& request,std::string& message) {
     if(targetResolver) {
         const auto facts=targetResolver(request.key,request.catalogFingerprint);
-        if(!facts) {message="目标已不在最新定制目录中，或目录已变化；未提交原生操作。";return false;}
-        if(facts->domain!=request.domain || (facts->domain!=CustomizationDomain::Models && facts->part!=request.part)) {message="请求领域或部位与最新目录不一致，已拒绝。";return false;}
+        if(!facts) {message=Tr(Tx::route_target_gone);return false;}
+        if(facts->domain!=request.domain || (facts->domain!=CustomizationDomain::Models && facts->part!=request.part)) {message=Tr(Tx::route_domain_mismatch);return false;}
         request.part=facts->part;request.character=facts->character;
     }
-    if(request.key.kind!=CustomizationDomainKind(request.domain)) {message="请求实体种类与领域不一致，已拒绝。";return false;}
+    if(request.key.kind!=CustomizationDomainKind(request.domain)) {message=Tr(Tx::route_kind_mismatch);return false;}
     const bool part=request.part==CustomizationPart::Head || request.part==CustomizationPart::Face || request.part==CustomizationPart::Neck || request.part==CustomizationPart::Back;
-    if((request.domain==CustomizationDomain::Hair && request.part!=CustomizationPart::Hair) || (request.domain==CustomizationDomain::Accessories && !part)) {message="发型／道具请求缺少有效部位，已拒绝。";return false;}
+    if((request.domain==CustomizationDomain::Hair && request.part!=CustomizationPart::Hair) || (request.domain==CustomizationDomain::Accessories && !part)) {message=Tr(Tx::route_part_missing);return false;}
     return true;
 }
 std::mutex pageCacheMutex;
@@ -508,8 +509,8 @@ NativePageSnapshot CachedNativePage() {
 
 bool SubmitCustomizationRequest(const CustomizationLocateRequest& original,std::string& message) {
     std::unique_lock lock(routeMutex,std::try_to_lock);
-    if(!lock.owns_lock()) {message="原生操作正在处理中，请稍候。";return false;}
-    if(SongBusy() && songRoute.cancelled==songCancellation.load()) {message="歌曲跨页或定位仍在处理中。";return false;}
+    if(!lock.owns_lock()) {message=Tr(Tx::route_processing);return false;}
+    if(SongBusy() && songRoute.cancelled==songCancellation.load()) {message=Tr(Tx::route_song_busy);return false;}
     // 网关独立重算目标页，不信任界面传入的页面；领域、部位与人物以最新目录为准。
     auto request=original;
     if(!ResolveTarget(request,message)) return false;
@@ -519,39 +520,39 @@ bool SubmitCustomizationRequest(const CustomizationLocateRequest& original,std::
     const bool atTarget=page.page==target || (models && !installed && ReadModuleLocatorContext());
     message=CheckCustomizationNavigation(request,!atTarget);
     if(!message.empty()) return false;
-    if(previewContinuation.waiting) {message="正在退出旧预览并准备后续操作，请稍候。";return false;}
+    if(previewContinuation.waiting) {message=Tr(Tx::route_exiting_preview_wait);return false;}
     // 模型预览中：模型动作或任一领域的双击定位先退出预览，续接后再次经过本网关。
     if((page.page==NativePage::Module || (models && atTarget)) && ModulePreviewCanExit() && (models || request.action==CustomizationAction::Locate)) {
         if(!request.serial || request.key.id<0 || !request.queryRevision
-            || request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256 || request.uiGeneration!=currentUiGeneration) {message="预览后续目标或目录身份无效。";return false;}
+            || request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256 || request.uiGeneration!=currentUiGeneration) {message=Tr(Tx::route_continuation_bad);return false;}
         const auto preview=PollModuleAction();
         if(!RequestModulePreviewExit(request,message)) return false;
         previewContinuation={};previewContinuation.waiting=true;previewContinuation.request=request;previewContinuation.source=page;
         previewContinuation.cancelled=cancellation.load();previewContinuation.previewSerial=preview.serial;previewContinuation.deadline=GetTickCount64()+20000;
-        previewContinuation.status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,0,false,false,"正在退出旧预览，随后执行所选操作。"};
+        previewContinuation.status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,0,false,false,Tr(Tx::route_exit_then_action)};
         previewContinuation.status.action=request.action;route.phase=RoutePhase::Idle;message=previewContinuation.status.message;return true;
     }
-    if(ModuleActionBusy()) {message="服装预览或换装仍在处理中，请先完成当前操作。";return false;}
+    if(ModuleActionBusy()) {message=Tr(Tx::route_module_busy);return false;}
     // 发型／道具临时预览期间不接受新操作；Profile 提供退出入口时先请求退出，核对原装备后再允许下一步。
     if(CustomizationItemPreviewActive()) {
         if(!request.serial || request.key.id<0 || !request.queryRevision || request.catalogFingerprint.empty()
-            || request.uiGeneration!=currentUiGeneration) {message="预览后续目标或目录身份无效。";return false;}
+            || request.uiGeneration!=currentUiGeneration) {message=Tr(Tx::route_continuation_bad);return false;}
         const auto preview=PollCustomizationItemLocator();
         if(!RequestCustomizationItemPreviewExit(message)) return false;
         previewContinuation={};previewContinuation.waiting=previewContinuation.itemPreview=true;
         previewContinuation.request=request;previewContinuation.source=page;
         previewContinuation.cancelled=cancellation.load();previewContinuation.previewSerial=preview.serial;previewContinuation.deadline=GetTickCount64()+20000;
-        previewContinuation.status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,0,false,false,"正在退出当前预览，恢复原装备后继续所选操作……"};
+        previewContinuation.status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,0,false,false,Tr(Tx::route_exit_restore_then)};
         previewContinuation.status.action=request.action;route.phase=RoutePhase::Idle;message=previewContinuation.status.message;return true;
     }
-    if(CustomizationItemLocatorBusy()) {message="发型／道具原生操作仍在处理中，请稍候。";return false;}
-    if(route.phase!=RoutePhase::Idle && route.phase!=RoutePhase::Done && route.cancelled==cancellation.load()) {message="上一条跨页定位仍在处理中。";return false;}
+    if(CustomizationItemLocatorBusy()) {message=Tr(Tx::route_item_busy);return false;}
+    if(route.phase!=RoutePhase::Idle && route.phase!=RoutePhase::Done && route.cancelled==cancellation.load()) {message=Tr(Tx::route_previous_busy);return false;}
     // 发型：当前歌者已知时其他角色只读，任何入口（双击、Enter、底栏、按钮）都不跨页、不预览、不更换；
     // 歌者未知时仍可浏览与跨页，预览和更换拒绝，到达后再按实际歌者重验。
     if(request.domain==CustomizationDomain::Hair) {
         const auto singer=SingerOf(page);
-        if(singer && !CompatibleWithSinger(request.character,singer)) {message="该发型属于其他角色，仅供浏览。";return false;}
-        if(!singer && request.action!=CustomizationAction::Locate) {message="未读取到当前歌者，暂不支持此操作。";return false;}
+        if(singer && !CompatibleWithSinger(request.character,singer)) {message=Tr(Tx::itemop_other_character);return false;}
+        if(!singer && request.action!=CustomizationAction::Locate) {message=Tr(Tx::itemop_singer_unknown);return false;}
     }
     // 发型／道具已在目标页：交给独立执行器；未知 Profile 明确 Unsupported，不照搬模型命令。
     if(!models && atTarget) {
@@ -562,7 +563,7 @@ bool SubmitCustomizationRequest(const CustomizationLocateRequest& original,std::
     }
     if(request.action!=CustomizationAction::Locate) {
         const auto locate=PollModuleLocator();
-        if(locate.phase==ModuleLocatePhase::WaitingForFrame || locate.phase==ModuleLocatePhase::SwitchingCategory || locate.phase==ModuleLocatePhase::Confirming) {message="原生定位仍在处理中，请稍候。";return false;}
+        if(locate.phase==ModuleLocatePhase::WaitingForFrame || locate.phase==ModuleLocatePhase::SwitchingCategory || locate.phase==ModuleLocatePhase::Confirming) {message=Tr(Tx::route_locate_busy);return false;}
         const bool accepted=SubmitModuleAction(request,message);
         if(accepted) route.phase=RoutePhase::Idle;
         return accepted;
@@ -574,22 +575,22 @@ bool SubmitCustomizationRequest(const CustomizationLocateRequest& original,std::
     }
     if(!installed || !SupportedSource(page,target)) {
         message=page.page==NativePage::Parent && page.idle && page.parentCursor!=0
-            ?"自定义父页光标不在“模型”；暂不支持从当前父页光标直接进入，请将光标移到模型或进入任一子页后再双击。"
-            :"当前页面或过渡状态尚未认证；请进入空闲主页、选曲或自定义列表后重试。";
+            ?Tr(Tx::route_parent_cursor_retry)
+            :Tr(Tx::route_not_certified);
         return false;
     }
     if(request.key.id<0 || request.serial<=lastSerial || !request.serial
         || request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256
-        || (!lockedFingerprint.empty() && lockedFingerprint!=request.catalogFingerprint)) {message="跨页目标身份、序号或目录指纹无效。";return false;}
+        || (!lockedFingerprint.empty() && lockedFingerprint!=request.catalogFingerprint)) {message=Tr(Tx::route_identity_bad);return false;}
     lockedFingerprint=request.catalogFingerprint;lastSerial=request.serial;currentUiGeneration=request.uiGeneration;
     route={};route.request=request;route.source=page;route.target=target;route.cancelled=cancellation.load();
     route.status={ModuleLocatePhase::WaitingForFrame,request.serial,request.uiGeneration,0,false,false,""};
     route.status.action=request.action;
     // 目标定位未认证时在导航开始前说明缺口：到达不等于定位，更不等于装备。
-    std::string text="正在等待原生页面帧……";
+    std::string text=Tr(Tx::route_waiting_frame);
     if(!models) {
         const auto capability=CustomizationItemCapabilities(request.domain);
-        if(!capability.locate) text=std::string("正在进入")+PageName(target)+"；"+capability.locateReason;
+        if(!capability.locate) text=Trf(Tx::route_entering_with_reason,{{"page",PageName(target)},{"reason",capability.locateReason}});
     }
     Advance(RoutePhase::Boundary,text);message=route.status.message;return true;
 }
@@ -602,21 +603,21 @@ void TickNativePageRouter(uint64_t now,uint64_t generation) {
         auto& pending=previewContinuation;
         // 失败只撤销尚未执行的新意图，已经开始的原生退出继续安全收尾。
         const auto reject=[&](const std::string& reason) {pending.waiting=false;pending.status.completed=true;pending.status.succeeded=false;pending.status.phase=ModuleLocatePhase::Rejected;pending.status.message=reason;};
-        if(pending.cancelled!=cancellation.load() || pending.request.uiGeneration!=generation) {reject("后续查询或目录已变化，预览退出后的旧请求已取消。");return;}
-        if(now>pending.deadline) {reject("退出旧预览超时，未执行后续操作。");return;}
+        if(pending.cancelled!=cancellation.load() || pending.request.uiGeneration!=generation) {reject(Tr(Tx::route_followup_changed));return;}
+        if(now>pending.deadline) {reject(Tr(Tx::route_exit_timeout));return;}
         const auto previous=pending.itemPreview?PollCustomizationItemLocator():PollModuleAction();
-        if(previous.serial!=pending.previewSerial) {reject("预览事务身份已变化，未执行后续操作。");return;}
+        if(previous.serial!=pending.previewSerial) {reject(Tr(Tx::route_preview_identity));return;}
         if(!previous.completed || (pending.itemPreview?CustomizationItemLocatorBusy():ModuleActionBusy())) return;
-        if(!previous.succeeded) {reject("旧预览未能安全恢复原装备："+previous.message);return;}
+        if(!previous.succeeded) {reject(Trf(Tx::route_preview_restore_failed,{{"reason",previous.message}}));return;}
         // 原分类与高亮按用户要求保留；等后续原生帧刷新定位器后再派发，帧内不等待。
         if(!pending.readyAfter) {pending.readyAfter=now+20;return;}
         if(now<pending.readyAfter) return;
         const auto page=ReadNativePage(imageBase);
-        if(page.page!=pending.source.page || !page.idle || page.scene!=pending.source.scene || page.state!=pending.source.state || !SameConfiguration(page,pending.source)) {reject("退出预览期间歌曲、槽位、范围或页面已改变。");return;}
+        if(page.page!=pending.source.page || !page.idle || page.scene!=pending.source.scene || page.state!=pending.source.state || !SameConfiguration(page,pending.source)) {reject(Tr(Tx::route_preview_context_changed));return;}
         auto request=pending.request;
         if(request.action!=CustomizationAction::Locate) {
             const auto capability=request.domain==CustomizationDomain::Models?ReadModuleActionCapability(request.key,request.character):ReadCustomizationItemActionCapability(request.domain,request.key);
-            if(capability.slot!=request.slot || capability.nativeScope!=request.nativeScope || capability.scope!=request.scope) {reject("后续动作槽位或范围不再匹配。");return;}
+            if(capability.slot!=request.slot || capability.nativeScope!=request.nativeScope || capability.scope!=request.scope) {reject(Tr(Tx::route_slot_mismatch));return;}
             // 只更新本次已认证退出产生的上下文代数，保留原请求目标、目录、查询和槽位意图。
             request.contextGeneration=capability.contextGeneration;
         }
@@ -626,10 +627,10 @@ void TickNativePageRouter(uint64_t now,uint64_t generation) {
         return;
     }
     if(route.phase==RoutePhase::Idle || route.phase==RoutePhase::Done) return;
-    if(route.cancelled!=cancellation.load() || route.request.uiGeneration!=generation) {Finish("面板、查询或目录已变化，旧跨页定位已取消。");return;}
+    if(route.cancelled!=cancellation.load() || route.request.uiGeneration!=generation) {Finish(Tr(Tx::route_panel_changed));return;}
     if(now>route.deadline) {
         if(route.target==NativePage::Module) CancelModuleLocate(); else CancelCustomizationItemLocator();
-        Finish("原生跨页定位超时，已停止后续动作。");return;
+        Finish(Tr(Tx::route_timeout));return;
     }
     if(route.phase==RoutePhase::Locating) {
         const auto status=route.target==NativePage::Module?PollModuleLocator():PollCustomizationItemLocator();
@@ -670,7 +671,7 @@ CustomizationActionCapability ReadCustomizationItemActionCapability(Customizatio
     capability.contextGeneration=page.scene;
     capability.busy=capability.busy || (CustomizationItemLocatorBusy() && !inPreview);
     // 实际歌者未知时预览与更换不开放；人物兼容性由界面只读规则与执行器再次核对。
-    if(!SingerOf(page)) {capability.preview=capability.equip=capability.remove=false;capability.previewReason=capability.equipReason="未读取到当前歌者，暂不支持此操作。";}
+    if(!SingerOf(page)) {capability.preview=capability.equip=capability.remove=false;capability.previewReason=capability.equipReason=Tr(Tx::itemop_singer_unknown);}
     // 不在目标页时任何能力都不开放；按钮与底栏只提示双击主体进入。
     if(!capability.targetPage) capability.locate=capability.preview=capability.equip=capability.remove=false;
     return capability;
@@ -703,43 +704,43 @@ void ConfigureNativePerformance(std::function<void(double)> report) {nativePerfo
 // 参数request/available/message为稳定歌曲动作；即使外部伪造来源，也须匹配首击身份及当前UI代数。
 bool SubmitSongNavigation(const Request& request,bool available,std::string& message) {
     std::unique_lock lock(routeMutex,std::try_to_lock);
-    if(!lock.owns_lock()) {message="原生导航正在处理中。";return false;}
-    if(!available || request.pvid<=0 || request.difficulty<0 || request.difficulty>4 || request.style<0 || request.style>2) {message="目标歌曲、难度或风格无效。";return false;}
-    if(!installed || !songSubmit) {message="歌曲原生跨页尚未初始化。";return false;}
+    if(!lock.owns_lock()) {message=Tr(Tx::songroute_busy_nav);return false;}
+    if(!available || request.pvid<=0 || request.difficulty<0 || request.difficulty>4 || request.style<0 || request.style>2) {message=Tr(Tx::songroute_target_bad);return false;}
+    if(!installed || !songSubmit) {message=Tr(Tx::songroute_not_ready);return false;}
     const auto s=ReadNativePage(imageBase);
     const bool doubleBody=request.origin==SongOrigin::BodyDoubleClick && request.queryRevision
         && request.firstClickPvid==request.pvid && request.firstClickRevision==request.queryRevision;
     const bool difficultyButton=request.origin==SongOrigin::DifficultyButton;
     if(s.page!=NativePage::Song && !doubleBody && !difficultyButton) {
-        message="双击歌曲名称、连按两次 Enter 或点击难度进入选曲页；单击名称和单次 Enter 不跨页。";return false;
+        message=Tr(Tx::songroute_how_to);return false;
     }
-    if(SongBusy() && songRoute.cancelled==songCancellation.load()) {message="上一条歌曲请求仍在处理中。";return false;}
-    if(previewContinuation.waiting) {message="服装预览后续操作正在退出准备中。";return false;}
+    if(SongBusy() && songRoute.cancelled==songCancellation.load()) {message=Tr(Tx::songroute_previous_busy);return false;}
+    if(previewContinuation.waiting) {message=Tr(Tx::songroute_preview_exiting);return false;}
     const bool itemPreview=CustomizationItemPreviewActive() && (s.page==NativePage::Hair || s.page==NativePage::Accessory);
     if((s.page==NativePage::Module && ModulePreviewCanExit()) || itemPreview) {
-        if(!request.serial || request.serial<=songLastSerial || !request.catalogGeneration || request.catalogGeneration!=songGeneration || request.queryRevision!=songRevision) {message="歌曲目标、查询或目录身份已过期。";return false;}
+        if(!request.serial || request.serial<=songLastSerial || !request.catalogGeneration || request.catalogGeneration!=songGeneration || request.queryRevision!=songRevision) {message=Tr(Tx::songroute_identity_expired);return false;}
         const auto preview=itemPreview?PollCustomizationItemLocator():PollModuleAction();
         if(!(itemPreview?RequestCustomizationItemPreviewExit(message):RequestModulePreviewExitForSong(message))) return false;
         songLastSerial=request.serial;songRoute={};songRoute.itemPreview=itemPreview;songRoute.request=request;songRoute.source=s;songRoute.previewSerial=preview.serial;
         songRoute.returnMode=s.mode;songRoute.sourcePvid=s.sourcePvid;songRoute.cancelled=songCancellation.load();songRoute.status.serial=request.serial;songRoute.status.busy=true;
-        AdvanceSong(SongPhase::PreviewExit,"正在退出服装预览，随后进入所选歌曲……");songRoute.deadline=GetTickCount64()+20000;message=songRoute.status.message;return true;
+        AdvanceSong(SongPhase::PreviewExit,Tr(Tx::songroute_exit_preview_then));songRoute.deadline=GetTickCount64()+20000;message=songRoute.status.message;return true;
     }
     const auto locate=PollModuleLocator();
     if(ModuleActionBusy() || CustomizationItemLocatorBusy() || (route.phase!=RoutePhase::Idle && route.phase!=RoutePhase::Done && route.cancelled==cancellation.load())
         || locate.phase==ModuleLocatePhase::WaitingForFrame || locate.phase==ModuleLocatePhase::SwitchingCategory || locate.phase==ModuleLocatePhase::Confirming) {
-        message="服装原生操作仍在处理中，请先完成当前操作。";return false;
+        message=Tr(Tx::songroute_module_busy);return false;
     }
     if(!s.idle || !(s.page==NativePage::Home || s.page==NativePage::Song || s.page==NativePage::Module
         || s.page==NativePage::Hair || s.page==NativePage::Accessory || (s.page==NativePage::Parent && s.parentPhase==1))) {
-        message="当前原生页面或过渡状态尚未认证，未切换选曲。";return false;
+        message=Tr(Tx::songroute_page_not_certified);return false;
     }
     if(!request.serial || request.serial<=songLastSerial || !request.catalogGeneration
-        || request.catalogGeneration!=songGeneration || request.queryRevision!=songRevision) {message="歌曲目标、查询或目录身份已过期。";return false;}
+        || request.catalogGeneration!=songGeneration || request.queryRevision!=songRevision) {message=Tr(Tx::songroute_identity_expired);return false;}
     songLastSerial=request.serial;songRoute={};songRoute.request=request;songRoute.source=s;
     songRoute.returnMode=s.mode;songRoute.sourcePvid=s.sourcePvid;songRoute.cancelled=songCancellation.load();
     songRoute.status.serial=request.serial;songRoute.status.busy=true;
     AdvanceSong(s.page==NativePage::Song?SongPhase::Ready:SongPhase::Boundary,
-        s.page==NativePage::Song?"正在提交原位歌曲定位……":"正在等待原生帧进入选曲……");
+        s.page==NativePage::Song?Tr(Tx::songroute_submitting_here):Tr(Tx::songroute_waiting_frame));
     message=songRoute.status.message;return true;
 }
 // 参数now/generation/revision由UI宿主逐帧提供；旧查询不在到达后重新绑定当前选中行。
@@ -749,29 +750,29 @@ void TickSongNavigation(uint64_t now,uint64_t generation,uint64_t revision) {
     if(!SongBusy()) return;
     if(songRoute.cancelled!=songCancellation.load() || songRoute.request.catalogGeneration!=generation || songRoute.request.queryRevision!=revision) {
         if(songRoute.phase==SongPhase::Selecting && songCancel) songCancel();
-        FinishSong("歌曲查询、目录或面板已变化，旧请求已取消。");return;
+        FinishSong(Tr(Tx::songroute_changed));return;
     }
     if(now>songRoute.deadline) {
         if(songRoute.phase==SongPhase::Selecting && songCancel) songCancel();
-        FinishSong("歌曲跨页或定位超时，已停止后续操作。");return;
+        FinishSong(Tr(Tx::songroute_timeout));return;
     }
     if(songRoute.phase==SongPhase::PreviewExit) {
         const auto previous=songRoute.itemPreview?PollCustomizationItemLocator():PollModuleAction();
-        if(previous.serial!=songRoute.previewSerial) {FinishSong("原预览事务已改变，取消旧歌曲请求。");return;}
+        if(previous.serial!=songRoute.previewSerial) {FinishSong(Tr(Tx::songroute_preview_changed));return;}
         if(!previous.completed || (songRoute.itemPreview?CustomizationItemLocatorBusy():ModuleActionBusy())) return;
-        if(!previous.succeeded) {FinishSong("退出旧预览未能核对原装备，未切换歌曲。");return;}
+        if(!previous.succeeded) {FinishSong(Tr(Tx::songroute_preview_unverified));return;}
         if(!songRoute.readyAfter) {songRoute.readyAfter=now+20;return;}
         if(now<songRoute.readyAfter) return;
         const auto page=ReadNativePage(imageBase);
-        if(page.page!=songRoute.source.page || !page.idle || page.scene!=songRoute.source.scene || !SameConfiguration(page,songRoute.source)) {FinishSong("退出预览期间曲目、槽位或范围改变，未切换歌曲。");return;}
-        songRoute.source=page;AdvanceSong(SongPhase::Boundary,"旧预览已安全退出，正在进入所选歌曲……");return;
+        if(page.page!=songRoute.source.page || !page.idle || page.scene!=songRoute.source.scene || !SameConfiguration(page,songRoute.source)) {FinishSong(Tr(Tx::songroute_preview_context));return;}
+        songRoute.source=page;AdvanceSong(SongPhase::Boundary,Tr(Tx::songroute_preview_done));return;
     }
     if(songRoute.phase!=SongPhase::Ready || now<songRoute.readyAfter) return;
     const auto current=ReadNativePage(imageBase);
-    if(current.page!=NativePage::Song || !current.idle || !SameSource(songRoute.source,current)) {FinishSong("提交歌曲定位前原生页面或当前歌曲已变化。");return;}
+    if(current.page!=NativePage::Song || !current.idle || !SameSource(songRoute.source,current)) {FinishSong(Tr(Tx::songroute_page_changed));return;}
     std::string message;
-    if(!songSubmit || !songSubmit(songRoute.request,message)) {FinishSong(message.empty()?"原位歌曲定位未受理。":message);return;}
-    AdvanceSong(SongPhase::Selecting,"已进入选曲，正在独立核对PVID、难度和风格……");
+    if(!songSubmit || !songSubmit(songRoute.request,message)) {FinishSong(message.empty()?Tr(Tx::songroute_here_rejected):message);return;}
+    AdvanceSong(SongPhase::Selecting,Tr(Tx::songroute_verifying));
 }
 // 参数success/message必须来自既有Selector的真实读回，导航层不伪造定位成功。
 void CompleteSongNavigation(bool success,const std::string& message) {

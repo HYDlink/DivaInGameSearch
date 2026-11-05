@@ -1,4 +1,5 @@
 #pragma once
+#include "i18n.h"
 #include <cstdint>
 #include <string>
 namespace diva {
@@ -46,7 +47,7 @@ public:
     bool Busy() const;
     // 取消后续定位与反馈，不反向写回玩家当前歌曲；已完成的原生调用不撤销。
     void Cancel();
-    std::string message="在稳定选曲菜单打开面板后定位。";
+    std::string message=Tr(Tx::selector_initial);
     bool succeeded=false;
 private:
     enum class Phase { Idle, Begin, Prepare, Verify, Recover };

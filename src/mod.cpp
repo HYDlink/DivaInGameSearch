@@ -122,7 +122,7 @@ __declspec(dllexport) void Init() {
         Log("打开搜索："+diva::DescribeSnapshot(snapshot)+"；"+diva::App().DescribeInputState());
         if(!diva::Game().inputReady) {
             view.open=false;Log(diva::Game().diagnostic);
-            MessageBoxW(diva::App().window,diva::Wide("无法安全隔离当前游戏输入，搜索面板未打开。\n"+diva::Game().diagnostic).c_str(),L"DIVA 游戏内搜索",MB_OK|MB_ICONINFORMATION);
+            MessageBoxW(diva::App().window,diva::Wide(std::string(diva::Tr(diva::Tx::mod_input_isolation_failed))+"\n"+diva::Game().diagnostic).c_str(),diva::Wide(diva::Tr(diva::Tx::app_title)).c_str(),MB_OK|MB_ICONINFORMATION);
             return;
         }
         if(snapshot.supported) {

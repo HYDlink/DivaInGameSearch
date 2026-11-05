@@ -1,4 +1,5 @@
 #pragma once
+#include "i18n.h"
 #include "customization.h"
 #include <string>
 
@@ -35,11 +36,11 @@ struct CustomizationLocateRequest {
 inline std::string CheckCustomizationNavigation(const CustomizationLocateRequest& request,bool requiresNavigation) {
     if(!requiresNavigation) return {};
     const std::string page=CustomizationDomainPageName(request.domain);
-    if(request.action!=CustomizationAction::Locate) return "双击卡片进入"+page+"后使用；操作按钮不会自动跨页。";
+    if(request.action!=CustomizationAction::Locate) return Trf(Tx::action_open_page_first,{{"page",page}});
     if(request.origin!=CustomizationOrigin::CardDoubleClick || !request.firstClickKey
         || *request.firstClickKey!=request.key || !request.firstClickDomain || *request.firstClickDomain!=request.domain
         || !request.queryRevision || request.firstClickRevision!=request.queryRevision)
-        return "双击结果卡片或连按两次 Enter 进入"+page+"；当前输入只允许原位定位。";
+        return Trf(Tx::action_double_click_page,{{"page",page}});
     return {};
 }
 
@@ -51,8 +52,8 @@ struct CustomizationActionCapability {
     uint64_t contextGeneration=0;
     int slot=-1,nativeScope=-1;
     CustomizationScope scope=CustomizationScope::Unknown;
-    std::string locateReason="原生列表定位尚未认证。";
-    std::string previewReason="原生预览上下文尚未认证。";
-    std::string equipReason="拥有状态、槽位及设置范围尚未认证。";
+    std::string locateReason=Tr(Tx::action_locate_not_certified);
+    std::string previewReason=Tr(Tx::action_preview_not_certified);
+    std::string equipReason=Tr(Tx::action_equip_not_certified);
 };
 }

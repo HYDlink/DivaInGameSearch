@@ -130,7 +130,7 @@ void Host::SyncModuleAssets() {
         } catch(...) {
             if(builtGeneration==generation) {
                 moduleAssetsFailedGeneration=generation;
-                customization.status="服装图片资源初始化失败；可刷新目录后重试。";
+                customization.status=Tr(Tx::host_assets_failed);
             }
         }
     }
@@ -148,7 +148,7 @@ void Host::SyncModuleAssets() {
             });
         } catch(...) {
             moduleAssetsFailedGeneration=generation;
-            customization.status="服装图片资源后台任务无法启动。";
+            customization.status=Tr(Tx::host_assets_task_failed);
         }
     }
     PumpModuleAssetRetirements();
@@ -434,10 +434,10 @@ void Host::Frame(IDXGISwapChain* chain) {
     ++modulePreviewFrame;
     if(!preview && !previous) {
         auto current=(WNDPROC)GetWindowLongPtrW(window,GWLP_WNDPROC);
-        if(current==SearchWndProc) { ResetInputState("窗口输入链状态异常");view.status="窗口输入链状态异常，已停止搜索。";return; }
+        if(current==SearchWndProc) { ResetInputState("窗口输入链状态异常");view.status=Tr(Tx::host_input_chain);return; }
         SetLastError(0);
         auto old=SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)SearchWndProc);
-        if(!old) { ResetInputState("窗口输入隔离安装失败");view.status="窗口输入隔离安装失败，已停止搜索。";return; }
+        if(!old) { ResetInputState("窗口输入隔离安装失败");view.status=Tr(Tx::host_input_install);return; }
         previous=(WNDPROC)old;
     }
     ContextScope scope(context);

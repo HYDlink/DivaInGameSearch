@@ -1,5 +1,6 @@
 #pragma once
 
+#include "i18n.h"
 #include "customization_ui.h"
 #include <cstdint>
 #include <string>
@@ -28,7 +29,7 @@ struct ModuleLocateStatus {
     uint64_t contextGeneration=0;
     bool completed=false;
     bool succeeded=false;
-    std::string message="原生服装定位尚未初始化。";
+    std::string message=Tr(Tx::modloc_initial);
     CustomizationAction action=CustomizationAction::Locate;
     bool previewReady=false,previewRestored=false;
     // 已由独立读回确认的阶段；未确认时保持 None 或 PageEntered，不能据此显示定位或更换成功。

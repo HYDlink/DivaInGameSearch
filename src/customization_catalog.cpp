@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "customization.h"
 #include "farc.h"
 #include "module_assets.h"
@@ -396,7 +397,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
     for(auto& [key,item]:merged) {
         if(out.stale) item.metadataState="来源配置已变化／导入目录过期";
         if(!named.contains(key)) {auto localized=item.namesByLanguage.find(out.language);if(localized!=item.namesByLanguage.end()) item.name=localized->second;}
-        if(item.name.empty()) item.name=std::string(key.kind==CustomizationKind::Module?"服装 #":item.part==CustomizationPart::Hair?"发型 #":"道具 #")+std::to_string(key.id);
+        if(item.name.empty()) item.name=Trf(key.kind==CustomizationKind::Module?Tx::name_fallback_module:item.part==CustomizationPart::Hair?Tx::name_fallback_hair:Tx::name_fallback_accessory,{{"id",std::to_string(key.id)}});
         if(!CustomizationItemDomain(item)) ++unknownParts;
         PrepareCustomizationItem(item,out);out.items.push_back(std::move(item));
     }

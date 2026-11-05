@@ -53,17 +53,11 @@ std::string ReadLanguageSetting(const fs::path& home) {
     }
     return {};
 }
-// 按 Windows 界面语言选择语言代码；没有对应语言时由调用方回退 en。
+// 按 Windows 界面语言选择语言代码；只支持简中、日文和英文，其余语言使用英文。
 std::string SystemLocale() {
-    const LANGID language=GetUserDefaultUILanguage();
-    switch(PRIMARYLANGID(language)) {
-    case LANG_CHINESE: return SUBLANGID(language)==SUBLANG_CHINESE_SIMPLIFIED || SUBLANGID(language)==SUBLANG_CHINESE_SINGAPORE?"zh-CN":"zh-TW";
+    switch(PRIMARYLANGID(GetUserDefaultUILanguage())) {
+    case LANG_CHINESE: return "zh-CN";
     case LANG_JAPANESE: return "ja";
-    case LANG_KOREAN: return "ko";
-    case LANG_FRENCH: return "fr";
-    case LANG_GERMAN: return "de";
-    case LANG_ITALIAN: return "it";
-    case LANG_SPANISH: return "es";
     default: return "en";
     }
 }

@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "game.h"
 #include "host.h"
 #include <detours.h>
@@ -85,7 +86,7 @@ void GameMemory::Initialize() {
     if(fs::path(path).filename()!=L"DivaMegaMix.exe") { inputReady=true;diagnostic="当前是验证宿主，已禁用游戏内存访问。"; return; }
     IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
     if(!ReadAt(base,dos) || !ReadAt(base+dos.e_lfanew,nt) || nt.FileHeader.TimeDateStamp!=1666920875 || nt.OptionalHeader.SizeOfImage!=602353664) {
-        diagnostic="游戏构建不在已核查名单，已禁用写入。"; return;
+        diagnostic=Tr(Tx::game_build_unknown); return;
     }
     // 允许前一 Mod 已安装 detour：核对固定入口之后未被补丁覆盖的原函数尾部。
     const unsigned char signature[]={0x4C,0x8B,0x05,0,0,0,0,0x4D,0x85,0xC0,0x74,0x35,0x4C,0x63,0xC9,0x48,0xB8,0,0,0,0,0,0,0,0,0x49,0x8B,0x48,0x08,0x49,0x2B,0x08,0x48,0xF7,0xE9};
@@ -94,16 +95,16 @@ void GameMemory::Initialize() {
     unsigned char tail[sizeof(signature)]{};
     SIZE_T read=0;
     if(!ReadProcessMemory(GetCurrentProcess(),(void*)entry,tail,sizeof(tail),&read) || read!=sizeof(tail) || memcmp(tail+25,signature+25,10)!=0) {
-        diagnostic="游戏输入签名不匹配，禁止安装与定位。"; return;
+        diagnostic=Tr(Tx::game_input_signature); return;
     }
     originalInput=(InputFn)entry;
     DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
     auto attach=DetourAttach((PVOID*)&originalInput,FilterInput);
     auto commit=DetourTransactionCommit();
-    if(attach!=NO_ERROR || commit!=NO_ERROR) { originalInput=nullptr; diagnostic="输入隔离安装失败，已禁止定位。"; return; }
+    if(attach!=NO_ERROR || commit!=NO_ERROR) { originalInput=nullptr; diagnostic=Tr(Tx::game_input_failed); return; }
     inputReady=true;
     int pvid=0;
-    if(!ReadAt(base+0x12B6350,pvid)) { diagnostic="选曲数据不可读，已禁止定位。"; return; }
+    if(!ReadAt(base+0x12B6350,pvid)) { diagnostic=Tr(Tx::game_song_unreadable); return; }
     // Eden 的数据偏移仅在该构建原槽为零、偏移槽确实含有效 PVID 时启用。
     if(pvid==0) {
         int candidate=0;
@@ -113,12 +114,12 @@ void GameMemory::Initialize() {
     if(nc) {
         const unsigned char pattern[]={0x74,0x0B,0x8B,0x88,0,0,0,0,0x83,0xF9,0x03,0x75,0x02,0x33,0xC9,0x89,0x0D,0,0,0,0,0x40,0x0F,0xB6,0xC7,0x48,0x8B};
         auto hit=Find(nc,pattern,"xxxx????xxxxxxxxx????xxxxxx"); int displacement=0;
-        if(!hit || !ReadAt(hit+17,displacement)) { diagnostic="New Classics 风格签名不匹配，已禁止定位。"; return; }
+        if(!hit || !ReadAt(hit+17,displacement)) { diagnostic=Tr(Tx::game_nc_signature); return; }
         styleAddress=hit+21+displacement; int style=-1;
-        if(!ReadAt(styleAddress,style) || style<0 || style>2) { diagnostic="New Classics 风格数据异常，已禁止定位。"; return; }
+        if(!ReadAt(styleAddress,style) || style<0 || style>2) { diagnostic=Tr(Tx::game_nc_data); return; }
         unsigned char load[3]{};
         if(!ReadAt(hit-10,load) || memcmp(load,"\x48\x8B\x05",3) || !ReadAt(hit-7,displacement) || !ReadAt(hit+4,preferredStyleOffset) || preferredStyleOffset<8 || preferredStyleOffset>0x4000) {
-            diagnostic="New Classics 原生风格对象模式不匹配，已禁止定位。";return;
+            diagnostic=Tr(Tx::game_nc_pattern);return;
         }
         styleWindowAddress=hit-3+displacement;
     }
@@ -128,12 +129,12 @@ void GameMemory::Initialize() {
     if(!ReadProcessMemory(GetCurrentProcess(),(void*)apply,prefix,sizeof(prefix),&prefixRead) || prefixRead!=sizeof(prefix)
         || memcmp(prefix,"\x40\x57\x48\x81\xEC",5)!=0 || memcmp(prefix+16,"\x48\x8B\xF9",3)!=0
         || !ReadAt(apply+0x1D0,opcode) || opcode!=0xE8 || !ReadAt(apply+0x1D1,callOffset)) {
-        diagnostic="实际选曲对象获取签名不匹配，已禁止定位。";return;
+        diagnostic=Tr(Tx::game_getter_signature);return;
     }
     selectorGetter=apply+0x1D5+callOffset;
     MEMORY_BASIC_INFORMATION getterPage{};
     if(selectorGetter<base || selectorGetter>=base+nt.OptionalHeader.SizeOfImage || !VirtualQuery((void*)selectorGetter,&getterPage,sizeof(getterPage))
-        || !(getterPage.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))) { diagnostic="选曲获取器不在有效代码页，已禁止定位。";return; }
+        || !(getterPage.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))) { diagnostic=Tr(Tx::game_getter_page);return; }
     selectorObject=ReadSelectorObject(selectorGetter);
     supported=true; diagnostic="已核对本机 PC 构建、输入隔离和实际选曲对象，支持普通歌曲选择界面。";
 }

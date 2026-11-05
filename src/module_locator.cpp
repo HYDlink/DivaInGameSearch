@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "module_locator.h"
 #include "module_category.h"
 #include "module_action.h"
@@ -249,14 +250,14 @@ bool SameSubmittedSelection(const FrameSnapshot& initial,const FrameSnapshot& cu
 
 // 返回无效原生上下文的中文原因；参数 snapshot 为当前原生页面读数。
 std::string ContextUnavailableMessage(const FrameSnapshot& snapshot) {
-    if(!snapshot.structurallyValid) return "原生模型页面或当前服装列表已失效。";
-    if(snapshot.pageState!=1 && snapshot.pageState!=2) return "当前不在已验证的模型服装列表状态。";
-    if(snapshot.slotCount<1 || snapshot.slotCount>6 || snapshot.rawContext<0 || snapshot.rawContext>=snapshot.slotCount) return "当前歌者槽位或歌者数量无效，未提交定位。";
-    if(snapshot.nativeScope<0 || snapshot.nativeScope>3) return "当前设置范围不可识别，未提交定位。";
-    if(snapshot.popup!=-1) return "请先关闭服装操作菜单，再提交定位。";
-    if(snapshot.category<0 || snapshot.category>6) return "请先进入实际角色服装分类；随机不是服装实体。";
-    if(ModuleRecordCategory(snapshot.currentCharacter)!=snapshot.category) return "当前列表记录与角色分类不一致，已拒绝定位。";
-    return "当前原生上下文不可用于服装定位。";
+    if(!snapshot.structurallyValid) return Tr(Tx::modloc_invalid_page);
+    if(snapshot.pageState!=1 && snapshot.pageState!=2) return Tr(Tx::modloc_bad_state);
+    if(snapshot.slotCount<1 || snapshot.slotCount>6 || snapshot.rawContext<0 || snapshot.rawContext>=snapshot.slotCount) return Tr(Tx::modloc_slot_invalid);
+    if(snapshot.nativeScope<0 || snapshot.nativeScope>3) return Tr(Tx::modloc_scope_unknown);
+    if(snapshot.popup!=-1) return Tr(Tx::modloc_close_menu);
+    if(snapshot.category<0 || snapshot.category>6) return Tr(Tx::modloc_choose_category);
+    if(ModuleRecordCategory(snapshot.currentCharacter)!=snapshot.category) return Tr(Tx::modloc_category_mismatch);
+    return Tr(Tx::modloc_context_unavailable);
 }
 
 // 在目标列表中要求稳定 ID 唯一且记录角色吻合；参数定义见返回值与调用处。
@@ -327,7 +328,7 @@ private:
     FrameSnapshot latest_{};
     ActiveRequest active_{};
     std::string lockedCatalogFingerprint_;
-    std::string contextUnavailableReason_="未检测到当前有效的模型服装页，请进入服装列表后重试。";
+    std::string contextUnavailableReason_=Tr(Tx::modloc_no_page);
     ModuleLocateStatus status_{};
 };
 
@@ -352,16 +353,16 @@ bool ModuleLocator::Initialize(uintptr_t base) {
     if(initialized_) return hookInstalled_;
     initialized_=true;
     status_.phase=ModuleLocatePhase::Disabled;
-    status_.message="原生服装定位正在核验游戏构建。";
-    if(!base || !ValidatePeProfile(base)) { status_.message="游戏构建 PE 标记与已核实版本不符，原生服装定位已禁用。";return false; }
+    status_.message=Tr(Tx::modloc_validating);
+    if(!base || !ValidatePeProfile(base)) { status_.message=Tr(Tx::modloc_pe_mismatch);return false; }
     wchar_t executablePath[32768]{};
     DWORD pathLength=GetModuleFileNameW(nullptr,executablePath,static_cast<DWORD>(std::size(executablePath)));
-    if(!pathLength || pathLength>=std::size(executablePath)) { status_.message="无法读取游戏主程序路径，原生服装定位已禁用。";return false; }
+    if(!pathLength || pathLength>=std::size(executablePath)) { status_.message=Tr(Tx::modloc_path_failed);return false; }
     std::string digest;
     if(!CalculateSha256(executablePath,digest) || digest!=kExpectedSha256) {
-        status_.message="游戏主程序 SHA-256 与已核实版本不符，原生服装定位已禁用。";return false;
+        status_.message=Tr(Tx::modloc_hash_mismatch);return false;
     }
-    if(!ValidateNativeSignatures(base)) { status_.message="游戏原生入口指令与已核实 profile 不符，原生服装定位已禁用。";return false; }
+    if(!ValidateNativeSignatures(base)) { status_.message=Tr(Tx::modloc_signature_mismatch);return false; }
     base_=base;choiceFunction_=base+kInitializeChoiceRva;categoryFunction_=base+kMoveCategoryRva;
     g_originalModuleFrame=reinterpret_cast<ModuleFrameFunction>(base+kModuleFrameRva);
     DetourTransactionBegin();
@@ -370,31 +371,31 @@ bool ModuleLocator::Initialize(uintptr_t base) {
     LONG commit=DetourTransactionCommit();
     if(attach!=NO_ERROR || commit!=NO_ERROR) {
         g_originalModuleFrame=nullptr;
-        status_.message="模型帧链式 Hook 安装失败，未启用服装定位。";
+        status_.message=Tr(Tx::modloc_hook_failed);
         return false;
     }
     hookInstalled_=true;
     status_.phase=ModuleLocatePhase::Idle;
-    status_.message="原生服装定位已接入六位主角色及衍生角色；扩展分类等待实机验收。";
+    status_.message=Tr(Tx::modloc_ready);
     return true;
 }
 
 bool ModuleLocator::Submit(const CustomizationLocateRequest& request,std::string& message) {
     std::unique_lock lock(mutex_,std::try_to_lock);
-    if(!lock.owns_lock()) { message="模型帧正在处理原生定位，请稍候再试。";return false; }
+    if(!lock.owns_lock()) { message=Tr(Tx::modloc_busy);return false; }
     auto reject=[&](const std::string& why) { status_={ModuleLocatePhase::Rejected,request.serial,request.uiGeneration,contextGeneration_,true,false,why};message=why;return false; };
-    if(!hookInstalled_) return reject(status_.message.empty()?"原生服装定位未启用。":status_.message);
-    if(request.action!=CustomizationAction::Locate) return reject("定位适配器不能执行预览或换装。");
+    if(!hookInstalled_) return reject(status_.message.empty()?Tr(Tx::modloc_disabled):status_.message);
+    if(request.action!=CustomizationAction::Locate) return reject(Tr(Tx::modloc_action_bad));
     if(active_.active && active_.cancelGeneration!=g_cancelGeneration.load()) active_.active=false;
-    if(active_.active) { message="上一条服装定位仍待跨帧确认，请稍候再提交。";return false; }
-    if(request.serial==0 || request.serial<=lastSerial_) return reject("服装定位请求序号过期，已拒绝重复提交。");
-    if(request.key.kind!=CustomizationKind::Module) return reject("原生定位接口仅接受服装，不接受饰品。");
-    if(request.key.id<0) return reject("服装 ID 无效；稳定 ID 0 是允许的。");
+    if(active_.active) { message=Tr(Tx::modloc_pending);return false; }
+    if(request.serial==0 || request.serial<=lastSerial_) return reject(Tr(Tx::modloc_serial_stale));
+    if(request.key.kind!=CustomizationKind::Module) return reject(Tr(Tx::modloc_kind_bad));
+    if(request.key.id<0) return reject(Tr(Tx::modloc_id_bad));
     int32_t targetCategory=-1;
-    if(!MapSupportedCategory(request.character,targetCategory)) return reject("未知或随机角色没有可提交的实际服装分类。");
-    if(request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256) return reject("服装目录指纹缺失或格式异常，已拒绝定位。");
+    if(!MapSupportedCategory(request.character,targetCategory)) return reject(Tr(Tx::modloc_category_none));
+    if(request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256) return reject(Tr(Tx::modloc_fingerprint_bad));
     if(!lockedCatalogFingerprint_.empty() && lockedCatalogFingerprint_!=request.catalogFingerprint)
-        return reject("服装目录指纹已变化；请重启游戏后再定位。");
+        return reject(Tr(Tx::modloc_catalog_changed));
     if(!contextActive_ || !hasSnapshot_ || !latest_.contextReady || !lastModelFrame_
         || GetTickCount64()<lastModelFrame_ || GetTickCount64()-lastModelFrame_>kContextFreshMilliseconds)
         return reject(contextUnavailableReason_);
@@ -405,7 +406,7 @@ bool ModuleLocator::Submit(const CustomizationLocateRequest& request,std::string
     active_.expected=latest_;
     active_.cancelGeneration=g_cancelGeneration.load();
     active_.targetCategory=targetCategory;active_.active=true;
-    SetStatus(ModuleLocatePhase::WaitingForFrame,"服装定位请求已提交，等待模型帧校验上下文。",false,false);
+    SetStatus(ModuleLocatePhase::WaitingForFrame,Tr(Tx::modloc_submitted),false,false);
     message=status_.message;
     return true;
 }
@@ -417,11 +418,11 @@ void ModuleLocator::Tick(uint64_t now,uint64_t uiGeneration) {
         lastUiGeneration_=uiGeneration;
         if(active_.active && active_.request.uiGeneration!=uiGeneration) {
             active_.active=false;
-            SetStatus(ModuleLocatePhase::Rejected,"服装目录已重新载入，旧定位请求已失效。",true,false);
+            SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_catalog_reloaded),true,false);
         }
     }
     if(contextActive_ && now>=lastModelFrame_ && now-lastModelFrame_>kContextFreshMilliseconds) {
-        InvalidateContext("模型服装页帧回调已停止，页面代数失效。");
+        InvalidateContext(Tr(Tx::modloc_frame_stopped));
     }
 }
 
@@ -430,7 +431,7 @@ void ModuleLocator::OnModelFrame(uintptr_t page,uint64_t now,DWORD threadId) {
     if(!lock.owns_lock() || !hookInstalled_) return;
     lastModelFrame_=now;
     if(frameThreadId_ && threadId!=frameThreadId_) {
-        InvalidateContext("模型帧线程发生变化，旧定位上下文已失效。");
+        InvalidateContext(Tr(Tx::modloc_thread_changed));
         frameThreadId_=threadId;
     } else frameThreadId_=threadId;
 
@@ -439,10 +440,10 @@ void ModuleLocator::OnModelFrame(uintptr_t page,uint64_t now,DWORD threadId) {
     if(!snapshotRead || !current.contextReady) {
         if(active_.active) {
             active_.active=false;
-            auto why=snapshotRead?ContextUnavailableMessage(current):"模型页对象关联或列表读取失败，定位请求已失效。";
+            auto why=snapshotRead?ContextUnavailableMessage(current):Tr(Tx::modloc_read_failed);
             SetStatus(ModuleLocatePhase::Rejected,why,true,false);
         }
-        InvalidateContext(snapshotRead?ContextUnavailableMessage(current):"模型页离开或对象关联失效。");
+        InvalidateContext(snapshotRead?ContextUnavailableMessage(current):Tr(Tx::modloc_left));
         return;
     }
 
@@ -451,29 +452,29 @@ void ModuleLocator::OnModelFrame(uintptr_t page,uint64_t now,DWORD threadId) {
         contextActive_=true;hasSnapshot_=true;latest_=current;
         if(active_.active) {
             active_.active=false;
-            SetStatus(ModuleLocatePhase::Rejected,"模型页、分类、列表或未解释的原始上下文值已变化，旧请求失效。",true,false);
+            SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_context_changed),true,false);
         }
         return;
     }
     latest_=current;
     if(!active_.active) return;
     if(active_.cancelGeneration!=g_cancelGeneration.load()) {
-        active_.active=false;SetStatus(ModuleLocatePhase::Rejected,"搜索条件或所选卡片已变化，旧定位已取消。",true,false);return;
+        active_.active=false;SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_search_changed),true,false);return;
     }
     if(active_.contextGeneration!=contextGeneration_) {
         active_.active=false;
-        SetStatus(ModuleLocatePhase::Rejected,"原生上下文代数已变化，定位请求过期。",true,false);
+        SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_generation_stale),true,false);
         return;
     }
     if(active_.request.uiGeneration!=lastUiGeneration_) {
         active_.active=false;
-        SetStatus(ModuleLocatePhase::Rejected,"搜索目录代数已变化，定位请求过期。",true,false);
+        SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_catalog_stale),true,false);
         return;
     }
     if(status_.phase==ModuleLocatePhase::WaitingForFrame || status_.phase==ModuleLocatePhase::SwitchingCategory) {
         if(!SameSubmittedSelection(active_.expected,current)) {
             active_.active=false;
-            SetStatus(ModuleLocatePhase::Rejected,"提交后玩家改变了原生分类或高亮项，已取消旧定位。",true,false);
+            SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_player_changed),true,false);
             return;
         }
         Execute(current);
@@ -484,14 +485,14 @@ void ModuleLocator::Execute(const FrameSnapshot& current) {
     auto page=reinterpret_cast<void*>(current.page);
     const int32_t originCategory=current.category;
     if(originCategory!=active_.targetCategory) {
-        if(++active_.categorySteps>6) {active_.active=false;SetStatus(ModuleLocatePhase::Rejected,"角色切换次数超限，已停止定位。",true,false);return;}
+        if(++active_.categorySteps>6) {active_.active=false;SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_too_many_switches),true,false);return;}
         const int32_t direction=ModuleCategoryDirection(originCategory,active_.targetCategory);
         if(!InvokeMoveCategory(categoryFunction_,page,direction)) {
             FrameSnapshot failed{};
             bool restored=ReadFrameSnapshot(base_,current.page,failed) && failed.contextReady
                 && failed.category!=originCategory && RestoreOriginal(failed);
             active_.active=false;
-            SetStatus(ModuleLocatePhase::Rejected,restored?"原生角色分类切换异常；已恢复原分类与原高亮。":"调用原生角色分类切换时发生异常，未通过守卫时不覆盖玩家操作。",true,false);
+            SetStatus(ModuleLocatePhase::Rejected,restored?Tr(Tx::modloc_switch_error_restored):Tr(Tx::modloc_switch_error),true,false);
             return;
         }
         FrameSnapshot switched{};
@@ -499,13 +500,13 @@ void ModuleLocator::Execute(const FrameSnapshot& current) {
             || switched.configuration!=current.configuration || switched.controller!=current.controller || switched.rawContext!=current.rawContext) {
             bool restored=switched.contextReady && switched.category!=originCategory && RestoreOriginal(switched);
             active_.active=false;
-            SetStatus(ModuleLocatePhase::Rejected,restored?"游戏原生分类检查未允许切换；已恢复原分类与原高亮。":"游戏原生分类检查未允许切换到目标角色，未通过守卫时不覆盖玩家操作。",true,false);
+            SetStatus(ModuleLocatePhase::Rejected,restored?Tr(Tx::modloc_switch_denied_restored):Tr(Tx::modloc_switch_denied),true,false);
             return;
         }
         latest_=switched;
         active_.expected=switched;
         if(switched.category!=active_.targetCategory) {
-            SetStatus(ModuleLocatePhase::SwitchingCategory,"正在逐帧切换原生角色分类……",false,false);return;
+            SetStatus(ModuleLocatePhase::SwitchingCategory,Tr(Tx::modloc_switching),false,false);return;
         }
     }
     FrameSnapshot targetSnapshot{};
@@ -513,44 +514,44 @@ void ModuleLocator::Execute(const FrameSnapshot& current) {
         || targetSnapshot.category!=active_.targetCategory) {
         bool restored=targetSnapshot.structurallyValid && originCategory!=active_.targetCategory && RestoreOriginal(targetSnapshot);
         active_.active=false;
-        SetStatus(ModuleLocatePhase::Rejected,restored?"目标列表不可读；已恢复原分类与原高亮。":"目标角色分类切换后列表不可读，未通过守卫时不覆盖玩家操作。",true,false);
+        SetStatus(ModuleLocatePhase::Rejected,restored?Tr(Tx::modloc_list_unreadable_restored):Tr(Tx::modloc_list_unreadable),true,false);
         return;
     }
     int32_t targetIndex=-1;
     auto found=FindUniqueModuleId(targetSnapshot,active_.request.key.id,active_.targetCategory,targetIndex);
     if(found!=FindIdResult::Found) {
         std::string why;
-        if(found==FindIdResult::Duplicate) why="目标服装 ID 在当前原生列表中重复，拒绝定位。";
-        else if(found==FindIdResult::RoleMismatch) why="当前原生列表中的目标 ID 角色字段不匹配，拒绝定位。";
-        else if(found==FindIdResult::NotFound) why="目标服装不在当前原生有效列表中。";
-        else why="目标原生列表记录不可读，拒绝定位。";
+        if(found==FindIdResult::Duplicate) why=Tr(Tx::modloc_duplicate);
+        else if(found==FindIdResult::RoleMismatch) why=Tr(Tx::modloc_role_mismatch);
+        else if(found==FindIdResult::NotFound) why=Tr(Tx::modloc_not_found);
+        else why=Tr(Tx::modloc_record_unreadable);
         bool restored=originCategory!=active_.targetCategory && RestoreOriginal(targetSnapshot);
-        if(restored) why+=" 已在上下文未变化时恢复原分类与原高亮。";
-        else if(originCategory!=active_.targetCategory) why+=" 由于恢复上下文未通过守卫，未覆盖当前玩家操作。";
+        if(restored) why+=Tr(Tx::modloc_restored_suffix);
+        else if(originCategory!=active_.targetCategory) why+=Tr(Tx::modloc_not_restored_suffix);
         active_.active=false;SetStatus(ModuleLocatePhase::Rejected,why,true,false);return;
     }
     if(active_.cancelGeneration!=g_cancelGeneration.load()) {
-        active_.active=false;SetStatus(ModuleLocatePhase::Rejected,"目标提交前选择已变化，取消旧定位。",true,false);return;
+        active_.active=false;SetStatus(ModuleLocatePhase::Rejected,Tr(Tx::modloc_selection_changed),true,false);return;
     }
     if(!InvokeChoiceAtIndex(choiceFunction_,page,targetIndex)) {
         FrameSnapshot afterCall{};
         bool recoveredContext=ReadFrameSnapshot(base_,current.page,afterCall) && afterCall.contextReady;
         bool restored=recoveredContext && RestoreOriginal(afterCall);
-        std::string why="原生控件调用异常或 +0x30 暂存缓存未能确认恢复，已停止定位。";
-        if(restored) why+=" 已恢复原分类与原高亮。";
+        std::string why=Tr(Tx::modloc_control_error);
+        if(restored) why+=Tr(Tx::modloc_restored_short);
         active_.active=false;SetStatus(ModuleLocatePhase::Rejected,why,true,false);return;
     }
     FrameSnapshot after{};
     if(!ReadFrameSnapshot(base_,current.page,after) || !after.contextReady
         || after.category!=active_.targetCategory || after.index!=targetIndex || after.currentId!=active_.request.key.id) {
-        std::string why="原生控件已调用，但同帧实际列表读回不符。";
+        std::string why=Tr(Tx::modloc_readback_mismatch);
         bool restored=ReadFrameSnapshot(base_,current.page,after) && after.contextReady && RestoreOriginal(after);
-        if(restored) why+=" 已恢复原分类与原高亮。";
+        if(restored) why+=Tr(Tx::modloc_restored_short);
         active_.active=false;SetStatus(ModuleLocatePhase::Rejected,why,true,false);return;
     }
     active_.targetIndex=targetIndex;
     latest_=after;
-    SetStatus(ModuleLocatePhase::Confirming,"已调用原生服装列表控件，正在等待下一帧确认真实 ID。",false,false);
+    SetStatus(ModuleLocatePhase::Confirming,Tr(Tx::modloc_confirming),false,false);
 }
 
 void ModuleLocator::Confirm(const FrameSnapshot& current) {
@@ -560,13 +561,13 @@ void ModuleLocator::Confirm(const FrameSnapshot& current) {
         || current.index!=targetIndex || current.currentId!=active_.request.key.id
         || targetIndex!=active_.targetIndex) {
         active_.active=false;
-        std::string why="跨帧原生服装确认失败；页面或玩家高亮已改变，未覆盖当前操作。";
-        if(found==FindIdResult::Duplicate) why="跨帧确认时目标 ID 出现重复，未覆盖当前操作。";
-        else if(found==FindIdResult::NotFound) why="跨帧确认时目标已不在当前原生列表，未覆盖当前操作。";
+        std::string why=Tr(Tx::modloc_confirm_failed);
+        if(found==FindIdResult::Duplicate) why=Tr(Tx::modloc_confirm_duplicate);
+        else if(found==FindIdResult::NotFound) why=Tr(Tx::modloc_confirm_not_found);
         SetStatus(ModuleLocatePhase::Rejected,why,true,false);return;
     }
     active_.active=false;
-    SetStatus(ModuleLocatePhase::Succeeded,"已确认原生服装列表中的稳定 ID "+std::to_string(active_.request.key.id)+"；未执行试穿、装备、购买或保存。",true,true);
+    SetStatus(ModuleLocatePhase::Succeeded,Trf(Tx::modloc_succeeded,{{"id",std::to_string(active_.request.key.id)}}),true,true);
 }
 
 bool ModuleLocator::RestoreOriginal(const FrameSnapshot& current) {
@@ -638,7 +639,7 @@ ModuleLocateStatus ModuleLocator::Poll() {
     if(!lock.owns_lock()) {
         ModuleLocateStatus busy;
         busy.phase=ModuleLocatePhase::Confirming;
-        busy.message="正在模型帧线程处理原生服装定位。";
+        busy.message=Tr(Tx::modloc_processing);
         return busy;
     }
     return status_;
