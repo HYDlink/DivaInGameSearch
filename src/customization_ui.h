@@ -1,4 +1,5 @@
 #pragma once
+#include "search_ui_style.h"
 #include "performance_trace.h"
 #include "search_dispatch.h"
 #include "customization.h"
@@ -41,7 +42,8 @@ struct CustomizationView {
         uint64_t revision=1,applied=0;
         SearchTiming searchTiming;
         std::chrono::steady_clock::time_point due{};
-        bool scroll=true,focus=true,selectText=false,details=false,detailsRequested=false,locateRequested=false;
+        bool scroll=true,focus=true,details=false,detailsRequested=false,locateRequested=false;
+        SearchTextRequest text;
         float scrollY=0;
         std::map<CustomizationKey,std::vector<std::string>> recommendationReasons;
         std::vector<std::string> recommendationWarnings;

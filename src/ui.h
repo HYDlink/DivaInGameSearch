@@ -4,6 +4,7 @@
 #include "core.h"
 #include "selector.h"
 #include "customization_ui.h"
+#include "search_ui_style.h"
 #include <functional>
 #include <future>
 #include <memory>
@@ -54,8 +55,11 @@ struct View {
     uint64_t enterPressTick=0,enterGuardUntil=0,enterRevision=0;
     int enterPvid=0;
     bool enterDouble=false;
-    // Ctrl+F 请求全选搜索文字；Ctrl+P／Ctrl+E 请求对当前选中卡片执行预览、换装。
-    bool selectSearchText=false,requestPreview=false,requestEquip=false;
+    // Ctrl+F 全选与 Ctrl+←→ 移动光标的请求；Ctrl+P／Ctrl+E 请求对当前选中卡片执行预览、换装。
+    SearchTextRequest textRequest;
+    bool requestPreview=false,requestEquip=false;
+    // Tab／Ctrl+Tab 请求切换顶部主标签的步数，在下一帧绘制前消费。
+    int tabMove=0;
     int move=0,difficultyMove=0;
     bool listNavigation=true,horizontalNavigation=true,scrollSelection=false;
     SearchMode mode=SearchMode::Songs;
@@ -87,6 +91,8 @@ struct View {
     void Navigate();
     // 参数 next 为活动领域，互切清空尚未消费的动作，保留各自查询。
     void SetMode(SearchMode next);
+    // 参数 step 为 1 切到下一个主标签、-1 切到上一个，首尾循环。
+    void CycleMode(int step);
     // 每次打开记录定制上下文；不覆盖用户已选角色筛选。
     void OnOpened();
     // 参数 preferred/context 为已核实页面与可选角色；每次打开重新路由，保留各页搜索条件。
@@ -110,6 +116,4 @@ struct View {
 };
 // 初始化共享字体和色彩；参数 size 为初始字体大小。
 void SetupStyle(float size);
-// 让随仓库的 ImGui 1.88 将普通按钮和下拉框纳入 Tab 焦点循环；在窗口控件前调用。
-void EnableControlTabNavigation();
 }

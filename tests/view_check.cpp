@@ -88,18 +88,6 @@ int main(int argc,char** argv) {
         blocked.set_value({revision,{}}); view.Poll(); Complete(view); Draw(view); Draw(view);
         Check(submitted==1 && !view.requestEnter,"延迟 Enter 未且仅提交一次");
         view.focus=true; Draw(view); Draw(view); Check(view.listNavigation,"搜索框未获得列表键盘焦点");
-        io.AddKeyEvent(ImGuiKey_Tab,true); Draw(view);
-        io.AddKeyEvent(ImGuiKey_Tab,false); Draw(view);
-        Check(!view.listNavigation,"Tab 无法离开搜索框操作其他控件");
-        io.AddKeyEvent(ImGuiKey_Tab,true); Draw(view);
-        io.AddKeyEvent(ImGuiKey_Tab,false); Draw(view);
-        Check(!view.listNavigation,"第二次 Tab 意外返回搜索框，无法遍历普通控件");
-        io.AddKeyEvent(ImGuiKey_ModShift,true); io.AddKeyEvent(ImGuiKey_Tab,true); Draw(view);
-        io.AddKeyEvent(ImGuiKey_Tab,false); io.AddKeyEvent(ImGuiKey_ModShift,false); Draw(view); Draw(view);
-        Check(!view.listNavigation,"Shift+Tab 未按逆序遍历普通控件");
-        io.AddKeyEvent(ImGuiKey_ModShift,true); io.AddKeyEvent(ImGuiKey_Tab,true); Draw(view);
-        io.AddKeyEvent(ImGuiKey_Tab,false); io.AddKeyEvent(ImGuiKey_ModShift,false); Draw(view); Draw(view);
-        Check(view.listNavigation,"Shift+Tab 无法返回搜索框");
         std::strcpy(view.input,"Gamma"); view.QueueSearch(true); view.requestEnter=view.requestEscape=true;
         Draw(view); Check(!view.open && !view.requestEnter && submitted==1,"Esc 没有取消等待中的 Enter 定位");
         auto songInput=std::string(view.input);auto songDifficulty=view.currentDifficulty;
@@ -119,10 +107,8 @@ int main(int argc,char** argv) {
         Check(!view.requestEnter && !view.move && !view.difficultyMove && view.itemMoves.empty(),"切换领域未清空歌曲动作");
         CompleteCustomization(view.customization);Draw(view);Draw(view);
         Check(view.listNavigation && view.horizontalNavigation,"服装输入焦点未支持左右结果导航");
-        for(int tab=0;tab<16 && !view.customization.gridNavigation;++tab) {
-            io.AddKeyEvent(ImGuiKey_Tab,true);Draw(view);io.AddKeyEvent(ImGuiKey_Tab,false);Draw(view);
-        }
-        Check(view.customization.gridNavigation,"全键盘 Tab 无法进入定制格子");
+        view.customization.requestGridFocus=true;Draw(view);Draw(view);
+        Check(view.customization.gridNavigation,"无法从搜索框进入定制格子");
         view.itemMoves={{diva::CustomizationNavigation::Down,1},{diva::CustomizationNavigation::Right,1}};Draw(view);
         Check(view.customization.State().cursor.selected==size_t(view.customization.columns+1),"外层没有按顺序路由格子方向动作");
         view.requestEnter=true;Draw(view);
@@ -197,10 +183,6 @@ int main(int argc,char** argv) {
         Check(lastAction.key.id==0 && lastAction.action==diva::CustomizationAction::Equip
             && module.State().cursor.selected==selectedBeforeAction,"按钮借用了其他选择或修改搜索选择");
         io.AddMousePosEvent(-100,-100);Draw(view);
-        io.AddKeyEvent(ImGuiKey_Tab,true);Draw(view);io.AddKeyEvent(ImGuiKey_Tab,false);Draw(view);
-        const auto beforeKeyboardAction=actions;
-        io.AddKeyEvent(ImGuiKey_Space,true);Draw(view);io.AddKeyEvent(ImGuiKey_Space,false);Draw(view);
-        Check(actions==beforeKeyboardAction+1 && moduleSubmitted==beforeActions,"Tab移入操作后Space未激活或冒泡成主体定位");
         auto invalidDouble=lastModuleRequest;invalidDouble.origin=diva::CustomizationOrigin::CardDoubleClick;
         invalidDouble.firstClickKey=diva::CustomizationKey{diva::CustomizationKind::Module,999};
         Check(!diva::CheckCustomizationNavigation(invalidDouble,true).empty(),"跨卡片双击通过网关");
@@ -230,7 +212,7 @@ int main(int argc,char** argv) {
         view.PressEnter(1150);Draw(view);Draw(view);
         Check(lastModuleRequest.origin==diva::CustomizationOrigin::Keyboard,"定制第三下Enter累积出跨页权限");
         view.RequestSearchFocus();for(int frame=0;frame<3;++frame)Draw(view);
-        Check(!module.State().selectText && !view.selectSearchText,"定制搜索框未消费全选请求");
+        Check(!module.State().text.selectAll && !view.textRequest.selectAll,"定制搜索框未消费全选请求");
         diva::View songs;songs.catalog=std::make_shared<diva::Catalog>(Fixture());songs.open=true;songs.currentDifficulty=3;
         songs.Poll();Complete(songs);std::vector<diva::Request> songRequests;
         // 参数request/available为真实歌曲名称和难度按钮提交，不跳过生产命中逻辑。
@@ -275,11 +257,28 @@ int main(int argc,char** argv) {
         songs.RequestSearchFocus();for(int frame=0;frame<3;++frame)Draw(songs);
         {
             auto* textState=ImGui::GetInputTextState(ImGui::GetActiveID());
-            Check(textState && !songs.selectSearchText && textState->Stb.select_start==0 && textState->Stb.select_end==5,"Ctrl+F 未全选搜索文字");
-            ImGui::GetCurrentContext();
+            Check(textState && !songs.textRequest.selectAll && textState->Stb.select_start==0 && textState->Stb.select_end==5,"Ctrl+F 未全选搜索文字");
             songs.RequestSearchFocus();Draw(songs);Draw(songs);
             textState=ImGui::GetInputTextState(ImGui::GetActiveID());
-            Check(textState && !songs.selectSearchText && textState->Stb.select_end==5,"焦点在搜索框时再次 Ctrl+F 未全选");
+            Check(textState && !songs.textRequest.selectAll && textState->Stb.select_end==5,"焦点在搜索框时再次 Ctrl+F 未全选");
+        }
+        // Ctrl+←→ 按字符移动光标并取消全选，不改变文字。
+        songs.textRequest.cursorMove=-1;Draw(songs);Draw(songs);
+        {
+            auto* textState=ImGui::GetInputTextState(ImGui::GetActiveID());
+            Check(textState && textState->Stb.cursor==4 && textState->Stb.select_start==textState->Stb.select_end && !songs.textRequest.cursorMove,"Ctrl+← 未把光标左移一个字符");
+        }
+        {
+            // 光标步进必须落在 UTF-8 字符边界，中文不能被切成半个字。
+            char text[]="千本";diva::SearchTextRequest request;request.cursorMove=-1;
+            ImGuiInputTextCallbackData data{};data.Buf=text;data.BufTextLen=6;data.CursorPos=6;data.UserData=&request;
+            diva::ApplySearchTextRequest(&data);Check(data.CursorPos==3 && data.SelectionStart==3 && data.SelectionEnd==3 && !request.cursorMove,"左移未跨过完整中文字符");
+            request.cursorMove=2;diva::ApplySearchTextRequest(&data);Check(data.CursorPos==6,"右移越过文本末尾");
+        }
+        {
+            diva::View cycle;
+            for(auto expected:{diva::SearchMode::Modules,diva::SearchMode::Hair,diva::SearchMode::Accessories,diva::SearchMode::Songs}) {cycle.CycleMode(1);Check(cycle.mode==expected,"Tab 未按顶部顺序循环主标签");}
+            cycle.CycleMode(-1);Check(cycle.mode==diva::SearchMode::Accessories,"Ctrl+Tab 未回切到上一个主标签");
         }
         std::strcpy(songs.input,"");songs.QueueSearch(false);Complete(songs);
         songs.songClickPvid=1;songs.songClickRevision=songs.queryRevision;songs.QueueSearch(false);
@@ -290,7 +289,7 @@ int main(int argc,char** argv) {
         io.AddMousePosEvent(1,1);io.AddMouseButtonEvent(0,true);Draw(songs);io.AddMouseButtonEvent(0,false);Draw(songs);
         Check(!songs.open && songRequests.size()==beforeOutside,"点击窗口外部未关闭搜索或误提交歌曲");
         ImGui::DestroyContext(context);
-        std::cout<<"视图行为通过：歌曲防抖与导航、Tab 焦点、领域隔离、格子动作、定制详情与禁用原生定位。\n";
+        std::cout<<"视图行为通过：歌曲防抖与导航、Tab 切换主标签、领域隔离、格子动作、定制详情与禁用原生定位。\n";
         return 0;
     } catch(const std::exception& error) { std::cerr<<"视图验证失败："<<error.what()<<"\n"; return 1; }
 }

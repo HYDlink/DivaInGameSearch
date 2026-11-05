@@ -329,6 +329,16 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
                 (w=='P'?view.requestPreview:view.requestEquip)=true;
                 return 0;
             }
+            // Tab 只切顶部主标签，Ctrl+Tab 回切；Shift+Tab 是 Steam 覆盖层快捷键，只吞掉不响应。
+            if(!ime && w==VK_TAB && message==WM_KEYDOWN) {
+                if(!popup && !(l&(1LL<<30)) && !(GetKeyState(VK_SHIFT)&0x8000)) view.tabMove+=(GetKeyState(VK_CONTROL)&0x8000)?-1:1;
+                return 0;
+            }
+            // 左右留给难度和结果导航；改字时用 Ctrl+←→ 按字符移动光标。
+            if(!ime && navigate && (w==VK_LEFT || w==VK_RIGHT) && (GetKeyState(VK_CONTROL)&0x8000)) {
+                view.textRequest.cursorMove+=(w==VK_LEFT?-1:1)*std::max(1,(int)(l&0xFFFF));
+                return 0;
+            }
             if(!ime && !(l&(1LL<<30))) {
                 if(navigate && w==VK_RETURN) view.PressEnter(GetTickCount64());
                 if(!popup && w==VK_ESCAPE) view.requestEscape=true;
@@ -355,7 +365,7 @@ LRESULT Host::Message(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
                 }
             }
             // IME 组合键不交给 ImGui 导航，但系统仍需接收以取消组词和显示候选。
-            if(ime && (w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_UP || w==VK_DOWN || w==VK_LEFT || w==VK_RIGHT)) return DefWindowProcW(hwnd,message,w,l);
+            if(ime && (w==VK_TAB || w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_UP || w==VK_DOWN || w==VK_LEFT || w==VK_RIGHT)) return DefWindowProcW(hwnd,message,w,l);
         }
         if(key && !down && w==VK_RETURN && view.composing) FinishComposition(hwnd);
         if(key && !down && !view.composing && (w==VK_RETURN || w==VK_ESCAPE || w==VK_SPACE || w==VK_PROCESSKEY)) view.imeGuard=false;

@@ -111,6 +111,11 @@ void View::SetMode(SearchMode next) {
     horizontalNavigation=mode==SearchMode::Songs;
     if(mode!=SearchMode::Songs) customization.SetDomain(SearchModeDomain(mode));
 }
+// 顺序与顶部标签一致；Tab 不再遍历控件，只在主标签之间循环。
+void View::CycleMode(int step) {
+    const int next=(static_cast<int>(mode)+step+4)%4;
+    SetMode(static_cast<SearchMode>(next));
+}
 // 输入宿主在打开时调用，角色未知与已验证读取保持不同语义。
 void View::OnOpened() {
     ResetSongBodyClick();if(invalidateSongNavigation) invalidateSongNavigation();
@@ -124,7 +129,7 @@ void View::ApplyOpeningContext(SearchMode preferred,std::optional<CustomizationC
     focus=true;listNavigation=true;horizontalNavigation=mode==SearchMode::Songs;ClearActions();
 }
 // 只清理尚未处理的 UI 动作，不改变条件或歌曲目标难度。
-void View::ClearActions() { requestEnter=requestEscape=enterDouble=requestPreview=requestEquip=false; move=difficultyMove=0; itemMoves.clear(); }
+void View::ClearActions() { requestEnter=requestEscape=enterDouble=requestPreview=requestEquip=false; move=difficultyMove=tabMove=0; textRequest.cursorMove=0; itemMoves.clear(); }
 // 第二下 Enter 可能落在定位成功、面板关闭之后，enterGuardUntil 让宿主把它隔离，避免漏给游戏开始演奏。
 void View::PressEnter(uint64_t now) {
     enterGuardUntil=now+kDoubleEnterMs;
@@ -138,7 +143,7 @@ void View::PressEnter(uint64_t now) {
     requestEnter=true;
 }
 // 焦点已在搜索框时 ImGui 不会重新激活，全选由输入框回调完成。
-void View::RequestSearchFocus() { focus=true; selectSearchText=true; }
+void View::RequestSearchFocus() { focus=true; textRequest.selectAll=true; }
 // 提交确切的风格和难度，缺失难度不降级；参数 song/difficulty 为歌曲与请求等级。
 void View::Locate(const Song& song,int difficulty,SongOrigin origin) {
     selectedId=song.id;
@@ -186,7 +191,7 @@ void View::ReloadStyle() {
 // 使用中日字体合并并建立青绿色主色调；参数 size 为基准字号。
 void SetupStyle(float size) {
     auto& io=ImGui::GetIO(); io.IniFilename=nullptr; io.LogFilename=nullptr;
-    // Tab 可访问筛选和工具；搜索框内方向键由列表统一处理。
+    // 下拉框弹层内用方向键选择；搜索框内方向键由列表统一处理。
     io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags|=ImGuiConfigFlags_NoMouseCursorChange;
     static ImVector<ImWchar> ranges;
@@ -256,14 +261,6 @@ static std::string PackFilterLabel(const Catalog& catalog,const std::string& pac
     const auto count=counts.find(pack);
     return pack+"（关联 "+std::to_string(count==counts.end()?0:count->second)+"）";
 }
-// 旧版 ImGui 默认只 Tab 到文本输入框；复用其公开焦点 API 所用的导航请求标志。
-void EnableControlTabNavigation() {
-    auto& g=*GImGui;
-    if((g.NavMoveFlags&ImGuiNavMoveFlags_Tabbing) && ImGui::IsKeyPressed(ImGuiKey_Tab) && !g.IO.KeyCtrl && !g.IO.KeyAlt) {
-        g.NavMoveFlags|=ImGuiNavMoveFlags_FocusApi;
-        if(!g.IO.KeyShift && g.NavId) g.NavTabbingDir=1;
-    }
-}
 // 绘制统一对齐列表并将名称和难度点击分离。
 void View::Draw() {
     if(!open) return;
@@ -280,7 +277,7 @@ void View::Draw() {
         && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopup)) {
         open=false;ResetSongBodyClick();customization.ResetBodyClick();ClearActions();ImGui::End();return;
     }
-    EnableControlTabNavigation();
+    if(tabMove && !composing && !imeGuard) {const int step=tabMove;tabMove=0;CycleMode(step);}
     // 模型、发型、自定义道具是原生自定义父页下的三个同级入口，搜索面板分别保存条件；性能诊断不面向玩家开放。
     if(SearchSegment("歌曲##领域",mode==SearchMode::Songs,100)) SetMode(SearchMode::Songs);
     ImGui::SameLine(0,4); if(SearchSegment("模型##领域",mode==SearchMode::Modules,100)) SetMode(SearchMode::Modules);
@@ -312,7 +309,8 @@ void View::Draw() {
         customization.EnsureLoaded(home,game); customization.composing=composing;
         customization.Poll();
         if(focus) { customization.State().focus=true; focus=false; }
-        if(selectSearchText) { customization.State().selectText=true; selectSearchText=false; }
+        customization.State().text.selectAll=customization.State().text.selectAll || textRequest.selectAll;
+        customization.State().text.cursorMove+=textRequest.cursorMove;textRequest={};
         if(!composing && !imeGuard) {
             // 方向键改变了选择，第一下 Enter 的目标已失效。
             if(!itemMoves.empty()) {enterPressTick=0;enterDouble=false;}
@@ -330,7 +328,8 @@ void View::Draw() {
     horizontalNavigation=true;
     ImGui::SetNextItemWidth(-1);
     if(focus) { ImGui::SetKeyboardFocusHere(); focus=false; }
-    if(ImGui::InputTextWithHint("##查询","输入原名、英文、中文别名、假名、罗马音或 PVID",input,sizeof(input),ImGuiInputTextFlags_CallbackAlways,SelectSearchTextCallback,&selectSearchText)) QueueSearch(true);
+    if(ImGui::InputTextWithHint("##查询","输入原名、英文、中文别名、假名、罗马音或 PVID",input,sizeof(input),ImGuiInputTextFlags_CallbackAlways,ApplySearchTextRequest,&textRequest)) QueueSearch(true);
+    textRequest.cursorMove=0;
     bool searchActive=ImGui::IsItemActive();
     const char* styles[]={"街机 ARCADE","主机 CONSOLE","混合 MIXED"};
     const char* difficulties[]={"EASY","NORMAL","HARD","EXTREME","EXTRA EXTREME"};
@@ -364,7 +363,7 @@ void View::Draw() {
     // Enter 跳过防抖，但仍不等待后台；查询完成后才提交最新结果。
     if(requestEnter) queryDue=std::chrono::steady_clock::time_point{};
     Poll();
-    ImGui::Separator(); ImGui::TextColored(SearchResultTextColor,"%zu 首结果%s  ·  %s",results.size(),SearchPending()?"（搜索中…）":"",composing?"输入法组词中":"↑↓ 选择（可长按） / ←→ 难度 / Enter 定位（其他页面连按两次跳转） / Esc 关闭 / Tab 控件");
+    ImGui::Separator(); ImGui::TextColored(SearchResultTextColor,"%zu 首结果%s  ·  %s",results.size(),SearchPending()?"（搜索中…）":"",composing?"输入法组词中":"↑↓ 选择 / ←→ 难度 / Ctrl+←→ 移动光标 / Enter 定位（其他页面连按两次跳转） / Tab 切页 / Esc 关闭");
     Navigate();
     if(requestEscape && !composing) { open=false; requestEnter=false; }
     if(requestEnter && !composing && catalog && !SearchPending()) {
@@ -385,7 +384,7 @@ void View::Draw() {
     if(songListWidth!=width) {ResetSongBodyClick();songListWidth=width;}
     bool songBodyHit=false;
     float diffWidth=std::clamp(width*0.073f,64.0f,92.0f);
-    // 结果由搜索框方向键操作；Tab 只在查询、筛选和工具之间循环。
+    // 结果由搜索框方向键操作，不进入键盘焦点。
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav,true);
     if(ImGui::BeginTable("歌曲列表",7,ImGuiTableFlags_ScrollY|ImGuiTableFlags_RowBg|ImGuiTableFlags_BordersInnerH, {0,ImGui::GetContentRegionAvail().y-62})) {
         const float scroll=ImGui::GetScrollY();

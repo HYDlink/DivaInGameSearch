@@ -612,7 +612,8 @@ void CustomizationView::Draw() {
     ImGui::SetNextItemWidth(-1);
     if(state.focus) {ImGui::SetKeyboardFocusHere();state.focus=false;}
     const char* hint=models?"服装名称、歌曲名称或 ID":domain==CustomizationDomain::Hair?"发型名称、歌曲名称或 ID":"道具名称、别名、假名、罗马音或 ID";
-    if(ImGui::InputTextWithHint("##item-search",hint,state.input,sizeof(state.input),ImGuiInputTextFlags_CallbackAlways,SelectSearchTextCallback,&state.selectText)) QueueSearch(true);
+    if(ImGui::InputTextWithHint("##item-search",hint,state.input,sizeof(state.input),ImGuiInputTextFlags_CallbackAlways,ApplySearchTextRequest,&state.text)) QueueSearch(true);
+    state.text.cursorMove=0;
     textNavigation=ImGui::IsItemActive() || ImGui::IsItemFocused();
     // 自定义道具不按人物区分，不显示人物筛选；四个部位子标签就是主要分类。
     if(domain!=CustomizationDomain::Accessories) {
@@ -670,7 +671,7 @@ void CustomizationView::Draw() {
         ImGui::Separator();
         ImGui::TextUnformatted("单击选择 · Enter 原位定位 · 双击或连按两次 Enter 跨页 · Esc 关闭");
         ImGui::TextUnformatted("Ctrl+P 预览 · Ctrl+E 换装 · Ctrl+F 全选搜索文字");
-        ImGui::TextUnformatted("方向键浏览 · Tab 切换焦点");
+        ImGui::TextUnformatted("方向键浏览 · Ctrl+←→ 移动光标 · Tab 切页 · Ctrl+Tab 回切");
         ImGui::TextUnformatted("Home / End 首尾 · PageUp / PageDown 翻页");
         ImGui::Separator();
         ImGui::TextWrapped("目录记录不代表已购买或已解锁。");
@@ -697,6 +698,8 @@ void CustomizationView::Draw() {
     gridNavigation=ImGui::IsItemFocused();
     if(requestGridFocus) {ImGui::ClearActiveID();ImGui::SetFocusID(gridFocusId,parent);ImGui::FocusWindow(parent);gridNavigation=true;textNavigation=false;requestGridFocus=false;}
     if(clickedFocus) {ImGui::SetFocusID(gridFocusId,parent);ImGui::FocusWindow(parent);gridNavigation=true;textNavigation=false;}
+    // 键盘用户不会悬浮到按钮上，快捷键也要常驻显示；放在结果行，不占用底栏状态文字。
+    ImGui::SameLine();ImGui::TextDisabled("Ctrl+P 预览 · Ctrl+E %s · Tab 切页",models?"换装":"更换");
     if(SearchPending() || composing) {ImGui::SameLine();ImGui::TextDisabled("%s",composing?"组词中…":"搜索中…");}
     // 发型页一句话说明当前歌者；未知时只提示暂不支持预览与更换，不展开实现细节。
     if(domain==CustomizationDomain::Hair) {
@@ -926,12 +929,16 @@ void CustomizationView::Draw() {
                     ImGui::PopStyleColor(2);
                     ImGui::EndDisabled();
                     const std::string pageHint=std::string("双击卡片进入")+CustomizationDomainPageName(domain)+"后使用";
-                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",!capability.targetPage?pageHint.c_str():capability.equipReason.c_str());
+                    // 参数 reason/shortcut 为当前按钮说明和快捷键；悬浮时总是显示快捷键，让用户下次可以直接按。
+                    const auto actionTip=[](const std::string& reason,const char* shortcut) {
+                        return (reason.empty()?std::string():reason+"\n")+"快捷键："+shortcut;
+                    };
+                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",actionTip(!capability.targetPage?pageHint:capability.equipReason,"Ctrl+E").c_str());
                     ImGui::SetCursorPos(ImVec2(x+14+actionWidth,rowY+actionY));
                     ImGui::BeginDisabled(unavailable || !capability.preview);
                     const bool previewClicked=ImGui::Button("预览###card-preview",ImVec2(actionWidth,32));
                     ImGui::EndDisabled();
-                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",!capability.targetPage?pageHint.c_str():capability.previewReason.c_str());
+                    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",actionTip(!capability.targetPage?pageHint:capability.previewReason,"Ctrl+P").c_str());
                     if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) && inButton) {
                         suppressActionRelease=ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && actionPressKey && *actionPressKey==item.key;
                         actionPressKey=item.key;ResetBodyClick();
