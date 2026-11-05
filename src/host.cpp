@@ -266,6 +266,19 @@ bool Host::Attach(IDXGISwapChain* chain,ID3D11Device* newDevice,ID3D11DeviceCont
     // 等所有 Mod 的 D3DInit 都完成后，在首个 OnFrame 安装窗口链头，避免歌词窗口先消费快捷键。
     initialized=true; return true;
 }
+// 实测游戏每帧约只取一条消息，按键最多排队 1.5 秒，输入法每键消息更多所以更卡。
+// 窗口消息与帧回调同线程，这里直接取走并走完整窗口链；面板打开时这些输入本来就不交给游戏。
+void Host::PumpInputMessages() {
+    if(!view.open || !window) return;
+    MSG message{};
+    // 单帧设上限，避免异常消息来源长时间占住帧回调。
+    for(int count=0;count<64;++count) {
+        if(!PeekMessageW(&message,window,WM_KEYFIRST,WM_IME_COMPOSITION,PM_REMOVE)
+            && !PeekMessageW(&message,window,WM_IME_SETCONTEXT,WM_IME_KEYUP,PM_REMOVE)) return;
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+}
 // 转发窗口消息；参数 hwnd/message/w/l 为系统消息。
 LRESULT CALLBACK SearchWndProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) { return App().Message(hwnd,message,w,l); }
 // 截获完整输入序列，同时保留系统 IME 默认处理；参数 hwnd/message/w/l 为原始消息。

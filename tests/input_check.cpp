@@ -167,6 +167,23 @@ int wmain(int argc,wchar_t** argv) {
             host.ResetInputState("测试输入法兜底");host.view.open=true;
             host.Message(window,WM_IME_STARTCOMPOSITION,0,0);host.Message(window,WM_KEYUP,VK_RETURN,0);
             Check(!host.view.composing && !host.view.imeGuard,"松开 Enter 后组词状态未清除，搜索会一直暂停");
+            {
+                // 面板打开时要主动取走排队的按键，并走完整窗口链；关闭时留给游戏消息循环。
+                WNDCLASSW pumpClass{};pumpClass.hInstance=GetModuleHandleW(nullptr);pumpClass.lpszClassName=L"DivaInputPump";
+                pumpClass.lpfnWndProc=[](HWND hwnd,UINT message,WPARAM w,LPARAM l)->LRESULT {return diva::App().Message(hwnd,message,w,l);};
+                RegisterClassW(&pumpClass);
+                HWND pumpWindow=CreateWindowW(pumpClass.lpszClassName,L"",WS_OVERLAPPED,0,0,10,10,nullptr,nullptr,pumpClass.hInstance,nullptr);
+                Check(pumpWindow!=nullptr,"消息泵测试窗口创建失败");
+                const HWND hostWindow=host.window;host.window=pumpWindow;
+                host.ResetInputState("测试消息泵");host.view.open=true;host.view.listNavigation=true;
+                PostMessageW(pumpWindow,WM_KEYDOWN,VK_RETURN,0);host.PumpInputMessages();
+                MSG left{};
+                Check(host.view.requestEnter && !PeekMessageW(&left,pumpWindow,WM_KEYFIRST,WM_KEYLAST,PM_NOREMOVE),"面板打开时排队的按键未被取走");
+                host.ResetInputState("测试消息泵关闭");
+                PostMessageW(pumpWindow,WM_KEYDOWN,'A',0);host.PumpInputMessages();
+                Check(PeekMessageW(&left,pumpWindow,WM_KEYFIRST,WM_KEYLAST,PM_REMOVE),"面板关闭时抢走了游戏的按键");
+                host.window=hostWindow;DestroyWindow(pumpWindow);
+            }
             host.ResetInputState("测试结束");
         }
         if(messagesOnly) {

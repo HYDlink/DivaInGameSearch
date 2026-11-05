@@ -160,8 +160,9 @@ __declspec(dllexport) void PostInit() {
 __declspec(dllexport) void D3DInit(IDXGISwapChain* chain,ID3D11Device* device,ID3D11DeviceContext* context) { diva::App().Attach(chain,device,context); }
 // DML 每帧回调；参数 chain 为当前交换链，不进行阻塞等待或磁盘扫描。
 __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
+    auto& host=diva::App(); host.PumpInputMessages();
     const auto callbackStart=diva::PerformanceNow();
-    auto& host=diva::App(); std::lock_guard lock(host.mutex);
+    std::lock_guard lock(host.mutex);
     diva::PerformanceFrameScope performance(*host.view.performance,true,callbackStart);
     host.view.performance->current.frameLock=diva::PerformanceNow()-callbackStart;
     const auto now=GetTickCount64();
