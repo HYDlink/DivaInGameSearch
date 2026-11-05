@@ -31,9 +31,9 @@ status_no_chart = "この難易度には有効な譜面がありません。←�
 status_hotkey_conflict = "設定したショートカットが歌詞 Mod と競合するため、Ctrl+F を使用しました。"
 
 [style]
-arcade = "ARCADE"
-console = "CONSOLE"
-mixed = "MIXED"
+arcade = "アーケード"
+console = "コンソール"
+mixed = "ミックス"
 
 [sort]
 label = "並べ替え："

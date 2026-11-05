@@ -1,6 +1,6 @@
 enabled = true
 name = "DIVA In-Game Search"
 description = "Search songs, modules, hairstyles and accessories in-game. Press Ctrl+F to open."
-version = "1.2.1"
+version = "1.2.2"
 author = "DIVA In-Game Search contributors"
 dll = ["DivaInGameSearch.dll"]
