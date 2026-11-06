@@ -232,3 +232,17 @@ OnOpen不再写query.character或重置查询修订；首次默认全部角色�
 用户确认完工并指定版本 1.2.3。本轮升版范围：`CMakeLists.txt`、`config/config.toml`、`src/mod.cpp` 的启动日志、`scripts/package.ps1` 的包名、`scripts/update-deployment.ps1` 的记录与提示，`docs/RELEASE_NOTES.md` 新增 1.2.3 条目（播放列表自定义可预览/更换、歌者按实际装备模型解析、独立记录读回）。
 
 构建 20 项 CTest 与完整 `scripts/verify.ps1` 通过；安装包 `artifacts/release/DivaInGameSearch-1.2.3-win64.zip`（SHA-256 `B10BA8B8E9443DBFFB190E5DB67B5D0CEA11816E2F85BDA338071AA08D110354`）。游戏已由用户关闭，无需强制结束；`scripts/update-deployment.ps1` 部署至游戏目录，备份 `artifacts/deployment/update-20261106-222440`，部署后 DLL SHA-256 `23D405787C967B5C2691041334F4E61A660A053D94209062AFEF8CB885E0470D` 与构建一致，`config.toml` 版本读回 1.2.3。用户已在实际游戏中确认 1.2.2 代码的模型更换、发型定位与道具卸除；1.2.3 仅改版本与文案，未再启动游戏复测。
+
+### 2026-11-06 1.2.4 发布：原生定位代码重构
+
+用户指定版本 1.2.4，并把未对外发布的 1.2.3 内容合入同一条更新日志。代码改动只有重构：原生地址、结构偏移和枚举集中到 `src/native_layout.h`，内存读写与构建校验合并到 `src/native_memory.h`。
+
+静态验证：以 1.2.3 提交 `9152364` 为基线，用相同编译参数逐函数比较反汇编。集中常量后，只剩数据符号改名和 `InitializeCustomizationItemProfiles` 的 `optional` 模板实例差异，其 RVA 立即数相同；合并读写后，差异集中在读写函数和受内联影响的函数。DLL 哈希与基线不同，不是逐字节一致。
+
+自动测试：SSH 会话 0 中 20 项 CTest 通过 19 项。`原生输入协议验收` 需要 DX11；基线与重构版各运行 12 次，崩溃分布相同。完整 `scripts/verify.ps1` 由桌面发布脚本运行，未写入本记录。
+
+实际游戏（重构版 DLL `A92BFCAF…`，源码与正式版只差版本字符串）：`inspect`、`minimal`、`full` 通过，截图已逐张检查；用户手动操作的日志包含歌曲定位 5 次、换装定位 12 次、模型更换 2 次、道具卸除 1 次、道具预览及退出各 1 次，全部成功。
+
+未确认或有异常：发型和道具按钮操作有 4 次记录“原生读回与目标不符”，用户回忆发型实际已变化，重构前的 22:13–22:21 也有同样记录，尚未定位原因，也未用旧 DLL 以相同物品对照。日志不区分预览和更换，模型预览和本轮播放列表来源未从日志确认。
+
+安装包 `artifacts/release/DivaInGameSearch-1.2.4-win64.zip`（SHA-256 `9CDE544AF6FECDBE54000547A2F015420DC172D62860C837D56B84ECD0ED991F`）。正式版 DLL `3D1484DB604100539EE93219D1C443B24CDAF2D5045A12958F0409FA8198F0A3` 尚未在实际游戏中运行。
