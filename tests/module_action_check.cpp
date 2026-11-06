@@ -7,7 +7,7 @@ namespace diva {
 NativePageSnapshot ReadNativePage(uintptr_t base) {(void)base;return {};}
 // 参数page为隔离样本；播放列表来源判定与生产同一规则，仅使用本回归构造的字段。
 bool IsPlaylistCustomization(const NativePageSnapshot& page) {
-    return page.controller && page.mode==2 && page.currentSub==6 && page.nextSub==7;
+    return page.controller && page.mode==2 && page.subCurrent==6 && page.subNext==7;
 }
 }
 namespace {
@@ -70,7 +70,7 @@ void CrossCategoryActions() {
 }
 // 创建播放列表自定义的隔离样本：外层 mode2 子状态6／7，显示模型与 controller+0x10 独立记录一致。
 diva::action_runtime::Snapshot PlaylistSample() {
-    auto s=Sample();s.page.mode=2;s.page.currentSub=6;s.page.nextSub=7;s.page.sourcePvid=730;
+    auto s=Sample();s.page.mode=2;s.page.subCurrent=6;s.page.subNext=7;s.page.sourcePvid=730;
     s.page.slot=0;s.page.slotCount=1;s.page.internal=0;s.page.popup=-1;
     s.equippedId=334;s.equippedIndex=0;s.highlight=0;s.highlightId=334;s.equippedCharacter=1;
     s.models={334,0,0,0,0,0};return s;
@@ -105,7 +105,7 @@ void PlaylistActions() {
     active={};active.phase=Phase::Loading;active.request=ActionRequest(902);
     active.request.slot=0;active.request.key.id=316;active.before=PlaylistSample();active.origin=active.before;
     active.card=card;status={};status.action=CustomizationAction::Equip;
-    auto leftPlaylist=PlaylistSample();leftPlaylist.page.nextSub=8;leftPlaylist.equippedId=316;leftPlaylist.models[0]=316;
+    auto leftPlaylist=PlaylistSample();leftPlaylist.page.subNext=8;leftPlaylist.equippedId=316;leftPlaylist.models[0]=316;
     Confirm(leftPlaylist);Check(status.completed && !status.succeeded,"离开播放列表外层子状态后旧动作仍继续确认");
 }
 }

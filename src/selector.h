@@ -15,7 +15,8 @@ struct Request {
 struct Snapshot {
     // 实际菜单、过渡标记、请求字段和实际可见 PVID。
     bool supported=false;
-    int current=-1,next=-1,changing=-1,pvid=-1,difficulty=-1,style=-1,visiblePvid=-1;
+    // subCurrent/subNext/subProc 分别是 ModeInfo 的 sub_current、sub_next、sub_proc。
+    int subCurrent=-1,subNext=-1,subProc=-1,pvid=-1,difficulty=-1,style=-1,visiblePvid=-1;
     // 实际选曲对象的难度与模式；稳定性由连续观察判定，不把控制标记当布尔值。
     int visibleDifficulty=-1,mode=0;
     bool stable=true;
@@ -30,7 +31,7 @@ class Memory {
 public:
     // 读取当前真实状态。
     virtual Snapshot Read()=0;
-    // 触发菜单阶段；参数 next 为目标菜单编号。
+    // 触发菜单阶段；参数 next 为目标 ModeSub。
     virtual bool Transition(int next)=0;
     // 写入选曲字段；参数 request 为已验证请求。
     virtual bool Select(const Request& request)=0;

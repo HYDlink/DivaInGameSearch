@@ -11,9 +11,9 @@ enum class NativePage { Unknown, Home, Song, Parent, Module, Hair, Accessory };
 struct NativePageSnapshot {
     NativePage page=NativePage::Unknown;
     uintptr_t controller=0,configuration=0,manager=0,head=0,node=0,target=0,scene=0,state=0,song=0;
-    int mode=-1,modeProcess=-1,currentSub=-1,nextSub=-1,subProcess=-1,key=-1,transition=-1;
+    int mode=-1,modeProc=-1,subCurrent=-1,subNext=-1,subProc=-1,key=-1,transition=-1;
     int internal=-1,parentCursor=-1,parentPhase=-1,popup=-1,pvid=-1,songState=-1;
-    uint8_t modeSwitch=1,subSwitch=1;
+    uint8_t modeShift=1,subShift=1;
     int slot=-1,slotCount=-1,nativeScope=-1,sourcePvid=-1;
     // 当前槽位实际装备的模型 ID：优先独立记录，缺失时用临时显示配置；用于解析发型／道具人物。
     int model=-1;
@@ -21,7 +21,7 @@ struct NativePageSnapshot {
 };
 // 参数 base 为已通过 SHA-256 核验的动态基址；只读当前页面，不扫描驻留对象。
 NativePageSnapshot ReadNativePage(uintptr_t base);
-// 参数 page 为只读页面快照；返回是否来自播放列表自定义外层状态（mode 2、子状态 6／7）。
+// 参数 page 为只读页面快照；返回是否来自播放列表自定义外层状态（Mode::Game、子状态 PlaylistSel／Game）。
 // 播放列表来源与普通单曲共用场景与控制器，但独立保存记录位于 controller+0x10；动作事务须绑定该外层子状态。
 bool IsPlaylistCustomization(const NativePageSnapshot& page);
 // 参数 base 为定位器已核验基址，先核对入口再链式安装三种真实帧边界。

@@ -11,6 +11,7 @@
 | src/customization* | 服装／饰品导入、独立搜索、键盘格子和安全能力 stub；不写游戏内存 |
 | src/host.* | Win32、IME、DX11、图形资源与输入捕获 |
 | src/game.* | 游戏构建校验、对象读取、原生列表定位 |
+| src/native_layout.h | 已核查构建的全部原生地址、结构偏移与枚举，并标注名字来源 |
 | src/selector.* | 请求校验、跨帧结果确认、超时与恢复 |
 | src/mod.cpp | DML 回调、初始化、定位提交和诊断 |
 | src/preview.cpp | 不访问游戏内存的界面预览 |

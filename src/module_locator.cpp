@@ -2,6 +2,7 @@
 #include "module_locator.h"
 #include "module_category.h"
 #include "module_action.h"
+#include "native_layout.h"
 
 #include <Windows.h>
 #include <wincrypt.h>
@@ -16,17 +17,9 @@
 #include <atomic>
 
 namespace diva {
+using namespace native;
 namespace {
 
-constexpr uint32_t kExpectedTimestamp=1666920875;
-constexpr uint32_t kExpectedImageSize=602353664;
-constexpr uintptr_t kModuleFrameRva=0x6910B0;
-constexpr uintptr_t kInitializeChoiceRva=0x6916E0;
-constexpr uintptr_t kMoveCategoryRva=0x694D00;
-constexpr uintptr_t kModuleVtableRva=0xCC4BB0;
-constexpr uintptr_t kControllerRootRva=0xCC6F100;
-constexpr uintptr_t kScopeSelectorRva=0x12B5A74;
-constexpr char kExpectedSha256[]="6F4DF714C28515C93B3023E7D6DAFA9095DD8835F762D54DB1726FB8BC04504D";
 constexpr uint64_t kContextFreshMilliseconds=500;
 constexpr int32_t kMaximumListCount=10000;
 
@@ -71,8 +64,8 @@ bool ValidatePeProfile(uintptr_t base) {
     if(!ReadAt(base,dos) || dos.e_magic!=IMAGE_DOS_SIGNATURE || dos.e_lfanew<=0
         || !ReadAt(base+static_cast<uintptr_t>(dos.e_lfanew),nt)) return false;
     return nt.Signature==IMAGE_NT_SIGNATURE && nt.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64
-        && nt.FileHeader.TimeDateStamp==kExpectedTimestamp
-        && nt.OptionalHeader.SizeOfImage==kExpectedImageSize;
+        && nt.FileHeader.TimeDateStamp==build::kTimestamp
+        && nt.OptionalHeader.SizeOfImage==build::kImageSize;
 }
 
 // 对当前游戏可执行文件计算 SHA-256；参数 path 为主程序路径，digest 接收 64 个十六进制字符。
@@ -121,22 +114,22 @@ bool ValidateNativeSignatures(uintptr_t base) {
     static_assert(sizeof(frameMask)==sizeof(frameBytes),"模型帧签名与掩码长度必须一致");
     std::array<unsigned char,sizeof(frameBytes)> actual{};
     SIZE_T read=0;
-    if(!ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(base+kModuleFrameRva),actual.data(),actual.size(),&read)
+    if(!ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(base+rva::kSceneModuleFrame),actual.data(),actual.size(),&read)
         || read!=actual.size()) return false;
     for(size_t i=0;i<actual.size();++i) if(frameMask[i] && actual[i]!=frameBytes[i]) return false;
 
     const unsigned char choiceBytes[]={0x48,0x89,0x5C,0x24,0x10};
     std::array<unsigned char,sizeof(choiceBytes)> choiceActual{};
     read=0;
-    if(!ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(base+kInitializeChoiceRva),choiceActual.data(),choiceActual.size(),&read)
+    if(!ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(base+rva::kSceneModuleInitChoice),choiceActual.data(),choiceActual.size(),&read)
         || read!=choiceActual.size() || memcmp(choiceActual.data(),choiceBytes,sizeof(choiceBytes))!=0) return false;
 
     unsigned char categoryJump=0;
     int32_t categoryDisplacement=0;
-    if(!ReadAt(base+kMoveCategoryRva,categoryJump) || categoryJump!=0xE9
-        || !ReadAt(base+kMoveCategoryRva+1,categoryDisplacement)) return false;
-    auto categoryTarget=base+kMoveCategoryRva+5+static_cast<intptr_t>(categoryDisplacement);
-    return IsExecutable(base+kModuleFrameRva) && IsExecutable(base+kInitializeChoiceRva) && IsExecutable(categoryTarget);
+    if(!ReadAt(base+rva::kSceneModuleMoveCategory,categoryJump) || categoryJump!=0xE9
+        || !ReadAt(base+rva::kSceneModuleMoveCategory+1,categoryDisplacement)) return false;
+    auto categoryTarget=base+rva::kSceneModuleMoveCategory+5+static_cast<intptr_t>(categoryDisplacement);
+    return IsExecutable(base+rva::kSceneModuleFrame) && IsExecutable(base+rva::kSceneModuleInitChoice) && IsExecutable(categoryTarget);
 }
 
 // 将原生角色枚举显式映射到已验证的 UI 分类；参数 character 为请求中的展示分类。
@@ -197,16 +190,16 @@ struct FrameSnapshot {
 bool ReadFrameSnapshot(uintptr_t base,uintptr_t page,FrameSnapshot& snapshot) {
     snapshot={};snapshot.page=page;
     uintptr_t vtable=0,controller=0,globalController=0;
-    if(!ReadAt(page,vtable) || vtable!=base+kModuleVtableRva
+    if(!ReadAt(page,vtable) || vtable!=base+rva::kSceneModuleVtable
         || !ReadAt(page+0x08,controller) || !controller
-        || !ReadAt(base+kControllerRootRva+0x78,globalController) || globalController!=controller) return false;
+        || !ReadAt(base+rva::kCustomizeTask+customize_task::kController,globalController) || globalController!=controller) return false;
     snapshot.controller=controller;
     // 原生分类函数实际读取的配置对象身份；只作生命周期token，不假定其设置范围语义。
     if(!ReadAt(controller+0x18,snapshot.configuration) || !snapshot.configuration) return false;
     if(!ReadAt(page+0x20,snapshot.pageState) || !ReadAt(page+0x28,snapshot.pageEpoch)
         || !ReadAt(page+0x110,snapshot.index) || !ReadAt(page+0x60,snapshot.popup)
         || !ReadAt(controller+0x38,snapshot.slotCount) || !ReadAt(controller+0x3C,snapshot.rawContext) || !ReadAt(controller+0x40,snapshot.category)
-        || !ReadAt(base+kScopeSelectorRva,snapshot.nativeScope)
+        || !ReadAt(base+rva::kCustomizeScopeSelector,snapshot.nativeScope)
         || !ReadAt(page+0x70,snapshot.listBegin) || !ReadAt(page+0x78,snapshot.listEnd)) return false;
     // 自然E/Q已确认3C是当前歌者槽位；按真实槽位读取模型，不回退到0号槽位。
     if(snapshot.rawContext>=0 && snapshot.rawContext<6
@@ -226,7 +219,7 @@ bool ReadFrameSnapshot(uintptr_t base,uintptr_t page,FrameSnapshot& snapshot) {
     // 320/338在正常列表也可保持125，不能把非零当作试穿标志；只记录原值并追踪变化。
     snapshot.contextReady=(snapshot.pageState==1 || snapshot.pageState==2)
         && snapshot.slotCount>0 && snapshot.slotCount<=6 && snapshot.rawContext>=0 && snapshot.rawContext<snapshot.slotCount
-        && snapshot.nativeScope>=0 && snapshot.nativeScope<=3 && snapshot.popup==-1
+        && snapshot.nativeScope>=CustomizeScope::CommonA && snapshot.nativeScope<=CustomizeScope::Song && snapshot.popup==-1
         && snapshot.category>=0 && snapshot.category<=6
         && ModuleRecordCategory(snapshot.currentCharacter)==snapshot.category;
     return true;
@@ -253,7 +246,7 @@ std::string ContextUnavailableMessage(const FrameSnapshot& snapshot) {
     if(!snapshot.structurallyValid) return Tr(Tx::modloc_invalid_page);
     if(snapshot.pageState!=1 && snapshot.pageState!=2) return Tr(Tx::modloc_bad_state);
     if(snapshot.slotCount<1 || snapshot.slotCount>6 || snapshot.rawContext<0 || snapshot.rawContext>=snapshot.slotCount) return Tr(Tx::modloc_slot_invalid);
-    if(snapshot.nativeScope<0 || snapshot.nativeScope>3) return Tr(Tx::modloc_scope_unknown);
+    if(snapshot.nativeScope<CustomizeScope::CommonA || snapshot.nativeScope>CustomizeScope::Song) return Tr(Tx::modloc_scope_unknown);
     if(snapshot.popup!=-1) return Tr(Tx::modloc_close_menu);
     if(snapshot.category<0 || snapshot.category>6) return Tr(Tx::modloc_choose_category);
     if(ModuleRecordCategory(snapshot.currentCharacter)!=snapshot.category) return Tr(Tx::modloc_category_mismatch);
@@ -359,12 +352,12 @@ bool ModuleLocator::Initialize(uintptr_t base) {
     DWORD pathLength=GetModuleFileNameW(nullptr,executablePath,static_cast<DWORD>(std::size(executablePath)));
     if(!pathLength || pathLength>=std::size(executablePath)) { status_.message=Tr(Tx::modloc_path_failed);return false; }
     std::string digest;
-    if(!CalculateSha256(executablePath,digest) || digest!=kExpectedSha256) {
+    if(!CalculateSha256(executablePath,digest) || digest!=build::kSha256) {
         status_.message=Tr(Tx::modloc_hash_mismatch);return false;
     }
     if(!ValidateNativeSignatures(base)) { status_.message=Tr(Tx::modloc_signature_mismatch);return false; }
-    base_=base;choiceFunction_=base+kInitializeChoiceRva;categoryFunction_=base+kMoveCategoryRva;
-    g_originalModuleFrame=reinterpret_cast<ModuleFrameFunction>(base+kModuleFrameRva);
+    base_=base;choiceFunction_=base+rva::kSceneModuleInitChoice;categoryFunction_=base+rva::kSceneModuleMoveCategory;
+    g_originalModuleFrame=reinterpret_cast<ModuleFrameFunction>(base+rva::kSceneModuleFrame);
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
     LONG attach=DetourAttach(reinterpret_cast<PVOID*>(&g_originalModuleFrame),reinterpret_cast<PVOID>(&ModuleFrameHook));

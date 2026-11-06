@@ -1,12 +1,14 @@
 #include "i18n.h"
 #include "game.h"
 #include "host.h"
+#include "native_layout.h"
 #include <detours.h>
 #include <Psapi.h>
 #include <vector>
 #include <cstring>
 
 namespace diva {
+using namespace native;
 using InputFn=void*(__fastcall*)(int);
 static InputFn originalInput=nullptr;
 // 在原有输入链之后返回空玩家状态；参数 player 为游戏请求玩家编号。
@@ -42,7 +44,7 @@ static bool HighlightNativeList(uintptr_t address,uintptr_t list,int index) {
 // 从 PC 实际可见向量查找逻辑 PVID；参数 object/pvid 为真实任务与目标编号。
 static int FindNativeIndex(uintptr_t object,int pvid) {
     uintptr_t vector=0,begin=0,end=0;
-    if(!ReadAt(object+0x25A20,vector) || !vector || !ReadAt(vector,begin) || !ReadAt(vector+8,end) || end<begin || (end-begin)%8 || (end-begin)/8>100000) return -1;
+    if(!ReadAt(object+pv_selector::kSelPvData,vector) || !vector || !ReadAt(vector,begin) || !ReadAt(vector+8,end) || end<begin || (end-begin)%8 || (end-begin)/8>100000) return -1;
     for(size_t i=0;i<(end-begin)/8;++i) {
         uintptr_t pv=0,data=0,entry=0;int id=-1;
         if(ReadAt(begin+i*8,pv) && pv && ReadAt(pv,data) && data && ReadAt(data,entry) && entry && ReadAt(entry,id) && id==pvid) return (int)i;
@@ -85,13 +87,13 @@ void GameMemory::Initialize() {
     wchar_t path[32768]{}; GetModuleFileNameW(nullptr,path,32768);
     if(fs::path(path).filename()!=L"DivaMegaMix.exe") { inputReady=true;diagnostic="当前是验证宿主，已禁用游戏内存访问。"; return; }
     IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
-    if(!ReadAt(base,dos) || !ReadAt(base+dos.e_lfanew,nt) || nt.FileHeader.TimeDateStamp!=1666920875 || nt.OptionalHeader.SizeOfImage!=602353664) {
+    if(!ReadAt(base,dos) || !ReadAt(base+dos.e_lfanew,nt) || nt.FileHeader.TimeDateStamp!=build::kTimestamp || nt.OptionalHeader.SizeOfImage!=build::kImageSize) {
         diagnostic=Tr(Tx::game_build_unknown); return;
     }
     // 允许前一 Mod 已安装 detour：核对固定入口之后未被补丁覆盖的原函数尾部。
     const unsigned char signature[]={0x4C,0x8B,0x05,0,0,0,0,0x4D,0x85,0xC0,0x74,0x35,0x4C,0x63,0xC9,0x48,0xB8,0,0,0,0,0,0,0,0,0x49,0x8B,0x48,0x08,0x49,0x2B,0x08,0x48,0xF7,0xE9};
     // 本机既有歌词诊断确认入口为 0x1402AC970，参考源码的预设 0x1402AC960 不能直接照搬。
-    auto entry=base+0x2AC970;
+    auto entry=base+rva::kGetInputState;
     unsigned char tail[sizeof(signature)]{};
     SIZE_T read=0;
     if(!ReadProcessMemory(GetCurrentProcess(),(void*)entry,tail,sizeof(tail),&read) || read!=sizeof(tail) || memcmp(tail+25,signature+25,10)!=0) {
@@ -104,11 +106,11 @@ void GameMemory::Initialize() {
     if(attach!=NO_ERROR || commit!=NO_ERROR) { originalInput=nullptr; diagnostic=Tr(Tx::game_input_failed); return; }
     inputReady=true;
     int pvid=0;
-    if(!ReadAt(base+0x12B6350,pvid)) { diagnostic=Tr(Tx::game_song_unreadable); return; }
+    if(!ReadAt(base+rva::kLastSelectPvId,pvid)) { diagnostic=Tr(Tx::game_song_unreadable); return; }
     // Eden 的数据偏移仅在该构建原槽为零、偏移槽确实含有效 PVID 时启用。
     if(pvid==0) {
         int candidate=0;
-        if(ReadAt(base+0x12B6350+0x105F460,candidate) && candidate>0 && candidate<10000000) dataOffset=0x105F460;
+        if(ReadAt(base+rva::kLastSelectPvId+kEdenDataOffset,candidate) && candidate>0 && candidate<10000000) dataOffset=kEdenDataOffset;
     }
     auto nc=GetModuleHandleW(L"NewClassics.dll");
     if(nc) {
@@ -124,7 +126,7 @@ void GameMemory::Initialize() {
         styleWindowAddress=hit-3+displacement;
     }
     // 复用歌词项目已在本机使用的 applySel 相对调用，避免沿用其他构建的字段偏移指令地址。
-    auto apply=base+0x6EFCF0;unsigned char prefix[19]{};unsigned char opcode=0;int callOffset=0;
+    auto apply=base+rva::kPvSelectorApplySel;unsigned char prefix[19]{};unsigned char opcode=0;int callOffset=0;
     SIZE_T prefixRead=0;
     if(!ReadProcessMemory(GetCurrentProcess(),(void*)apply,prefix,sizeof(prefix),&prefixRead) || prefixRead!=sizeof(prefix)
         || memcmp(prefix,"\x40\x57\x48\x81\xEC",5)!=0 || memcmp(prefix+16,"\x48\x8B\xF9",3)!=0
@@ -142,8 +144,8 @@ void GameMemory::Initialize() {
 static bool ReadLanguageDirectory(uintptr_t image,char* output) {
     __try {
         const unsigned char expected[]={0xE8,0xF6,0xF4,0x08,0x00};
-        if(std::memcmp(reinterpret_cast<const void*>(image+0x239835),expected,sizeof(expected))) return false;
-        const char* directory=reinterpret_cast<const char*(__fastcall*)()>(image+0x2C8D30)();
+        if(std::memcmp(reinterpret_cast<const void*>(image+rva::kGetLanguageDirectoryCall),expected,sizeof(expected))) return false;
+        const char* directory=reinterpret_cast<const char*(__fastcall*)()>(image+rva::kGetLanguageDirectory)();
         if(!directory) return false;
         for(size_t n=0;n<32;++n) {output[n]=directory[n];if(!output[n]) return true;}
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
@@ -161,17 +163,17 @@ std::string GameMemory::CurrentLanguage() const {
 bool GameMemory::IsSongSearchPage() {
     const auto snapshot=Read();uintptr_t object=0;int state=-1,pvid=-1;
     if(snapshot.playlistSong) return true;
-    return snapshot.supported && snapshot.current==5 && snapshot.next==6 && snapshot.changing==1
+    return snapshot.supported && snapshot.subCurrent==ModeSub::PvSel && snapshot.subNext==ModeSub::PlaylistSel && snapshot.subProc==ModeProc::Ctrl
         && (snapshot.mode==0 || snapshot.mode==1) && snapshot.visiblePvid>0
-        && ReadAt(base+0xCC5EF18,object) && object && ReadAt(object+0x6C,state) && state==6
-        && ReadAt(object+0x262A4,pvid) && pvid==snapshot.visiblePvid;
+        && ReadAt(base+rva::kPvSelectorSwitch,object) && object && ReadAt(object+pv_selector::kState,state) && state==pv_selector::kStateIdle
+        && ReadAt(object+pv_selector::kPvId,pvid) && pvid==snapshot.visiblePvid;
 }
 // 获取独立字段和真实选曲对象中的 PVID。
 Snapshot GameMemory::Read() {
     Snapshot s; if(!supported) return s;
     s.supported=true;
-    bool ok=ReadAt(base+0xCC61094,s.current) && ReadAt(base+0xCC61098,s.next) && ReadAt(base+0xCC610A0,s.changing)
-        && ReadAt(base+0x12B6350+dataOffset,s.pvid) && ReadAt(base+0x12B634C+dataOffset,s.difficulty);
+    bool ok=ReadAt(base+mode_info::kSubCurrent,s.subCurrent) && ReadAt(base+mode_info::kSubNext,s.subNext) && ReadAt(base+mode_info::kSubProc,s.subProc)
+        && ReadAt(base+rva::kLastSelectPvId+dataOffset,s.pvid) && ReadAt(base+rva::kLastSelectDifficulty+dataOffset,s.difficulty);
     s.style=0; if(styleAddress) ok=ok && ReadAt(styleAddress,s.style);
     if(styleWindowAddress) {
         uintptr_t styleWindow=0;int count=0,index=-1;unsigned char option=0;
@@ -182,72 +184,72 @@ Snapshot GameMemory::Read() {
     int actualDiff=-1,actualExtra=-1;uint64_t mode=0;
     if(selectorObject && ReadAt(selectorObject,s.visibleDifficulty) && ReadAt(selectorObject+4,actualExtra)
         && ReadAt(selectorObject+0x18,mode)) {
-        actualDiff=s.visibleDifficulty;s.visibleDifficulty=actualExtra?4:actualDiff;s.mode=(int)mode;
-        if(actualDiff<0 || actualDiff>3 || actualExtra<0 || actualExtra>1) s.visibleDifficulty=-1;
+        actualDiff=s.visibleDifficulty;s.visibleDifficulty=actualExtra?kRequestExtraExtreme:actualDiff;s.mode=(int)mode;
+        if(actualDiff<0 || actualDiff>PvDifficulty::Extreme || actualExtra<0 || actualExtra>PvEdition::Extra) s.visibleDifficulty=-1;
     } else { s.visiblePvid=-1;s.visibleDifficulty=-1;s.mode=-1; }
     // 01:26:58 高亮爱言叶读到 48，01:29:24 切困难后仍为 48；演奏对象 PVID 在选曲中是 -1，不能复用。
     uintptr_t menuObject=0;int member=0;
-    if(ReadAt(base+0xCC5EF18,menuObject) && menuObject && ReadAt(base+0x6EFE8C,member) && member>=0x9C8 && member<=0x100000) {
-        if(!ReadAt(menuObject+(intptr_t)member-0x9C8,s.visiblePvid) || s.visiblePvid<=0 || s.visiblePvid>=10000000) s.visiblePvid=-1;
+    if(ReadAt(base+rva::kPvSelectorSwitch,menuObject) && menuObject && ReadAt(base+rva::kVisiblePvidMember,member) && member>=pv_selector::kVisiblePvidBias && member<=pv_selector::kVisiblePvidMemberMax) {
+        if(!ReadAt(menuObject+(intptr_t)member-pv_selector::kVisiblePvidBias,s.visiblePvid) || s.visiblePvid<=0 || s.visiblePvid>=10000000) s.visiblePvid=-1;
     }
     int menuState=-1,taskPvid=-1;
-    s.playlistSong=s.current==6 && s.next==7 && s.changing==1 && menuObject && s.visiblePvid>0
-        && ReadAt(menuObject+0x6C,menuState) && menuState==6 && ReadAt(menuObject+0x262A4,taskPvid)
+    s.playlistSong=s.subCurrent==ModeSub::PlaylistSel && s.subNext==ModeSub::Game && s.subProc==ModeProc::Ctrl && menuObject && s.visiblePvid>0
+        && ReadAt(menuObject+pv_selector::kState,menuState) && menuState==pv_selector::kStateIdle && ReadAt(menuObject+pv_selector::kPvId,taskPvid)
         && taskPvid==s.visiblePvid && FindNativeIndex(menuObject,taskPvid)>=0;
     int nativeTarget=-1;
-    s.playlistHighlightMatched=s.playlistSong && ReadAt(menuObject+0x25A10,nativeTarget)
+    s.playlistHighlightMatched=s.playlistSong && ReadAt(menuObject+pv_selector::kSelTargetIndex,nativeTarget)
         && nativeTarget==FindNativeIndex(menuObject,taskPvid);
-    s.supported=ok && s.current>=0 && s.current<=64 && s.next>=0 && s.next<=64 && s.style>=0 && s.style<=2;
+    s.supported=ok && s.subCurrent>=0 && s.subCurrent<=64 && s.subNext>=0 && s.subNext<=64 && s.style>=0 && s.style<=2;
     auto now=GetTickCount64();
-    bool unchanged=s.current==previous.current && s.next==previous.next && s.changing==previous.changing
+    bool unchanged=s.subCurrent==previous.subCurrent && s.subNext==previous.subNext && s.subProc==previous.subProc
         && s.visiblePvid==previous.visiblePvid && s.visibleDifficulty==previous.visibleDifficulty && s.mode==previous.mode && s.playlistSong==previous.playlistSong;
     if(!unchanged || !stableSince) stableSince=now;
     s.stable=s.supported && unchanged && now-stableSince>=150;
     previous=s;
     return s;
 }
-// 按已验证菜单协议设置控制标记；参数 next 为 5 或 6。
+// 按已验证菜单协议请求离开当前子状态；参数 next 为 ModeSub::PvSel 或 ModeSub::PlaylistSel。
 bool GameMemory::Transition(int next) {
-    if(!supported || (next!=5 && next!=6)) return false;
-    auto snapshot=Read(); if(!snapshot.supported || (snapshot.current!=5 && snapshot.current!=6)) return false;
-    return WriteAt(base+0xCC61098,next) && WriteAt(base+0xCC610A0,2);
+    if(!supported || (next!=ModeSub::PvSel && next!=ModeSub::PlaylistSel)) return false;
+    auto snapshot=Read(); if(!snapshot.supported || (snapshot.subCurrent!=ModeSub::PvSel && snapshot.subCurrent!=ModeSub::PlaylistSel)) return false;
+    return WriteAt(base+mode_info::kSubNext,next) && WriteAt(base+mode_info::kSubProc,ModeProc::Dest);
 }
 // 按协议写入难度、PVID、风格和全曲筛选；参数 request 为已验证动作。
 bool GameMemory::Select(const Request& request) {
     if(!supported || (!styleAddress && request.style!=0)) return false;
-    auto s=Read(); if(!s.supported || (s.current!=5 && s.current!=6)) return false;
-    return WriteAt(base+0x12B634C+dataOffset,request.difficulty) && WriteAt(base+0x12B6350+dataOffset,request.pvid)
-        && (!styleAddress || WriteAt(styleAddress,request.style)) && WriteAt(base+0x12B6354+dataOffset,1) && WriteAt(base+0x12B635C+dataOffset,19);
+    auto s=Read(); if(!s.supported || (s.subCurrent!=ModeSub::PvSel && s.subCurrent!=ModeSub::PlaylistSel)) return false;
+    return WriteAt(base+rva::kLastSelectDifficulty+dataOffset,request.difficulty) && WriteAt(base+rva::kLastSelectPvId+dataOffset,request.pvid)
+        && (!styleAddress || WriteAt(styleAddress,request.style)) && WriteAt(base+rva::kLastSelectSortMode+dataOffset,1) && WriteAt(base+rva::kLastSelectSortIndex+dataOffset,19);
 }
 // 只要此构建通过启动核查，就坚持原界面路径；失败不会自动把用户送到播放列表。
 bool GameMemory::SupportsDirect() const { return true; }
 // 按 Switch QuickJump 的调用语义配合 PC New Classics 的真实入口，原位重建与高亮；参数 request 为目标。
 bool GameMemory::DirectSelect(const Request& request) {
-    if(!supported || request.pvid<=0 || request.difficulty<0 || request.difficulty>4 || request.style<0 || request.style>2) return false;
+    if(!supported || request.pvid<=0 || request.difficulty<0 || request.difficulty>kRequestExtraExtreme || request.style<0 || request.style>2) return false;
     auto snapshot=Read();uintptr_t object=0;int internalState=-1,mode=-1,diff=-1,edition=-1,pvid=-1;
     // 播放列表选曲不改变难度、风格和播放列表条目，只在当前生效向量中定位。
     if(snapshot.playlistSong) {
-        if(!snapshot.stable || !ReadAt(base+0xCC5EF18,object) || !object) return false;
+        if(!snapshot.stable || !ReadAt(base+rva::kPvSelectorSwitch,object) || !object) return false;
         int index=FindNativeIndex(object,request.pvid);
         if(index<0) {
             // 仅对实机确认的曲名排序切回全曲，其他排序保持原筛选并拒绝未知目标。
-            int sort=-1;if(!ReadAt(object+0x262C0,sort) || sort!=0) return false;
-            const uintptr_t folder=object+0x262AC;
-            if(!WriteAt(folder,10) || !WriteValue(object+0x26240,folder) || !WriteAt(object+0x262BC,1)
-                || !RefreshNativeList(base+0x6F2F40,object)) return false;
+            int sort=-1;if(!ReadAt(object+pv_selector::kSortMode,sort) || sort!=0) return false;
+            const uintptr_t folder=object+pv_selector::kSortIndices;
+            if(!WriteAt(folder,10) || !WriteValue(object+pv_selector::kCurSortIndex,folder) || !WriteAt(object+pv_selector::kSortChangeDir,1)
+                || !RefreshNativeList(base+rva::kChangeSortFilter,object)) return false;
             index=FindNativeIndex(object,request.pvid);
         }
-        if(index<0 || !WriteAt(object+0x262A4,request.pvid)) return false;
-        if(!RefreshNativeList(base+0x6F2F40,object)) return false;
+        if(index<0 || !WriteAt(object+pv_selector::kPvId,request.pvid)) return false;
+        if(!RefreshNativeList(base+rva::kChangeSortFilter,object)) return false;
         index=FindNativeIndex(object,request.pvid);
-        return index>=0 && HighlightNativeList(base+0x217500,object+0x25930,index);
+        return index>=0 && HighlightNativeList(base+rva::kPvListSetSelectedIndex,object+pv_selector::kSelPvList,index);
     }
-    if(!snapshot.supported || snapshot.current!=5 || snapshot.next!=6 || snapshot.changing!=1 || !ReadAt(base+0xCC5EF18,object) || !object
-        || !ReadAt(object+0x6C,internalState) || internalState!=6 || !ReadAt(object+0x262C0,mode) || mode<0 || mode>3
-        || !ReadAt(object+0x262C8,diff) || diff<0 || diff>3 || !ReadAt(object+0x262CC,edition) || edition<0 || edition>1
-        || !ReadAt(object+0x262A4,pvid) || pvid!=snapshot.visiblePvid) { diagnostic="PC 原生选曲对象未通过一致性检查。";return false; }
+    if(!snapshot.supported || snapshot.subCurrent!=ModeSub::PvSel || snapshot.subNext!=ModeSub::PlaylistSel || snapshot.subProc!=ModeProc::Ctrl || !ReadAt(base+rva::kPvSelectorSwitch,object) || !object
+        || !ReadAt(object+pv_selector::kState,internalState) || internalState!=pv_selector::kStateIdle || !ReadAt(object+pv_selector::kSortMode,mode) || mode<0 || mode>3
+        || !ReadAt(object+pv_selector::kDifficulty,diff) || diff<0 || diff>PvDifficulty::Extreme || !ReadAt(object+pv_selector::kEdition,edition) || edition<0 || edition>PvEdition::Extra
+        || !ReadAt(object+pv_selector::kPvId,pvid) || pvid!=snapshot.visiblePvid) { diagnostic="PC 原生选曲对象未通过一致性检查。";return false; }
     // PC 函数来自公开 New Classics 源码，既有模块的 Detour 链照常保留。
-    const uintptr_t functions[]={base+0x6F3100,base+0x6F2F40,base+0x217500};
+    const uintptr_t functions[]={base+rva::kCreateSortedPvList,base+rva::kChangeSortFilter,base+rva::kPvListSetSelectedIndex};
     for(auto function:functions) {
         MEMORY_BASIC_INFORMATION info{};
         if(!VirtualQuery((void*)function,&info,sizeof(info)) || info.State!=MEM_COMMIT || !(info.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))) return false;
@@ -256,23 +258,23 @@ bool GameMemory::DirectSelect(const Request& request) {
     if(styleWindowAddress) {
         if(!ReadAt(styleWindowAddress,styleWindow) || !styleWindow || !WriteAt(styleWindow+preferredStyleOffset,request.style)) return false;
     } else if(request.style!=0) return false;
-    int targetDiff=request.difficulty==4?3:request.difficulty,targetEdition=request.difficulty==4?1:0;
+    int targetDiff=request.difficulty==kRequestExtraExtreme?PvDifficulty::Extreme:request.difficulty,targetEdition=request.difficulty==kRequestExtraExtreme?PvEdition::Extra:PvEdition::Original;
     const int allFolders[]={10,19,6,5};int all=allFolders[mode];
-    uintptr_t currentVector=object+0x25EE8+(8*mode+2*targetDiff+targetEdition)*0x18;
+    uintptr_t currentVector=object+pv_selector::kSortedPvLists+(8*mode+2*targetDiff+targetEdition)*pv_selector::kSortedPvListStride;
     uintptr_t begin=0,end=0;
-    if(!ReadAt(currentVector,begin) || !ReadAt(currentVector+8,end) || end<begin || (end-begin)%0x48 || (end-begin)/0x48>100000) return false;
-    if(!WriteAt(object+0x262C8,targetDiff) || !WriteAt(object+0x262CC,targetEdition)
-        || !WriteValue(object+0x261E8,currentVector) || !WriteAt(object+0x262AC+mode*4,all)
-        || !WriteValue(object+0x26240,object+0x262AC+mode*4) || !WriteAt(object+0x262BC,1)) return false;
+    if(!ReadAt(currentVector,begin) || !ReadAt(currentVector+8,end) || end<begin || (end-begin)%pv_selector::kPvDataSize || (end-begin)/pv_selector::kPvDataSize>100000) return false;
+    if(!WriteAt(object+pv_selector::kDifficulty,targetDiff) || !WriteAt(object+pv_selector::kEdition,targetEdition)
+        || !WriteValue(object+pv_selector::kCurPvList,currentVector) || !WriteAt(object+pv_selector::kSortIndices+mode*4,all)
+        || !WriteValue(object+pv_selector::kCurSortIndex,object+pv_selector::kSortIndices+mode*4) || !WriteAt(object+pv_selector::kSortChangeDir,1)) return false;
     if(!CreateNativeList(functions[0],object)) { diagnostic="原生歌曲列表重建失败。";return false; }
     int index=FindNativeIndex(object,request.pvid);
     if(index<0) { diagnostic="目标歌曲不在该风格与难度的实际生效列表中。";return false; }
-    if(!WriteAt(object+0x262A4,request.pvid) || !WriteAt(base+0x12B634C+dataOffset,request.difficulty)
-        || !WriteAt(base+0x12B6350+dataOffset,request.pvid) || !WriteAt(base+0x12B6354+dataOffset,mode)
-        || !WriteAt(base+0x12B635C+dataOffset,all) || (styleAddress && !WriteAt(styleAddress,request.style))) return false;
+    if(!WriteAt(object+pv_selector::kPvId,request.pvid) || !WriteAt(base+rva::kLastSelectDifficulty+dataOffset,request.difficulty)
+        || !WriteAt(base+rva::kLastSelectPvId+dataOffset,request.pvid) || !WriteAt(base+rva::kLastSelectSortMode+dataOffset,mode)
+        || !WriteAt(base+rva::kLastSelectSortIndex+dataOffset,all) || (styleAddress && !WriteAt(styleAddress,request.style))) return false;
     if(!RefreshNativeList(functions[1],object)) return false;
     index=FindNativeIndex(object,request.pvid);
-    if(index<0 || !HighlightNativeList(functions[2],object+0x25930,index)) return false;
+    if(index<0 || !HighlightNativeList(functions[2],object+pv_selector::kSelPvList,index)) return false;
     if(styleWindow) WriteValue<unsigned char>(styleWindow+preferredStyleOffset+6,1);
     diagnostic="已调用 PC 原生列表重建、筛选刷新与高亮入口，没有请求切换顶层菜单。";return true;
 }

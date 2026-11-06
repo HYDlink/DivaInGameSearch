@@ -12,7 +12,7 @@
 
 QuantumSwitch 对选曲研究的原作者致谢包括 hiki8man 的 Select Song with PVID 与 sasnchis 的 DivaSongViewer。本项目保留这一研究来源，不把地址研究声称为本项目原创。
 
-原界面定位另参考 MikuMikuSwitchPlugin 的 SongQuickJump（提交 04d3f174dc62615a1178b914e3a4ded87665b98c，https://github.com/lsmsmx/MikuMikuSwitchPlugin ，仓库附 GPL-2.0 文本），并以 NewClassics PC 的对象声明和函数入口核对 PC 适配（提交 c41d4f1c7113ff44dbc7afb888803ea252e201f6，https://github.com/mrcloverthecoder/nc ，MIT，Copyright (c) 2025 mrcloverthecoder）。NewClassics 许可证附于 third_party/vendor/licenses/NewClassics.txt。上述参考仓库不参与构建，也不是新增运行时依赖。具体流程和验证边界见 docs/research/NATIVE_SELECTION_METHODS.md。
+原界面定位另参考 MikuMikuSwitchPlugin 的 SongQuickJump（提交 04d3f174dc62615a1178b914e3a4ded87665b98c，https://github.com/lsmsmx/MikuMikuSwitchPlugin ，仓库附 GPL-2.0 文本），并以 NewClassics PC 的对象声明和函数入口核对 PC 适配（提交 c41d4f1c7113ff44dbc7afb888803ea252e201f6，https://github.com/mrcloverthecoder/nc ，MIT，Copyright (c) 2025 mrcloverthecoder）。NewClassics 许可证附于 third_party/vendor/licenses/NewClassics.txt。src/native_layout.h 中的 ModeInfo 结构与字段名、难度枚举名取自 [ReDIVA](https://github.com/korenkonder/ReDIVA)（提交 207c270472ba3f0edcda29bae777e5bd4a8952d9，MIT，Copyright (c) 2024 korenkonder，许可证附于 third_party/vendor/licenses/ReDIVA.txt），模式与子状态的枚举名和数值取自 MikuMikuSwitchPlugin，选曲对象字段名取自 NewClassics。上述参考仓库不参与构建，也不是新增运行时依赖。具体流程和验证边界见 docs/research/NATIVE_SELECTION_METHODS.md。
 
 data/base_pv_db.txt 与 data/dlc_pv_db.txt 仅保留官方地区数据库中的歌曲名称、英文名称、读音、逻辑 PVID 与谱面路径及等级元数据；不包含音频、图像、脚本或模型。来源是已经定向解出的 pv_db.txt 和 mdata_pv_db.txt，未重新解包。游戏内容权利属于原权利人；这些元数据不随本项目代码许可证重新授权。成品不依赖开发环境的资产导出目录。
 

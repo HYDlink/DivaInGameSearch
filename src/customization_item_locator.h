@@ -45,7 +45,7 @@ struct CustomizationItemFrame {
     int slot=-1,slotCount=-1,nativeScope=-1,sourcePvid=-1;
     // 外层自定义菜单子状态：播放列表来源（mode2 子状态6／7）的事务必须绑定同一子状态，单曲来源沿用既有判据。
     bool playlist=false;
-    int mode=-1,currentSub=-1,nextSub=-1;
+    int mode=-1,subCurrent=-1,subNext=-1;
     // 当前实际歌者槽位所属人物；由路由器按来源歌曲与槽位解析，未知为空，此时预览与更换一律拒绝。
     std::optional<CustomizationCharacter> singer;
     uint64_t now=0;

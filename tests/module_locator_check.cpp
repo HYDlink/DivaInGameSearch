@@ -22,19 +22,19 @@ struct Fixture {
     uintptr_t recordPointer=0;
     // 创建只读模型页快照所需的最小对象关系和唯一真实列表条目。
     Fixture() {
-        allocation=VirtualAlloc(nullptr,diva::kControllerRootRva+0x1000,MEM_RESERVE,PAGE_READWRITE);
+        allocation=VirtualAlloc(nullptr,diva::native::rva::kCustomizeTask+0x1000,MEM_RESERVE,PAGE_READWRITE);
         Check(allocation!=nullptr,"无法保留隔离地址空间");base=reinterpret_cast<uintptr_t>(allocation);
-        const auto rootPage=(base+diva::kControllerRootRva)&~uintptr_t(0xFFF);
+        const auto rootPage=(base+diva::native::rva::kCustomizeTask)&~uintptr_t(0xFFF);
         if(!VirtualAlloc(reinterpret_cast<void*>(rootPage),0x1000,MEM_COMMIT,PAGE_READWRITE)) {
             VirtualFree(allocation,0,MEM_RELEASE);allocation=nullptr;throw std::runtime_error("无法提交隔离根对象页");
         }
-        const auto scopePage=(base+diva::kScopeSelectorRva)&~uintptr_t(0xFFF);
+        const auto scopePage=(base+diva::native::rva::kCustomizeScopeSelector)&~uintptr_t(0xFFF);
         Check(VirtualAlloc(reinterpret_cast<void*>(scopePage),0x1000,MEM_COMMIT,PAGE_READWRITE)!=nullptr,"无法提交范围字段页");
-        Put(base+diva::kScopeSelectorRva,int32_t(3));
+        Put(base+diva::native::rva::kCustomizeScopeSelector,int32_t(3));
         page=reinterpret_cast<uintptr_t>(pageData.data());controller=reinterpret_cast<uintptr_t>(controllerData.data());
         record[0]=137;record[2]=0;recordPointer=reinterpret_cast<uintptr_t>(record.data());
-        Put(page,base+diva::kModuleVtableRva);Put(page+8,controller);
-        Put(base+diva::kControllerRootRva+0x78,controller);Put(controller+0x18,page);
+        Put(page,base+diva::native::rva::kSceneModuleVtable);Put(page+8,controller);
+        Put(base+diva::native::rva::kCustomizeTask+0x78,controller);Put(controller+0x18,page);
         Put(controller+0x38,int32_t(3));
         Put(page+0x20,int32_t(1));Put(page+0x60,int32_t(-1));
         Put(page+0x70,reinterpret_cast<uintptr_t>(&recordPointer));
@@ -62,9 +62,9 @@ int main() {
         Put(f.page+0x20,int32_t(1));Put(f.page+0x60,int32_t(0));Check(!f.Read().contextReady,"操作弹层未阻止定位");
         Put(f.page+0x60,int32_t(-1));Put(f.controller+0x3C,int32_t(1));Check(f.Read().contextReady,"自然核实的第二歌者槽位被误拒绝");
         Put(f.controller+0x3C,int32_t(3));Check(!f.Read().contextReady,"槽位超过实际歌者数量仍允许定位");
-        Put(f.controller+0x3C,int32_t(0));auto scoped=f.Read();Put(f.base+diva::kScopeSelectorRva,int32_t(2));
+        Put(f.controller+0x3C,int32_t(0));auto scoped=f.Read();Put(f.base+diva::native::rva::kCustomizeScopeSelector,int32_t(2));
         Check(!diva::SameMenuContext(scoped,f.Read()),"同一对象切换设置范围没有作废上下文");
-        Put(f.base+diva::kScopeSelectorRva,int32_t(4));Check(!f.Read().contextReady,"未知设置范围仍开放定位");Put(f.base+diva::kScopeSelectorRva,int32_t(3));
+        Put(f.base+diva::native::rva::kCustomizeScopeSelector,int32_t(4));Check(!f.Read().contextReady,"未知设置范围仍开放定位");Put(f.base+diva::native::rva::kCustomizeScopeSelector,int32_t(3));
         Put(f.controller+0x3C,int32_t(0));Put(f.controller+0x40,int32_t(7));Check(!f.Read().contextReady,"随机分类未阻止定位");
         Put(f.controller+0x40,int32_t(1));Check(!f.Read().contextReady,"记录人物不匹配未阻止定位");
         Put(f.controller+0x40,int32_t(0));Put(f.page+0x11C,int32_t(2));

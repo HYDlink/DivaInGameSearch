@@ -2,6 +2,7 @@
 #include "module_action.h"
 #include "native_page_router.h"
 #include "module_category.h"
+#include "native_layout.h"
 #include <Windows.h>
 #include <array>
 #include <atomic>
@@ -10,6 +11,7 @@
 #include <algorithm>
 
 namespace diva {
+using namespace native;
 namespace action_runtime {
 uintptr_t base=0;
 std::mutex mutex;
@@ -62,7 +64,7 @@ ModuleLocateStatus status;
 
 // 参数page/id为已核对的单曲槽位与独立装备值；复用681CE0的配置获取路径，不从当前分类列表反推装备。
 bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
-    if(page.slot<0 || page.slot>=6 || page.slot>=page.slotCount || page.nativeScope!=3 || page.sourcePvid<=0 || page.sourcePvid>=10000000) return false;
+    if(page.slot<0 || page.slot>=6 || page.slot>=page.slotCount || page.nativeScope!=CustomizeScope::Song || page.sourcePvid<=0 || page.sourcePvid>=10000000) return false;
     uintptr_t overrideTable=0,record=0;
     if(!Read(page.controller+0x10,overrideTable)) return false;
     if(overrideTable) record=overrideTable+static_cast<uintptr_t>(page.slot)*0x1C;
@@ -71,9 +73,9 @@ bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
     else {
         // 原生getter沿既有Mod链返回当前曲目/槽位配置；仅在游戏状态帧读取，不调用保存或更换入口。
         __try {
-            auto* save=reinterpret_cast<void*(__fastcall*)()>(base+0x1D6510)();
+            auto* save=reinterpret_cast<void*(__fastcall*)()>(base+rva::kGetSaveData)();
             if(!save) return false;
-            record=reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+0x1D5E30)(save,page.sourcePvid,page.slot);
+            record=reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+rva::kGetPvSlotConfig)(save,page.sourcePvid,page.slot);
         } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
     }
     return record && Read(record,id) && id>=0;
@@ -83,7 +85,7 @@ bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
 Snapshot Capture() {
     Snapshot s;s.page=ReadNativePage(base);
     if(s.page.page!=NativePage::Module || s.page.slotCount<1 || s.page.slotCount>6
-        || s.page.slot<0 || s.page.slot>=s.page.slotCount || s.page.nativeScope<0 || s.page.nativeScope>3) return s;
+        || s.page.slot<0 || s.page.slot>=s.page.slotCount || s.page.nativeScope<CustomizeScope::CommonA || s.page.nativeScope>CustomizeScope::Song) return s;
     if(!Read(s.page.scene+0x70,s.begin) || !Read(s.page.scene+0x78,s.end) || !s.begin || s.end<s.begin || (s.end-s.begin)%8
         || !Read(s.page.scene+0x11C,s.count) || s.count<1 || s.count>10000 || (s.end-s.begin)/8!=static_cast<uintptr_t>(s.count)
         || !Read(s.page.scene+0x110,s.highlight) || s.highlight<0 || s.highlight>=s.count
@@ -104,8 +106,8 @@ Snapshot Capture() {
 bool SamePlaylistAnchor(const Snapshot& a,const Snapshot& b) {
     const bool playlistA=IsPlaylistCustomization(a.page),playlistB=IsPlaylistCustomization(b.page);
     if(!playlistA && !playlistB) return true;
-    return playlistA&&playlistB && a.page.mode==b.page.mode && a.page.currentSub==b.page.currentSub
-        && a.page.nextSub==b.page.nextSub;
+    return playlistA&&playlistB && a.page.mode==b.page.mode && a.page.subCurrent==b.page.subCurrent
+        && a.page.subNext==b.page.subNext;
 }
 // 参数a/b为动作前后的身份；范围、槽位、曲目与真实列表必须同时不变。
 bool SameContext(const Snapshot& a,const Snapshot& b) {
@@ -127,14 +129,14 @@ bool SameActionConfiguration(const Snapshot& a,const Snapshot& b) {
 }
 // 参数s为当前快照；首批仅开放已直接核对的单曲范围，共通A/B仍保留明确禁用原因。
 bool CertifiedContext(const Snapshot& s) {
-    return s.valid && s.page.nativeScope==3 && s.page.sourcePvid>0 && s.page.sourcePvid<10000000
+    return s.valid && s.page.nativeScope==CustomizeScope::Song && s.page.sourcePvid>0 && s.page.sourcePvid<10000000
         && s.page.slotCount>=1 && s.page.slotCount<=6 && s.page.slot>=0 && s.page.slot<s.page.slotCount
         && s.equippedId>=0 && s.category>=0 && s.category<=6
         && s.models[s.page.slot]==s.equippedId;
 }
 // 参数s为当前真实快照；把范围限制与独立装备读取失败分别说明，避免统一误报为角色不支持。
 std::string ContextRejection(const Snapshot& s) {
-    if(s.page.nativeScope!=3) return Tr(Tx::moduleop_shared_scope);
+    if(s.page.nativeScope!=CustomizeScope::Song) return Tr(Tx::moduleop_shared_scope);
     if(s.page.slot<0 || s.page.slot>=s.page.slotCount || s.page.slotCount<1 || s.page.slotCount>6) return Tr(Tx::moduleop_slot_unknown);
     if(!s.valid || s.equippedId<0) return Tr(Tx::moduleop_config_unreadable);
     if(s.models[s.page.slot]!=s.equippedId) return Tr(Tx::moduleop_model_loading);
@@ -147,11 +149,11 @@ bool OrdinaryModule(int id) {
 // 参数id/owned为当前真实列表目标和原生拥有判定结果；保留DML的原有查找Hook。
 bool ReadOwnership(int id,Ownership& owned) {
     __try {
-        void* save=reinterpret_cast<void*(__fastcall*)()>(base+0x1D6510)();
+        void* save=reinterpret_cast<void*(__fastcall*)()>(base+rva::kGetSaveData)();
         if(!save) return false;
-        void* record=reinterpret_cast<void*(__fastcall*)(void*,int)>(base+0x1D5C90)(save,id);
+        void* record=reinterpret_cast<void*(__fastcall*)(void*,int)>(base+rva::kFindModuleRecord)(save,id);
         if(!record) return false;
-        const auto result=reinterpret_cast<uint8_t(__fastcall*)(void*)>(base+0x1DA550)(record);
+        const auto result=reinterpret_cast<uint8_t(__fastcall*)(void*)>(base+rva::kIsModuleOwned)(record);
         if(result>1) return false;
         owned=result?Ownership::Owned:Ownership::Unowned;return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
@@ -188,7 +190,7 @@ void RefreshTargets() {
 }
 // 参数scene/direction为模型页及相邻分类方向；只调用既有定位器已核对的分类入口。
 bool MoveActionCategory(uintptr_t scene,int direction) {
-    __try {reinterpret_cast<void(__fastcall*)(void*,int)>(base+0x694D00)(reinterpret_cast<void*>(scene),direction);return true;}
+    __try {reinterpret_cast<void(__fastcall*)(void*,int)>(base+rva::kSceneModuleMoveCategory)(reinterpret_cast<void*>(scene),direction);return true;}
     __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 // 参数s/id/card为当前真实列表、稳定ID与输出记录；所有动作共用唯一目标／人物分类检查。
@@ -208,7 +210,7 @@ bool RestoreActionHighlight(const Snapshot& s,int id) {
     bool invoked=false;
     __try {
         if(Write(s.page.scene+0x30,card.index)) {
-            reinterpret_cast<void(__fastcall*)(void*,uint8_t)>(base+0x6916E0)(reinterpret_cast<void*>(s.page.scene),1);invoked=true;
+            reinterpret_cast<void(__fastcall*)(void*,uint8_t)>(base+rva::kSceneModuleInitChoice)(reinterpret_cast<void*>(s.page.scene),1);invoked=true;
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {invoked=false;}
     return Write(s.page.scene+0x30,saved) && invoked;
@@ -228,7 +230,7 @@ bool OtherSlotsUnchanged(const Snapshot& s) {
 bool Invoke(const Snapshot& s,const Card& card,CustomizationAction action) {
     uintptr_t callback=0,owner=0,function=0;
     if(!Read(s.page.scene+0x308,callback) || !Read(callback+8,owner) || owner!=s.page.scene
-        || !Read(callback+0x10,function) || function!=base+0x695250) return false;
+        || !Read(callback+0x10,function) || function!=base+rva::kSceneModuleAction) return false;
     int savedIndex=-1;uintptr_t savedRecord=0;
     if(!Read(s.page.scene+0x60,savedIndex) || savedIndex!=-1 || !Read(s.page.scene+0x68,savedRecord)) return false;
     bool submitted=false;
@@ -238,7 +240,7 @@ bool Invoke(const Snapshot& s,const Card& card,CustomizationAction action) {
         reinterpret_cast<void(__fastcall*)(void*,int)>(function)(reinterpret_cast<void*>(s.page.scene),command);
         int next=-1;
         if(!Read(s.page.scene+0x14,next) || (next!=3 && !(action==CustomizationAction::Preview && next==2))) __leave;
-        const auto accepted=reinterpret_cast<uint8_t(__fastcall*)(void*,int)>(base+0x66B3A0)(reinterpret_cast<void*>(s.page.state),next);
+        const auto accepted=reinterpret_cast<uint8_t(__fastcall*)(void*,int)>(base+rva::kSceneStateSwitch)(reinterpret_cast<void*>(s.page.state),next);
         int actual=-1;
         submitted=accepted && Read(s.page.state+0x18,actual) && actual==next;
     } __except(EXCEPTION_EXECUTE_HANDLER) {submitted=false;}
@@ -255,7 +257,7 @@ bool InvokePreviewExit(const Snapshot& s) {
         const int next=direct?0:3;
         if(direct) {if(!Write(s.page.scene+0x28,uint8_t(0))) return false;}
         else if(!Write(s.page.scene+0x1C,int(2)) || !Write(s.page.scene+0x18,int(0))) return false;
-        const auto accepted=reinterpret_cast<uint8_t(__fastcall*)(void*,int)>(base+0x66B3A0)(reinterpret_cast<void*>(s.page.state),next);
+        const auto accepted=reinterpret_cast<uint8_t(__fastcall*)(void*,int)>(base+rva::kSceneStateSwitch)(reinterpret_cast<void*>(s.page.state),next);
         int actual=-1;return accepted && Read(s.page.state+0x18,actual) && actual==next;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
@@ -344,7 +346,7 @@ void InitializeModuleActions(uintptr_t imageBase) {
     using namespace action_runtime;
     std::lock_guard lock(mutex);base=imageBase;specialProfileReadable=true;
     for(size_t index=0;index<specialIds.size();++index)
-        if(!Read(base+0xC09580+index*4,specialIds[index])) specialProfileReadable=false;
+        if(!Read(base+rva::kSpecialModuleIds+index*4,specialIds[index])) specialProfileReadable=false;
 }
 
 // 参数page是定位器Hook取得的真实模型页；分类切换不借用选曲／渲染线程，不需要先单击定位。
@@ -429,7 +431,7 @@ CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey&
     c.targetPage=latest.page.page==NativePage::Module && GetTickCount64()-lastFrame<=500;
     c.busy=active.phase!=Phase::Idle && active.phase!=Phase::Done && active.phase!=Phase::Preview;
     c.contextGeneration=generation;c.slot=latest.page.slot;c.nativeScope=latest.page.nativeScope;
-    c.scope=c.nativeScope==3?CustomizationScope::Song:c.nativeScope>=0 && c.nativeScope<3?CustomizationScope::Common:CustomizationScope::Unknown;
+    c.scope=c.nativeScope==CustomizeScope::Song?CustomizationScope::Song:c.nativeScope>=CustomizeScope::CommonA && c.nativeScope<CustomizeScope::Song?CustomizationScope::Common:CustomizationScope::Unknown;
     if(!CertifiedContext(latest)) {c.previewReason=c.equipReason=ContextRejection(latest);return c;}
     if(c.busy) {c.previewReason=c.equipReason=Tr(Tx::moduleop_finish_first);return c;}
     const auto found=cards.find(key.id);int targetCategory=ModuleMenuCategory(targetCharacter);

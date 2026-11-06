@@ -17,7 +17,7 @@ struct FakeMemory:diva::Memory {
     // 返回本帧状态副本。
     diva::Snapshot Read() override { return state; }
     // 记录目标菜单；参数 next 为菜单编号。
-    bool Transition(int next) override { ++transitions;state.current=next;state.next=next+1;state.changing=1;return !fail; }
+    bool Transition(int next) override { ++transitions;state.subCurrent=next;state.subNext=next+1;state.subProc=1;return !fail; }
     // 模拟请求字段写入；参数 request 为定位动作。
     bool Select(const diva::Request& request) override { ++selections;if(failSelections>0) { --failSelections;return false; }state.pvid=request.pvid;state.difficulty=request.difficulty;state.style=request.style;return !fail; }
     // 按测试条件启用原界面路径。
@@ -136,7 +136,7 @@ static void TestCatalog(const diva::fs::path& root) {
 // 验证跨帧等待、拒绝、超时和独立读回。
 static void TestSelector() {
     using namespace diva; FakeMemory m; Selector s; Request r{637,4,1,1};
-    auto bad=m.state; bad.current=7; Check(!s.Submit(r,true,bad,0),"演奏状态未拒绝");
+    auto bad=m.state; bad.subCurrent=7; Check(!s.Submit(r,true,bad,0),"演奏状态未拒绝");
     bad=m.state; bad.supported=false; Check(!s.Submit(r,true,bad,0),"未知版本未拒绝");
     Check(!s.Submit(r,false,m.state,0),"缺失难度未拒绝");
     Check(s.Submit(r,true,m.state,0),"有效请求未接受");
@@ -144,29 +144,29 @@ static void TestSelector() {
     s.Tick(m,10); Check(m.transitions==1 && m.selections==0,"准备菜单未先执行");
     s.Tick(m,109); Check(m.selections==0,"跨帧等待不足 100 毫秒");
     s.Tick(m,110); Check(m.transitions==2 && m.selections==1 && s.Busy(),"选曲提交顺序失败");
-    m.state.current=5; m.state.next=6; m.state.visiblePvid=48;
+    m.state.subCurrent=5; m.state.subNext=6; m.state.visiblePvid=48;
     s.Tick(m,300); s.Tick(m,310); s.Tick(m,320); Check(s.Busy(),"仅请求字段一致时误报成功");
     m.state.visiblePvid=637; m.state.visibleDifficulty=4; s.Tick(m,330); s.Tick(m,340); Check(s.Busy(),"缺少连续读回确认"); s.Tick(m,350);
     Check(!s.Busy() && s.succeeded,"真实字段一致后未确认成功");
     m.state={true,5,6,1,728,3,0,48,3}; Check(s.Submit(r,true,m.state,1000),"后续请求未接受"); s.Tick(m,1001);s.Tick(m,1101);s.Tick(m,7001);
     Check(!s.Busy() && !s.succeeded,"超时没有停止或残留成功");
-    m.state={true,5,6,1,728,3,0,48,3}; s.Submit(r,true,m.state,8000); s.Tick(m,8001);m.state.current=7;s.Tick(m,8200); Check(!s.Busy(),"离开允许菜单未取消");
+    m.state={true,5,6,1,728,3,0,48,3}; s.Submit(r,true,m.state,8000); s.Tick(m,8001);m.state.subCurrent=7;s.Tick(m,8200); Check(!s.Busy(),"离开允许菜单未取消");
     m.state={true,5,6,1,728,3,0,48,3};m.fail=true;s.Submit(r,true,m.state,9000);s.Tick(m,9001);Check(!s.Busy() && !s.succeeded,"内存写入失败未停止");m.fail=false;
     m.state={true,5,6,1,728,3,0,48,3};s.Submit(r,true,m.state,10000);m.state.supported=false;s.Tick(m,10001);Check(!s.Busy(),"执行中版本失效未停止");
     // 原样使用 01:26:58 与 01:29:24 实机采样：5/6、控制 1、实际 48，旧请求 728/3。
     FakeMemory normal;Selector ordinary;normal.state={true,5,6,1,728,3,0,48,2};Request hard{438,2,0,2};
     Check(ordinary.Submit(hard,true,normal.state,11000),"真实普通选曲采样被误拒绝");
-    ordinary.Tick(normal,11001);normal.state.changing=2;ordinary.Tick(normal,11200);Check(normal.selections==0,"菜单仍在处理请求时写入了歌曲");
-    normal.state.changing=1;normal.state.stable=false;ordinary.Tick(normal,11210);Check(normal.selections==0,"菜单尚未稳定时写入了歌曲");
+    ordinary.Tick(normal,11001);normal.state.subProc=2;ordinary.Tick(normal,11200);Check(normal.selections==0,"菜单仍在处理请求时写入了歌曲");
+    normal.state.subProc=1;normal.state.stable=false;ordinary.Tick(normal,11210);Check(normal.selections==0,"菜单尚未稳定时写入了歌曲");
     normal.state.stable=true;ordinary.Tick(normal,11400);Check(normal.selections==1 && normal.transitions==2,"普通选曲准备后未提交");
-    normal.state.current=5;normal.state.next=6;normal.state.visiblePvid=438;normal.state.visibleDifficulty=3;
+    normal.state.subCurrent=5;normal.state.subNext=6;normal.state.visiblePvid=438;normal.state.visibleDifficulty=3;
     ordinary.Tick(normal,11600);ordinary.Tick(normal,11610);ordinary.Tick(normal,11620);Check(ordinary.Busy(),"实际难度不一致时误报成功");
     normal.state.visibleDifficulty=2;ordinary.Tick(normal,11630);ordinary.Tick(normal,11640);ordinary.Tick(normal,11650);Check(ordinary.succeeded,"普通选曲独立读回一致后未成功");
     normal.state={true,5,6,1,438,2,0,438,2};normal.state.mode=0x101;Check(!ordinary.Submit(hard,true,normal.state,12000),"PV 观看模式未被拒绝");
-    normal.state.mode=0;normal.state.changing=2;Check(!ordinary.Submit(hard,true,normal.state,12001),"过渡菜单未被拒绝");
-    normal.state.changing=1;normal.state.visiblePvid=-1;Check(!ordinary.Submit(hard,true,normal.state,12002),"误用演奏对象的负 PVID 未拒绝");
+    normal.state.mode=0;normal.state.subProc=2;Check(!ordinary.Submit(hard,true,normal.state,12001),"过渡菜单未被拒绝");
+    normal.state.subProc=1;normal.state.visiblePvid=-1;Check(!ordinary.Submit(hard,true,normal.state,12002),"误用演奏对象的负 PVID 未拒绝");
     FakeMemory recover;Selector retry;recover.state={true,5,6,1,728,3,0,48,2};retry.Submit(hard,true,recover.state,13000);retry.Tick(recover,13001);
-    recover.failSelections=1;retry.Tick(recover,13200);Check(retry.Busy() && recover.state.current==5 && recover.state.pvid==48 && recover.state.difficulty==2,"写入失败后未请求恢复原高亮");
+    recover.failSelections=1;retry.Tick(recover,13200);Check(retry.Busy() && recover.state.subCurrent==5 && recover.state.pvid==48 && recover.state.difficulty==2,"写入失败后未请求恢复原高亮");
     retry.Tick(recover,13210);Check(!retry.Busy() && !retry.succeeded && retry.message.find("已返回原选曲")!=std::string::npos,"恢复完成被误报为目标定位成功");
     FakeMemory inPlace;Selector native;inPlace.directEnabled=true;inPlace.state={true,5,6,1,728,3,0,48,2};native.Submit(hard,true,inPlace.state,14000);native.Tick(inPlace,14001);
     Check(inPlace.transitions==0 && inPlace.selections==1,"原界面定位不应发出顶层菜单切换");

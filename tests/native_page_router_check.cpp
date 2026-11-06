@@ -79,24 +79,24 @@ struct Fixture {
         controller=reinterpret_cast<uintptr_t>(control.data());manager=reinterpret_cast<uintptr_t>(managerData.data());
         head=reinterpret_cast<uintptr_t>(headData.data());node=reinterpret_cast<uintptr_t>(nodeData.data());
         scene=reinterpret_cast<uintptr_t>(sceneData.data());state=reinterpret_cast<uintptr_t>(stateData.data());song=reinterpret_cast<uintptr_t>(songData.data());
-        Put(base+diva::kOuter,int32_t(9));Put(base+diva::kOuter+0xC,int32_t(1));Put(base+diva::kOuter+0x1C,int32_t(42));
-        Put(base+diva::kOuter+0x20,int32_t(43));Put(base+diva::kOuter+0x28,int32_t(1));
+        Put(base+diva::native::rva::kModeInfo,int32_t(9));Put(base+diva::native::rva::kModeInfo+0xC,int32_t(1));Put(base+diva::native::rva::kModeInfo+0x1C,int32_t(42));
+        Put(base+diva::native::rva::kModeInfo+0x20,int32_t(43));Put(base+diva::native::rva::kModeInfo+0x28,int32_t(1));
         Put(base+0x6EFE8C,int32_t(0x9C8));Put(song,int32_t(800));Put(song+0x6C,int32_t(6));
     }
     // 释放测试持有的虚拟内存，不访问其他进程。
     ~Fixture() {VirtualFree(reinterpret_cast<void*>(base),0,MEM_RELEASE);}
     // 切到隔离的空闲选曲来源。
-    void Song() {Put(base+diva::kOuter,int32_t(2));Put(base+diva::kOuter+0x1C,int32_t(5));Put(base+diva::kOuter+0x20,int32_t(6));Put(base+0xCC5EF18,song);}
+    void Song() {Put(base+diva::native::rva::kModeInfo,int32_t(2));Put(base+diva::native::rva::kModeInfo+0x1C,int32_t(5));Put(base+diva::native::rva::kModeInfo+0x20,int32_t(6));Put(base+0xCC5EF18,song);}
     // 切回隔离的空闲主页：外层 mode9 sub42/43，无自定义控制器与选曲对象。
-    void Home() {Put(base+diva::kOuter,int32_t(9));Put(base+diva::kOuter+0x1C,int32_t(42));Put(base+diva::kOuter+0x20,int32_t(43));Put(base+0xCC5EF18,uintptr_t(0));Put(base+diva::kTask+0x78,uintptr_t(0));}
+    void Home() {Put(base+diva::native::rva::kModeInfo,int32_t(9));Put(base+diva::native::rva::kModeInfo+0x1C,int32_t(42));Put(base+diva::native::rva::kModeInfo+0x20,int32_t(43));Put(base+0xCC5EF18,uintptr_t(0));Put(base+diva::native::rva::kCustomizeTask+0x78,uintptr_t(0));}
     // 参数 key 为子页；切到主页来源的自定义页（外层 mode7 sub36/37）。
-    void HomeCustomize(int key) {Customize(key);Put(base+diva::kOuter,int32_t(7));Put(base+diva::kOuter+0x1C,int32_t(36));Put(base+diva::kOuter+0x20,int32_t(37));}
+    void HomeCustomize(int key) {Customize(key);Put(base+diva::native::rva::kModeInfo,int32_t(7));Put(base+diva::native::rva::kModeInfo+0x1C,int32_t(36));Put(base+diva::native::rva::kModeInfo+0x20,int32_t(37));}
     // 参数key为父页/模型/发型/饰品，建立有界场景树与真实持有关系。
     void Customize(int key) {
-        Song();Put(base+diva::kTask+0x78,controller);Put(controller+0x18,song);Put(controller+0x998,manager);
+        Song();Put(base+diva::native::rva::kCustomizeTask+0x78,controller);Put(controller+0x18,song);Put(controller+0x998,manager);
         Put(manager,base+0xCC4E38);Put(manager+8,head);Put(manager+0x18,node);Put(manager+0x20,head);Put(manager+0x28,int32_t(1));
         Put(head+8,node);Put(node,head);Put(node+0x10,head);Put(node+0x20,int32_t(key));Put(node+0x28,scene);
-        Put(scene,base+diva::kSceneTables[key]);Put(scene+8,controller);
+        Put(scene,base+diva::native::rva::kSceneVtables[key]);Put(scene+8,controller);
         Put(scene+(key==1?0x178:key==2?0x330:key==3?0x3A0:0x300),state);
         Put(scene+0x60,int32_t(-1));Put(scene+0x1C,int32_t(1));Put(state+0x18,int32_t(0));
     }
@@ -110,17 +110,17 @@ int main() {
         diva::nativeCalls={diva::RecordOuter,diva::RecordSong,diva::RecordParent,diva::RecordScene,diva::RecordPanel};
         Fixture f;using namespace diva;
         Check(ReadNativePage(f.base).page==NativePage::Home,"主页读取失败");
-        Put(f.base+kOuter+0x11,uint8_t(1));Check(ReadNativePage(f.base).page==NativePage::Home,"把相邻字节当模式切换标记");
-        Put(f.base+kOuter+0x10,uint8_t(1));Check(ReadNativePage(f.base).page==NativePage::Unknown,"过渡主页授予导航权限");
-        Put(f.base+kOuter+0x10,uint8_t(0));f.Song();Check(ReadNativePage(f.base).page==NativePage::Song,"选曲来源读取失败");
+        Put(f.base+diva::native::rva::kModeInfo+0x11,uint8_t(1));Check(ReadNativePage(f.base).page==NativePage::Home,"把相邻字节当模式切换标记");
+        Put(f.base+diva::native::rva::kModeInfo+0x10,uint8_t(1));Check(ReadNativePage(f.base).page==NativePage::Unknown,"过渡主页授予导航权限");
+        Put(f.base+diva::native::rva::kModeInfo+0x10,uint8_t(0));f.Song();Check(ReadNativePage(f.base).page==NativePage::Song,"选曲来源读取失败");
         for(int key=1;key<=4;++key) {f.Customize(key);Check(ReadNativePage(f.base).key==key && ReadNativePage(f.base).idle,"场景树页面读取失败");}
         for(int key=1;key<=4;++key) {
-            f.Customize(key);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+            f.Customize(key);Put(f.base+diva::native::rva::kModeInfo+0x1C,int32_t(6));Put(f.base+diva::native::rva::kModeInfo+0x20,int32_t(7));
             const auto page=ReadNativePage(f.base);
             Check(page.key==key && page.idle && PlaylistCustomization(page),"播放列表自定义场景未识别");
             Put(f.manager+0x20,f.node);Check(!ReadNativePage(f.base).idle,"播放列表过渡状态误判为空闲");
         }
-        f.Customize(2);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(8));
+        f.Customize(2);Put(f.base+diva::native::rva::kModeInfo+0x1C,int32_t(6));Put(f.base+diva::native::rva::kModeInfo+0x20,int32_t(8));
         Check(ReadNativePage(f.base).page==NativePage::Unknown,"未知播放列表外层状态未拒绝");
         f.Customize(2);
         Put(f.head+8,f.head);Check(ReadNativePage(f.base).page==NativePage::Unknown,"驻留树外节点被误认为活动页");
@@ -187,7 +187,7 @@ int main() {
         songRoute.phase=SongPhase::ParentArrival;songRoute.source=ReadNativePage(f.base);
         f.Customize(1);Put(f.controller+0x3C,int32_t(1));OnBoundary(2,f.state);
         Check(songRoute.phase==SongPhase::Done && songCalls==0,"歌曲退父页期间换槽未取消");
-        Put(f.controller+0x3C,int32_t(0));f.Song();Put(f.base+kTask+0x78,uintptr_t(0));
+        Put(f.controller+0x3C,int32_t(0));f.Song();Put(f.base+diva::native::rva::kCustomizeTask+0x78,uintptr_t(0));
         song.origin=SongOrigin::Keyboard;++song.serial;
         Check(SubmitSongNavigation(song,true,message),"稳定选曲页键盘原位定位被误拒绝");
         TickSongNavigation(GetTickCount64(),11,17);
@@ -304,7 +304,7 @@ int main() {
         route={};nativeLog.clear();f.Customize(1);Put(f.scene+0x28,int32_t(1));
         Check(!SubmitCustomizationRequest(itemRequest(CustomizationDomain::Hair,500,CustomizationPart::Hair),message) && message.find("光标")!=std::string::npos
             && route.phase==RoutePhase::Idle && nativeLog.empty(),"父页非0光标仍排队跨页");
-        Put(f.scene+0x28,int32_t(0));f.Song();Put(f.base+kTask+0x78,uintptr_t(0));
+        Put(f.scene+0x28,int32_t(0));f.Song();Put(f.base+diva::native::rva::kCustomizeTask+0x78,uintptr_t(0));
         Check(ReadNativePage(f.base).page==NativePage::Song,"隔离选曲夹具失效");
         Check(SubmitCustomizationRequest(itemRequest(CustomizationDomain::Accessories,600,CustomizationPart::Head),message),"选曲双击道具未排队");
         OnBoundary(1,f.song);Check(Calls(nativeLog,{"song:800"}) && route.phase==RoutePhase::ParentArrival,"选曲未保存PVID并进入自定义");
@@ -388,7 +388,7 @@ int main() {
 
         // 播放列表自定义：模型与发型能力不再被强制关闭，动作请求按同一网关进入执行器。
         route={};songRoute={};previewContinuation={};testPreview=false;testBusy=false;testActionStatus={};testAcceptActions=true;
-        cachedAt=0;f.Customize(2);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+        cachedAt=0;f.Customize(2);Put(f.base+diva::native::rva::kModeInfo+0x1C,int32_t(6));Put(f.base+diva::native::rva::kModeInfo+0x20,int32_t(7));
         Put(f.controller+0x38,int32_t(1));Put(f.controller+0x3C,int32_t(0));Put(f.controller+8,int32_t(730));
         const auto playlistModule=ReadCustomizationActionCapability(request.key);
         Check(playlistModule.preview && playlistModule.equip,"播放列表来源的模型预览／更换能力仍被禁用");
@@ -407,13 +407,13 @@ int main() {
         playlistHair.equip=[](const CustomizationItemFrame& frame,size_t index) {(void)frame;(void)index;return true;};
         RegisterCustomizationItemProfile(CustomizationDomain::Hair,playlistHair);
         ConfigureCustomizationSingerResolver([](const NativePageSnapshot&) {return std::optional<CustomizationCharacter>(CustomizationCharacter::Rin);});
-        cachedAt=0;f.Customize(3);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+        cachedAt=0;f.Customize(3);Put(f.base+diva::native::rva::kModeInfo+0x1C,int32_t(6));Put(f.base+diva::native::rva::kModeInfo+0x20,int32_t(7));
         Put(f.controller+0x38,int32_t(1));Put(f.controller+0x3C,int32_t(0));Put(f.controller+8,int32_t(730));
         CustomizationKey playlistHairKey;playlistHairKey.kind=CustomizationKind::Accessory;playlistHairKey.id=511;
         const auto playlistHairCapability=ReadCustomizationItemActionCapability(CustomizationDomain::Hair,playlistHairKey);
         Check(playlistHairCapability.preview && playlistHairCapability.equip && playlistHairCapability.targetPage,"播放列表来源的发型预览／更换能力仍被禁用");
         // 离开播放列表外层子状态后，同一页面不再具备播放列表来源的动作权限。
-        cachedAt=0;Put(f.base+kOuter+0x20,int32_t(8));
+        cachedAt=0;Put(f.base+diva::native::rva::kModeInfo+0x20,int32_t(8));
         Check(ReadNativePage(f.base).page==NativePage::Unknown,"未知播放列表外层状态仍被当作可操作页");
         RegisterCustomizationItemProfile(CustomizationDomain::Hair,std::nullopt);
         ConfigureCustomizationSingerResolver(nullptr);route={};nativeLog.clear();testAcceptActions=false;
@@ -425,7 +425,7 @@ int main() {
         PublishCustomizationModelCharacters(moduleCharacters);
         route={};songRoute={};previewContinuation={};testPreview=false;testBusy=false;
         cachedAt=0;f.Customize(3);Put(f.controller+0x38,int32_t(1));Put(f.controller+0x3C,int32_t(0));Put(f.controller+8,int32_t(730));
-        Put(f.controller+0x320,int32_t(40));Put(f.base+0x12B5A74,int32_t(3));Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+        Put(f.controller+0x320,int32_t(40));Put(f.base+0x12B5A74,int32_t(3));Put(f.base+diva::native::rva::kModeInfo+0x1C,int32_t(6));Put(f.base+diva::native::rva::kModeInfo+0x20,int32_t(7));
         const auto modelSinger=ReadCustomizationSingerContext();
         Check(modelSinger && modelSinger->character==CustomizationCharacter::Rin,"换过模型后歌者仍沿用 PV 演出角色");
         auto rinHair=itemRequest(CustomizationDomain::Hair,511,CustomizationPart::Hair);rinHair.character=CustomizationCharacter::Rin;

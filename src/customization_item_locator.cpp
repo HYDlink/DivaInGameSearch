@@ -1,5 +1,6 @@
 #include "i18n.h"
 #include "customization_item_locator.h"
+#include "native_layout.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -64,7 +65,7 @@ std::optional<size_t> Slot(CustomizationDomain domain) {
 // 参数 a/b 为提交时与当前帧外层菜单；播放列表来源必须保持同一子状态与配置对象，单曲来源沿用既有判据。
 bool SamePlaylistAnchor(const CustomizationItemFrame& a,const CustomizationItemFrame& b) {
     if(!a.playlist && !b.playlist) return true;
-    return a.playlist==b.playlist && a.mode==b.mode && a.currentSub==b.currentSub && a.nextSub==b.nextSub;
+    return a.playlist==b.playlist && a.mode==b.mode && a.subCurrent==b.subCurrent && a.subNext==b.subNext;
 }
 // 参数 a/b 为提交时与当前帧上下文；同一事务内不允许换场景、换配置、换槽、换范围、换歌者或换来源歌曲。
 bool SameContext(const CustomizationItemFrame& a,const CustomizationItemFrame& b) {
@@ -140,12 +141,12 @@ CustomizationActionCapability CustomizationItemCapabilities(CustomizationDomain 
         if(observed && latestNow>=observed->frame.now && latestNow-observed->frame.now<500) {
             const auto& frame=observed->frame;const auto& snapshot=observed->snapshot;
             c.slot=frame.slot;c.nativeScope=frame.nativeScope;c.contextGeneration=frame.scene;
-            c.scope=frame.nativeScope==3?CustomizationScope::Song:CustomizationScope::Common;
+            c.scope=frame.nativeScope==native::CustomizeScope::Song?CustomizationScope::Song:CustomizationScope::Common;
             if(frame.slot>=0 && frame.slot<6) {
                 const size_t start=static_cast<size_t>(frame.slot)*6;
                 for(size_t part=domain==CustomizationDomain::Hair?5:1;part<=(domain==CustomizationDomain::Hair?5:4);++part)
                     if(snapshot.configurationIds[start+part]==key->id) c.equipped=true;
-                c.remove=c.equipped && bool(profile.remove) && frame.nativeScope==3;
+                c.remove=c.equipped && bool(profile.remove) && frame.nativeScope==native::CustomizeScope::Song;
                 if(c.equipped) c.equipReason=c.remove?(domain==CustomizationDomain::Hair?Tr(Tx::itemop_restore_module_hair):Tr(Tx::itemop_remove_equipped)) :Tr(Tx::itemop_remove_unavailable);
             }
         }
@@ -178,7 +179,7 @@ bool SubmitCustomizationItemRequest(const CustomizationLocateRequest& request,co
     const bool supported=profile && profile->read && (request.action==CustomizationAction::Locate?(bool(profile->highlight) || bool(profile->step))
         :request.action==CustomizationAction::Preview?bool(profile->preview):request.action==CustomizationAction::Remove?bool(profile->remove):bool(profile->equip));
     if(!supported) return reject(ShortGap(request.domain,request.action),DetailGap(request.domain,request.action));
-    if(request.action==CustomizationAction::Remove && (frame.nativeScope!=3 || (request.contextGeneration && request.contextGeneration!=frame.scene)))
+    if(request.action==CustomizationAction::Remove && (frame.nativeScope!=native::CustomizeScope::Song || (request.contextGeneration && request.contextGeneration!=frame.scene)))
         return reject(Tr(Tx::itemop_scope_changed));
     if(!request.serial || request.serial<=lastSerial) return reject(Tr(Tx::itemop_stale_request));
     if(request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256

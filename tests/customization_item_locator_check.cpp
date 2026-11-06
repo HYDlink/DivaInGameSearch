@@ -190,9 +190,9 @@ int main() {
         // 播放列表来源：事务绑定外层子状态，离开列表即取消；单曲来源沿用既有判据。
         Reset();
         auto playlistFrame=Frame(CustomizationDomain::Hair);
-        playlistFrame.playlist=true;playlistFrame.mode=2;playlistFrame.currentSub=6;playlistFrame.nextSub=7;playlistFrame.sourcePvid=730;
+        playlistFrame.playlist=true;playlistFrame.mode=2;playlistFrame.subCurrent=6;playlistFrame.subNext=7;playlistFrame.sourcePvid=730;
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair),playlistFrame,message),"播放列表来源发型定位未受理");
-        auto leftPlaylist=playlistFrame;leftPlaylist.nextSub=8;Frames(1,leftPlaylist);
+        auto leftPlaylist=playlistFrame;leftPlaylist.subNext=8;Frames(1,leftPlaylist);
         Check(PollCustomizationItemLocator().completed && !PollCustomizationItemLocator().succeeded && native.highlights==0,"离开播放列表外层子状态后旧事务继续执行");
         Reset();
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair),playlistFrame,message),"播放列表来源事务恢复后未受理");

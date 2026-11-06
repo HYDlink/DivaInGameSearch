@@ -1,13 +1,13 @@
 #include "customization_item_profiles.h"
+#include "native_layout.h"
 #include <Windows.h>
 #include <algorithm>
 #include <mutex>
 
 namespace diva {
+using namespace native;
 namespace {
 constexpr size_t kMaximumRecords=4096;
-// 模型页已认证入口；发型／道具规格不得引用，防止套用模型分类函数或动作回调。
-constexpr uintptr_t kModelCategoryRva=0x694D00,kModelActionRva=0x695250;
 std::mutex diagnosticsMutex;
 std::string lastDiagnostics="发型／道具原生规格尚未登记。";
 
@@ -35,7 +35,7 @@ bool CallCommand(uintptr_t function,uintptr_t object,int command) {
 // 参数 base/record/owned 为核验构建基址、真实定制记录与拥有结果；沿原生拥有函数保留 Mod 的解锁规则。
 bool ReadPcOwnership(uintptr_t base,uintptr_t record,bool& owned) {
     __try {
-        const auto result=reinterpret_cast<uint8_t(__fastcall*)(uintptr_t,uintptr_t)>(base+0x6809A0)(0,record);
+        const auto result=reinterpret_cast<uint8_t(__fastcall*)(uintptr_t,uintptr_t)>(base+rva::kIsItemOwned)(0,record);
         if(result>1) return false;owned=result!=0;return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
@@ -46,13 +46,13 @@ uintptr_t SavedPcSlot(uintptr_t base,const CustomizationItemFrame& frame,int slo
     // 播放列表来源的独立记录只在 controller+0x10；缺失时不退回单曲配置，避免把另一对象当成本槽装备。
     if(frame.playlist) return 0;
     __try {
-        auto* save=reinterpret_cast<void*(__fastcall*)()>(base+0x1D6510)();
-        return save?reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+0x1D5E30)(save,frame.sourcePvid,slot):0;
+        auto* save=reinterpret_cast<void*(__fastcall*)()>(base+rva::kGetSaveData)();
+        return save?reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+rva::kGetPvSlotConfig)(save,frame.sourcePvid,slot):0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
 }
 // 参数 base/frame/spec/index/action 为核验构建、场景、列表规格、目标索引与动作；只允许已认证命令，不开放购买。
 bool CallPcAction(uintptr_t base,const CustomizationItemFrame& frame,const CustomizationItemNativeSpec& spec,size_t index,CustomizationAction action) {
-    if(!frame.idle || frame.nativeScope!=3 || frame.slotCount<1 || frame.slotCount>6 || frame.slot<0 || frame.slot>=frame.slotCount || index>0x7FFFFFFF) return false;
+    if(!frame.idle || frame.nativeScope!=CustomizeScope::Song || frame.slotCount<1 || frame.slotCount>6 || frame.slot<0 || frame.slot>=frame.slotCount || index>0x7FFFFFFF) return false;
     uintptr_t begin=0,end=0,record=0,callback=0,bound=0,function=0;int32_t current=-1;
     if(!Read(frame.scene+*spec.listBegin,begin) || !Read(frame.scene+*spec.listEnd,end) || end<begin || index>=(end-begin)/8
         || !Read(begin+index*8,record) || !Read(frame.scene+*spec.highlightIndex,current) || current!=static_cast<int32_t>(index)
@@ -74,23 +74,23 @@ bool CallPcAction(uintptr_t base,const CustomizationItemFrame& frame,const Custo
         const int next=*reinterpret_cast<int32_t*>(frame.scene+0x10);
         if(action==CustomizationAction::Remove && (next!=3 || *reinterpret_cast<int32_t*>(frame.scene+0x14)!=0 || *reinterpret_cast<int32_t*>(frame.scene+0x18)!=4)) return false;
         // +0x10 是待进入状态；+0x14 是加载后返回状态，绝不能跳过状态3的备份及加载。
-        return (next==2 || next==3) && reinterpret_cast<uint8_t(__fastcall*)(uintptr_t,int)>(base+0x66B3A0)(frame.state,next)!=0;
+        return (next==2 || next==3) && reinterpret_cast<uint8_t(__fastcall*)(uintptr_t,int)>(base+rva::kSceneStateSwitch)(frame.state,next)!=0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 // 参数 base/frame 为核验构建与活动预览；分别复用发型68BD90、道具6903D0的自然退出分支，不直接恢复装备。
 bool ExitPcPreview(uintptr_t base,const CustomizationItemFrame& frame) {
     int32_t internal=-1;uint8_t direct=0;
     const uintptr_t flag=frame.domain==CustomizationDomain::Hair?0x27:0x2B;
-    if(!frame.valid || frame.nativeScope!=3 || !Read(frame.state+0x18,internal) || internal!=2 || !Read(frame.scene+flag,direct)) return false;
+    if(!frame.valid || frame.nativeScope!=CustomizeScope::Song || !Read(frame.state+0x18,internal) || internal!=2 || !Read(frame.scene+flag,direct)) return false;
     __try {
         const int next=direct?0:3;
         if(direct) *reinterpret_cast<uint8_t*>(frame.scene+flag)=0;
         else {*reinterpret_cast<int32_t*>(frame.scene+0x18)=2;*reinterpret_cast<int32_t*>(frame.scene+0x14)=0;}
-        return reinterpret_cast<uint8_t(__fastcall*)(uintptr_t,int)>(base+0x66B3A0)(frame.state,next)!=0;
+        return reinterpret_cast<uint8_t(__fastcall*)(uintptr_t,int)>(base+rva::kSceneStateSwitch)(frame.state,next)!=0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
-// 参数 rva 为规格中的入口；拒绝模型页已认证入口。
-bool ModelEntry(const std::optional<uintptr_t>& rva) {return rva && (*rva==kModelCategoryRva || *rva==kModelActionRva);}
+// 参数 entry 为规格中的入口；发型／道具规格不得引用模型页已认证入口，防止套用模型分类函数或动作回调。
+bool ModelEntry(const std::optional<uintptr_t>& entry) {return entry && (*entry==rva::kSceneModuleMoveCategory || *entry==rva::kSceneModuleAction);}
 // 参数 domain/spec/frame/out 为领域、规格、帧上下文与快照输出；只读内存，任一边界异常即返回 false。
 bool ReadSnapshot(CustomizationDomain domain,const CustomizationItemNativeSpec& spec,const CustomizationItemFrame& frame,CustomizationItemSnapshot& out) {
     if(!frame.scene) return false;
@@ -137,9 +137,9 @@ std::optional<CustomizationItemProfile> BuildCustomizationItemProfile(Customizat
     if(!spec.listBegin || !spec.listEnd || !spec.recordId || !spec.highlightIndex) return std::nullopt;
     if(domain==CustomizationDomain::Accessories && !spec.partIndex) return std::nullopt;
     if(spec.highlightControl.has_value()!=spec.refreshRva.has_value()) return std::nullopt;
-    for(const auto* rva:{&spec.stepRva,&spec.partRva,&spec.highlightRva,&spec.callbackRva,&spec.refreshRva}) {
-        if(ModelEntry(*rva)) return std::nullopt;
-        if(*rva && !Executable(base+**rva)) return std::nullopt;
+    for(const auto* entry:{&spec.stepRva,&spec.partRva,&spec.highlightRva,&spec.callbackRva,&spec.refreshRva}) {
+        if(ModelEntry(*entry)) return std::nullopt;
+        if(*entry && !Executable(base+**entry)) return std::nullopt;
     }
     if(!spec.highlightRva && !spec.stepRva) return std::nullopt;
     CustomizationItemProfile profile;profile.evidence=spec.evidence;
@@ -200,13 +200,13 @@ int InitializeCustomizationItemProfiles(uintptr_t base) {
     kHairSpec.evidence="PC 已核验构建；HAIR_ACCESSORY_METHODS_VERIFIED.md，真实控件定位与跨帧 ID 读回";
     kHairSpec.listBegin=0x108;kHairSpec.listEnd=0x110;kHairSpec.recordId=0;
     kHairSpec.highlightIndex=0x138;kHairSpec.highlightControl=0x138;
-    kHairSpec.highlightRva=0x22D250;kHairSpec.refreshRva=0x6891F0;
-    kHairSpec.callbackObject=0x378;kHairSpec.callbackRva=0x68AC40;
+    kHairSpec.highlightRva=rva::kListControlSetIndex;kHairSpec.refreshRva=rva::kSceneHairstyleRefresh;
+    kHairSpec.callbackObject=0x378;kHairSpec.callbackRva=rva::kSceneHairstyleAction;
     CustomizationItemNativeSpec kAccessorySpec=kHairSpec;
     kAccessorySpec.listBegin=0x48;kAccessorySpec.listEnd=0x50;kAccessorySpec.highlightIndex=0x78;
-    kAccessorySpec.highlightControl=0x78;kAccessorySpec.refreshRva=0x68D180;
-    kAccessorySpec.partIndex=0x30;kAccessorySpec.partRva=0x68EF00;
-    kAccessorySpec.callbackObject=0x2D8;kAccessorySpec.callbackRva=0x68F430;
+    kAccessorySpec.highlightControl=0x78;kAccessorySpec.refreshRva=rva::kSceneItemRefresh;
+    kAccessorySpec.partIndex=0x30;kAccessorySpec.partRva=rva::kSceneItemMovePart;
+    kAccessorySpec.callbackObject=0x2D8;kAccessorySpec.callbackRva=rva::kSceneItemAction;
     int registered=0;std::string text;
     for(auto [domain,spec]:{std::pair{CustomizationDomain::Hair,&kHairSpec},std::pair{CustomizationDomain::Accessories,&kAccessorySpec}}) {
         auto profile=base?BuildCustomizationItemProfile(domain,*spec,base):std::nullopt;
@@ -228,7 +228,7 @@ int InitializeCustomizationItemProfiles(uintptr_t base) {
                 uintptr_t begin=0;if(!Read(frame.scene+*nativeSpec.listBegin,begin)) return false;
                 // 只有实际高亮的拥有状态需要查询；动作先定位，下一帧才提交，避免每帧遍历调用数百次。
                 if(out.highlightIndex) {uintptr_t record=0;bool owned=false;if(Read(begin+*out.highlightIndex*8,record) && ReadPcOwnership(base,record,owned)) out.owned[*out.highlightIndex]=owned;}
-                if(frame.nativeScope!=3 || frame.sourcePvid<=0 || frame.slotCount<1 || frame.slotCount>6 || frame.slot<0 || frame.slot>=frame.slotCount) return true;
+                if(frame.nativeScope!=CustomizeScope::Song || frame.sourcePvid<=0 || frame.slotCount<1 || frame.slotCount>6 || frame.slot<0 || frame.slot>=frame.slotCount) return true;
                 for(int slot=0;slot<6;++slot) {
                     const auto saved=SavedPcSlot(base,frame,slot);int32_t id=-1;
                     // 独立保存读取不可用时仍可观察原生显示配置供卸除使用；不因此伪造装备／预览读回。
