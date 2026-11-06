@@ -72,13 +72,13 @@ python scripts/research/run_page_experiment.py \
   --pid 384 \
   --flow minimal \
   --output artifacts/native-routing-research/下一轮-最小闭环 \
-  --ahk 'C:/Users/50886/scoop/apps/AutoHotkey-Portable/2.0.17/AutoHotkey64.exe'
+  --ahk "$AHK_EXE"
 
 python scripts/research/run_page_experiment.py \
   --pid 384 \
   --flow full \
   --output artifacts/native-routing-research/下一轮-七阶段 \
-  --ahk 'C:/Users/50886/scoop/apps/AutoHotkey-Portable/2.0.17/AutoHotkey64.exe'
+  --ahk "$AHK_EXE"
 
 python scripts/research/test_page_experiment.py
 
