@@ -91,8 +91,8 @@ class Experiment:
 
     def rpc(self, command, parameters=None):
         """参数 command、parameters 为已登记探针方法及参数；复用同一会话并设置应答超时。"""
-        if time.monotonic() - self.start_time > 90:
-            raise RuntimeError('整轮超过90秒预算，停止操作')
+        if time.monotonic() - self.start_time > getattr(self.options, 'budget', 90):
+            raise RuntimeError('整轮超过限定时间预算，停止操作')
         self.sequence += 1
         self.process.stdin.write(json.dumps({'id': self.sequence, 'command': command, 'parameters': parameters or {}}) + '\n')
         self.process.stdin.flush()

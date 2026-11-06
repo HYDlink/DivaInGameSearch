@@ -2,6 +2,8 @@
 #include "module_locator.h"
 #include "selector.h"
 #include <functional>
+#include <memory>
+#include <unordered_map>
 
 namespace diva {
 // 页身份来自类型化的外层字段和已核查场景树；未知页不授予导航权限。
@@ -13,10 +15,15 @@ struct NativePageSnapshot {
     int internal=-1,parentCursor=-1,parentPhase=-1,popup=-1,pvid=-1,songState=-1;
     uint8_t modeSwitch=1,subSwitch=1;
     int slot=-1,slotCount=-1,nativeScope=-1,sourcePvid=-1;
+    // 当前槽位实际装备的模型 ID：优先独立记录，缺失时用临时显示配置；用于解析发型／道具人物。
+    int model=-1;
     bool idle=false;
 };
 // 参数 base 为已通过 SHA-256 核验的动态基址；只读当前页面，不扫描驻留对象。
 NativePageSnapshot ReadNativePage(uintptr_t base);
+// 参数 page 为只读页面快照；返回是否来自播放列表自定义外层状态（mode 2、子状态 6／7）。
+// 播放列表来源与普通单曲共用场景与控制器，但独立保存记录位于 controller+0x10；动作事务须绑定该外层子状态。
+bool IsPlaylistCustomization(const NativePageSnapshot& page);
 // 参数 base 为定位器已核验基址，先核对入口再链式安装三种真实帧边界。
 bool InitializeNativePageRouter(uintptr_t base);
 // 参数 request/message 为统一稳定目标及即时反馈；跨页权限在此独立核查。
@@ -41,6 +48,9 @@ struct CustomizationTargetFacts {
 };
 // 参数 resolver 接收当前自定义页快照，返回实际歌者槽位所属人物；未知返回空。网关、到达分发与执行器帧共用该结果。
 void ConfigureCustomizationSingerResolver(std::function<std::optional<CustomizationCharacter>(const NativePageSnapshot&)> resolver);
+// 参数 characters 为模块 ID 到人物的只读快照，用于按当前槽位实际装备的模型解析人物；传空恢复为只看 PV 演出角色。
+// 该表由界面线程在目录更新后发布，游戏帧线程只读取，不访问界面对象。
+void PublishCustomizationModelCharacters(std::shared_ptr<const std::unordered_map<int,CustomizationCharacter>> characters);
 // 返回缓存页面上当前实际歌者的人物、槽位与上下文代数；不在自定义页或无法解析时返回空。只读，不改变游戏状态。
 std::optional<CustomizationContext> ReadCustomizationSingerContext();
 // 参数 resolver 接收稳定键与目录指纹，返回最新目录事实；指纹不符或目标缺失时返回空。须在帧线程可安全读取的快照上实现。

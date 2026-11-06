@@ -321,6 +321,7 @@ void CustomizationView::Poll() {
             }
             catalogRequiresRestart=catalogRequiresRestart || next->stale;
             catalog=next;
+            if(onCatalogChanged) onCatalogChanged(catalog);
             ResetBodyClick();
             ++generation;
             gridCells.clear();gridRows.clear();

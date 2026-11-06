@@ -66,6 +66,8 @@ bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
     uintptr_t overrideTable=0,record=0;
     if(!Read(page.controller+0x10,overrideTable)) return false;
     if(overrideTable) record=overrideTable+static_cast<uintptr_t>(page.slot)*0x1C;
+    // 播放列表来源的独立记录就在 controller+0x10；该指针不可用时不能退回单曲getter冒充当前槽位配置。
+    else if(IsPlaylistCustomization(page)) return false;
     else {
         // 原生getter沿既有Mod链返回当前曲目/槽位配置；仅在游戏状态帧读取，不调用保存或更换入口。
         __try {
@@ -98,13 +100,21 @@ Snapshot Capture() {
     for(int slot=0;slot<6;++slot) if(!Read(s.page.controller+0x320+slot*0xE0,s.models[slot])) return s;
     s.valid=true;return s;
 }
+// 参数a/b为动作前后的页面；播放列表来源必须保持同一外层子状态与配置对象，单曲来源沿用既有判据。
+bool SamePlaylistAnchor(const Snapshot& a,const Snapshot& b) {
+    const bool playlistA=IsPlaylistCustomization(a.page),playlistB=IsPlaylistCustomization(b.page);
+    if(!playlistA && !playlistB) return true;
+    return playlistA&&playlistB && a.page.mode==b.page.mode && a.page.currentSub==b.page.currentSub
+        && a.page.nextSub==b.page.nextSub;
+}
 // 参数a/b为动作前后的身份；范围、槽位、曲目与真实列表必须同时不变。
 bool SameContext(const Snapshot& a,const Snapshot& b) {
     return a.valid && b.valid && a.page.scene==b.page.scene && a.page.controller==b.page.controller
         && a.page.configuration==b.page.configuration && a.page.state==b.page.state
         && a.page.slot==b.page.slot && a.page.slotCount==b.page.slotCount
         && a.page.nativeScope==b.page.nativeScope && a.page.sourcePvid==b.page.sourcePvid
-        && a.begin==b.begin && a.end==b.end && a.category==b.category;
+        && a.begin==b.begin && a.end==b.end && a.category==b.category
+        && SamePlaylistAnchor(a,b);
 }
 // 参数a/b为分类切换前后快照；允许原生列表重建，但槽位、范围、配置、装备和六槽模型必须保持一致。
 bool SameActionConfiguration(const Snapshot& a,const Snapshot& b) {
@@ -112,7 +122,8 @@ bool SameActionConfiguration(const Snapshot& a,const Snapshot& b) {
         && a.page.configuration==b.page.configuration && a.page.state==b.page.state
         && a.page.slot==b.page.slot && a.page.slotCount==b.page.slotCount
         && a.page.nativeScope==b.page.nativeScope && a.page.sourcePvid==b.page.sourcePvid
-        && a.equippedId==b.equippedId && a.models==b.models;
+        && a.equippedId==b.equippedId && a.models==b.models
+        && SamePlaylistAnchor(a,b);
 }
 // 参数s为当前快照；首批仅开放已直接核对的单曲范围，共通A/B仍保留明确禁用原因。
 bool CertifiedContext(const Snapshot& s) {
@@ -300,7 +311,8 @@ void ProcessActionModelFrame(const Snapshot& s,const std::function<bool(int)>& m
 }
 // 参数s为加载后的真实读回，区分临时预览、装备标记及加载态，不把320相等单独当成功。
 void Confirm(const Snapshot& s) {
-    if(!SameContext(active.before,s) || !OtherSlotsUnchanged(s)) {Finish(Tr(Tx::moduleop_slots_changed));return;}
+    if(!SameContext(active.before,s)) {Finish(Tr(Tx::moduleop_context_changed));return;}
+    if(!OtherSlotsUnchanged(s)) {Finish(Tr(Tx::moduleop_slots_changed));return;}
     if(s.highlight!=active.before.highlight) {Finish(Tr(Tx::moduleop_highlight_changed));return;}
     const int loaded=s.models[s.page.slot];
     if(active.phase==Phase::Loading && active.request.action==CustomizationAction::Equip) {

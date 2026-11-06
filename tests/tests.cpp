@@ -172,6 +172,15 @@ static void TestSelector() {
     Check(inPlace.transitions==0 && inPlace.selections==1,"原界面定位不应发出顶层菜单切换");
     native.Tick(inPlace,14200);Check(native.Busy(),"原界面定位仅缓存更新时误报成功");
     inPlace.state.visiblePvid=438;inPlace.state.visibleDifficulty=2;native.Tick(inPlace,14210);native.Tick(inPlace,14220);native.Tick(inPlace,14230);Check(native.succeeded && inPlace.transitions==0,"原界面高亮确认失败");
+    FakeMemory list;Selector playlist;list.directEnabled=true;list.state={true,6,7,1,728,3,0,48,-1};list.state.playlistSong=true;
+    Check(playlist.Submit(hard,true,list.state,15000),"播放列表歌曲选择未接受");
+    playlist.Tick(list,15001);Check(list.transitions==0 && list.selections==1,"播放列表定位触发了菜单切换");
+    playlist.Tick(list,15200);Check(playlist.Busy(),"播放列表仅请求缓存变化时误报成功");
+    list.state.visiblePvid=438;playlist.Tick(list,15205);Check(playlist.Busy(),"列表索引未确认时误报成功");
+    list.state.playlistHighlightMatched=true;playlist.Tick(list,15210);playlist.Tick(list,15220);playlist.Tick(list,15230);
+    Check(playlist.succeeded && list.transitions==0,"播放列表独立高亮未确认");
+    list.state.visiblePvid=48;Check(playlist.Submit(hard,true,list.state,16000),"播放列表二次请求未接受");
+    list.state.playlistSong=false;playlist.Tick(list,16001);Check(!playlist.Busy() && list.transitions==0 && list.selections==1,"退出歌曲选择后仍执行定位或切换菜单");
 }
 // 运行全部原生测试；参数 argc/argv 提供本项目根目录以约束夹具输出。
 int wmain(int argc,wchar_t** argv) {

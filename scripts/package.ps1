@@ -40,7 +40,7 @@ if($licenseStart -lt 0){ throw '未找到 bcdec 许可证。' }
 $allowed=@('DivaInGameSearch.dll','MmlCpkBridge.dll','DivaTextureDecoder.dll','config.toml','settings.ini','LICENSE','THIRD_PARTY_NOTICES.md','data/base_pv_db.txt','data/dlc_pv_db.txt','licenses/ImGui.txt','licenses/Detours.md','licenses/DivaModLoader.md','licenses/toml++.txt','licenses/NewClassics.txt','licenses/QuantumSwitch.txt','licenses/MikuMikuSwitchPlugin.txt','licenses/miniz.txt','licenses/MikuMikuLibrary.md','licenses/MikuMikuLibrary-Dependencies.md','licenses/bcdec.txt')
 $actual=@(Get-ChildItem -LiteralPath $modRoot -Recurse -File | ForEach-Object {[IO.Path]::GetRelativePath($modRoot,$_.FullName).Replace('\','/')})
 if(@(Compare-Object $allowed $actual).Count){throw '安装包文件与允许清单不一致，已拒绝打包。'}
-$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.2.2-win64.zip'
+$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.2.3-win64.zip'
 Compress-Archive -LiteralPath $modRoot -DestinationPath $zip -Force
 $utf8=[Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText(($zip+'.sha256'),(Get-FileHash $zip -Algorithm SHA256).Hash+'  '+[IO.Path]::GetFileName($zip)+"`n",$utf8)

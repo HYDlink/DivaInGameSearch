@@ -61,11 +61,17 @@ std::optional<size_t> Slot(CustomizationDomain domain) {
     if(domain==CustomizationDomain::Models) return std::nullopt;
     return CustomizationDomainIndex(domain);
 }
+// 参数 a/b 为提交时与当前帧外层菜单；播放列表来源必须保持同一子状态与配置对象，单曲来源沿用既有判据。
+bool SamePlaylistAnchor(const CustomizationItemFrame& a,const CustomizationItemFrame& b) {
+    if(!a.playlist && !b.playlist) return true;
+    return a.playlist==b.playlist && a.mode==b.mode && a.currentSub==b.currentSub && a.nextSub==b.nextSub;
+}
 // 参数 a/b 为提交时与当前帧上下文；同一事务内不允许换场景、换配置、换槽、换范围、换歌者或换来源歌曲。
 bool SameContext(const CustomizationItemFrame& a,const CustomizationItemFrame& b) {
     return a.valid && b.valid && a.domain==b.domain && a.scene==b.scene && a.state==b.state && a.controller==b.controller
         && a.configuration==b.configuration && a.slot==b.slot && a.slotCount==b.slotCount
-        && a.nativeScope==b.nativeScope && a.sourcePvid==b.sourcePvid && a.singer==b.singer;
+        && a.nativeScope==b.nativeScope && a.sourcePvid==b.sourcePvid && a.singer==b.singer
+        && SamePlaylistAnchor(a,b);
 }
 // 参数 phase/text/completed/succeeded/stage 为对外状态；只由本执行器在锁内写入。
 void Set(ModuleLocatePhase phase,const std::string& text,bool completed,bool succeeded,CustomizationStage stage=CustomizationStage::None) {

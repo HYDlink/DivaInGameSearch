@@ -168,7 +168,7 @@ void View::Locate(const Song& song,int difficulty,SongOrigin origin) {
     selectedId=song.id;
     if(SearchPending()) { status=Tr(Tx::song_status_updating); return; }
     if(catalog && catalog->requiresRestart) { status=Tr(Tx::song_status_index_stale);return; }
-    bool available=song.charts[query.style][difficulty].available;
+    bool available=song.charts[query.style][difficulty].available || (songLocateWithoutChart && songLocateWithoutChart());
     if(!available) { status=Tr(Tx::song_status_no_chart); return; }
     Request request{song.id,difficulty,query.style,++serial};request.origin=origin;
     request.queryRevision=queryRevision;request.catalogGeneration=songCatalogGeneration;
@@ -397,6 +397,7 @@ void View::Draw() {
     float diffWidth=std::clamp(width*0.073f,64.0f,92.0f);
     // 结果由搜索框方向键操作，不进入键盘焦点。
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav,true);
+    const bool playlistSongOnly=songLocateWithoutChart && songLocateWithoutChart();
     if(ImGui::BeginTable("歌曲列表",7,ImGuiTableFlags_ScrollY|ImGuiTableFlags_RowBg|ImGuiTableFlags_BordersInnerH, {0,ImGui::GetContentRegionAvail().y-62})) {
         const float scroll=ImGui::GetScrollY();
         if(songListScroll!=scroll || ImGui::GetIO().MouseWheel!=0) ResetSongBodyClick();
@@ -446,10 +447,10 @@ void View::Draw() {
                 bool selected=song.id==selectedId && d==currentDifficulty;
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,selected?3.0f:1.0f);
                 char label[40]; if(c.available) snprintf(label,sizeof(label),"%.1f",c.level); else snprintf(label,sizeof(label),"—");
-                ImGui::BeginDisabled(!c.available);
+                ImGui::BeginDisabled(!c.available && !playlistSongOnly);
                 if(ImGui::Button(label,{diffWidth-8,rowHeight-20})) Locate(song,d,SongOrigin::DifficultyButton);
                 ImGui::EndDisabled(); ImGui::PopStyleVar(); ImGui::PopStyleColor(5);
-                if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if(!playlistSongOnly && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::BeginTooltip(); ImGui::TextUnformatted(c.available?c.source.c_str():Tr(Tx::song_no_chart_style)); if(c.available) ImGui::TextUnformatted(c.script.c_str()); ImGui::EndTooltip();
                 } ImGui::PopID();
             }

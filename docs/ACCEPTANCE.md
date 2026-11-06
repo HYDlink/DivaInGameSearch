@@ -216,3 +216,19 @@ OnOpen不再写query.character或重置查询修订；首次默认全部角色�
 - 原生：执行器明确区分进入页面、目标高亮、临时预览、预览已恢复、实际装备；新增 `customization_item_profiles` 规格构造器，生产规格表为空，因此发型／道具原生定位、预览、更换仍为“暂不支持”。规格填写说明见 [research/HAIR_ACCESSORY_PROFILE_SPEC.md](research/HAIR_ACCESSORY_PROFILE_SPEC.md)。
 
 自动检查在 Linux 临时兼容层下运行（同上次方式），未做 MSVC 构建、ctest、Preview 截图或实机验证。
+
+### 2026-11-06 播放列表自定义：模型预览与更换开闸（同版本，部署待实机确认）
+
+本轮先做受控原生实验，再改代码。实验在播放列表歌曲 Hello, Worker（来源 PVID 730、槽位 0）的自定义模型页进行，结论：预览只改 `controller+0x320` 临时显示，独立记录 `controller+0x10` 保持；预览退出按产品协议恢复；更换（命令 3）同时写入独立记录与显示配置，并可再次更换回原模型 334。分类入口 `0x694D00` 用于找回 334 所属分类，拥有判定沿用 `0x1D6510／0x1D5C90／0x1DA550`。原始时间轴、截图与结果在 `artifacts/pv-playlist-actions/`，文档见 [research/PV_PLAYLIST_ACTIONS_VERIFIED.md](research/PV_PLAYLIST_ACTIONS_VERIFIED.md)。
+
+代码：解除播放列表来源对预览／更换／卸除的拒绝与能力禁用；模型动作与发型／道具执行器新增播放列表外层子状态绑定，离开列表即取消；播放列表来源缺少 `controller+0x10` 时不再退回单曲 getter。`scripts/build.ps1` 20 项 CTest 与 `scripts/verify.ps1`（含 81 项核心断言、DLL 回调、原生预览截图）通过；版本沿用既有版本号，未升版。
+
+未验收：发型／自定义道具在播放列表内的预览、更换、卸除；离开页面或保存后重启的持久性；新 DLL 在搜索面板中的端到端操作。自动测试、受控原生调用与界面预览均不等于实际游戏通过。
+
+部署记录（同轮）：`scripts/package.ps1` 生成 `artifacts/release/DivaInGameSearch-1.2.2-win64.zip`（SHA-256 `682DA6E9B2FAB64EA60708D55BD3B53A23F2C558D178611116E2A84BFB3ACD93`）。游戏经主菜单「Esc 结束游戏 → 是」正常退出，进程 22020 消失后执行 `scripts/update-deployment.ps1`，备份 `artifacts/deployment/update-20261106-220728`，部署后 `DivaInGameSearch.dll` SHA-256 `A02568CA5FF7E6A839F120973A5BA3B1E6F8C4E270EA58EEE2901D89937F667B` 与构建产物一致。新进程 12368 启动后诊断日志记录“已初始化原生搜索 1.2.2”“原生双击跨页路由已初始化”，说明新 DLL 能在游戏内加载；播放列表面板内的点击数验收仍由用户完成。
+
+### 2026-11-06 1.2.3 发布：版本号与发行内容
+
+用户确认完工并指定版本 1.2.3。本轮升版范围：`CMakeLists.txt`、`config/config.toml`、`src/mod.cpp` 的启动日志、`scripts/package.ps1` 的包名、`scripts/update-deployment.ps1` 的记录与提示，`docs/RELEASE_NOTES.md` 新增 1.2.3 条目（播放列表自定义可预览/更换、歌者按实际装备模型解析、独立记录读回）。
+
+构建 20 项 CTest 与完整 `scripts/verify.ps1` 通过；安装包 `artifacts/release/DivaInGameSearch-1.2.3-win64.zip`（SHA-256 `B10BA8B8E9443DBFFB190E5DB67B5D0CEA11816E2F85BDA338071AA08D110354`）。游戏已由用户关闭，无需强制结束；`scripts/update-deployment.ps1` 部署至游戏目录，备份 `artifacts/deployment/update-20261106-222440`，部署后 DLL SHA-256 `23D405787C967B5C2691041334F4E61A660A053D94209062AFEF8CB885E0470D` 与构建一致，`config.toml` 版本读回 1.2.3。用户已在实际游戏中确认 1.2.2 代码的模型更换、发型定位与道具卸除；1.2.3 仅改版本与文案，未再启动游戏复测。

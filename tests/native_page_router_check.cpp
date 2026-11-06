@@ -114,6 +114,15 @@ int main() {
         Put(f.base+kOuter+0x10,uint8_t(1));Check(ReadNativePage(f.base).page==NativePage::Unknown,"过渡主页授予导航权限");
         Put(f.base+kOuter+0x10,uint8_t(0));f.Song();Check(ReadNativePage(f.base).page==NativePage::Song,"选曲来源读取失败");
         for(int key=1;key<=4;++key) {f.Customize(key);Check(ReadNativePage(f.base).key==key && ReadNativePage(f.base).idle,"场景树页面读取失败");}
+        for(int key=1;key<=4;++key) {
+            f.Customize(key);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+            const auto page=ReadNativePage(f.base);
+            Check(page.key==key && page.idle && PlaylistCustomization(page),"播放列表自定义场景未识别");
+            Put(f.manager+0x20,f.node);Check(!ReadNativePage(f.base).idle,"播放列表过渡状态误判为空闲");
+        }
+        f.Customize(2);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(8));
+        Check(ReadNativePage(f.base).page==NativePage::Unknown,"未知播放列表外层状态未拒绝");
+        f.Customize(2);
         Put(f.head+8,f.head);Check(ReadNativePage(f.base).page==NativePage::Unknown,"驻留树外节点被误认为活动页");
         f.Customize(2);Put(f.scene+8,uintptr_t(0));Check(ReadNativePage(f.base).page==NativePage::Unknown,"场景控制器身份未核查");
         f.Customize(2);Put(f.state+0x18,int32_t(2));Check(!ReadNativePage(f.base).idle,"临时预览被当空闲页");
@@ -376,6 +385,60 @@ int main() {
         Check(itemCapability.targetPage && !itemCapability.locate && !itemCapability.preview && !itemCapability.equip && itemCapability.locateReason.find("暂不支持")!=std::string::npos && CurrentNativePage()==NativePage::Hair,"发型页能力或当前页缓存错误");
         Check(!ReadCustomizationItemActionCapability(CustomizationDomain::Accessories).targetPage,"发型页被当作道具目标页");
         cachedAt=0;f.Customize(2);Check(!ReadCustomizationItemActionCapability(CustomizationDomain::Hair).targetPage,"模型页被当作发型目标页");
-        std::cout<<"原生路由隔离回归通过：页面树、来源、取消、超时、预览后定位／换装／预览、歌曲双击接续及发型／道具泛化路由；未访问游戏。\n";return 0;
+
+        // 播放列表自定义：模型与发型能力不再被强制关闭，动作请求按同一网关进入执行器。
+        route={};songRoute={};previewContinuation={};testPreview=false;testBusy=false;testActionStatus={};testAcceptActions=true;
+        cachedAt=0;f.Customize(2);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+        Put(f.controller+0x38,int32_t(1));Put(f.controller+0x3C,int32_t(0));Put(f.controller+8,int32_t(730));
+        const auto playlistModule=ReadCustomizationActionCapability(request.key);
+        Check(playlistModule.preview && playlistModule.equip,"播放列表来源的模型预览／更换能力仍被禁用");
+        auto playlistEquip=request;playlistEquip.action=CustomizationAction::Equip;++playlistEquip.serial;
+        const int beforePlaylistActions=testActionCalls;
+        Check(SubmitCustomizationRequest(playlistEquip,message) && testActionCalls==beforePlaylistActions+1,"播放列表来源的模型更换仍被网关拒绝");
+        CustomizationItemProfile playlistHair;playlistHair.evidence="隔离模拟";
+        // 参数frame/out为执行器上下文与快照；只读取隔离数据，不写游戏内存。
+        playlistHair.read=[](const CustomizationItemFrame& frame,CustomizationItemSnapshot& out) {
+            out.pageReady=out.listReady=true;out.part=CustomizationPart::Hair;out.listIdentity=88;
+            out.recordIds={511};out.highlightedId=511;out.equippedId=-1;return frame.playlist;
+        };
+        // 参数frame/index为上下文与列表序号；模拟原位高亮。
+        playlistHair.highlight=[](const CustomizationItemFrame& frame,size_t index) {(void)frame;(void)index;return true;};
+        playlistHair.preview=[](const CustomizationItemFrame& frame,size_t index) {(void)frame;(void)index;return true;};
+        playlistHair.equip=[](const CustomizationItemFrame& frame,size_t index) {(void)frame;(void)index;return true;};
+        RegisterCustomizationItemProfile(CustomizationDomain::Hair,playlistHair);
+        ConfigureCustomizationSingerResolver([](const NativePageSnapshot&) {return std::optional<CustomizationCharacter>(CustomizationCharacter::Rin);});
+        cachedAt=0;f.Customize(3);Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+        Put(f.controller+0x38,int32_t(1));Put(f.controller+0x3C,int32_t(0));Put(f.controller+8,int32_t(730));
+        CustomizationKey playlistHairKey;playlistHairKey.kind=CustomizationKind::Accessory;playlistHairKey.id=511;
+        const auto playlistHairCapability=ReadCustomizationItemActionCapability(CustomizationDomain::Hair,playlistHairKey);
+        Check(playlistHairCapability.preview && playlistHairCapability.equip && playlistHairCapability.targetPage,"播放列表来源的发型预览／更换能力仍被禁用");
+        // 离开播放列表外层子状态后，同一页面不再具备播放列表来源的动作权限。
+        cachedAt=0;Put(f.base+kOuter+0x20,int32_t(8));
+        Check(ReadNativePage(f.base).page==NativePage::Unknown,"未知播放列表外层状态仍被当作可操作页");
+        RegisterCustomizationItemProfile(CustomizationDomain::Hair,std::nullopt);
+        ConfigureCustomizationSingerResolver(nullptr);route={};nativeLog.clear();testAcceptActions=false;
+
+        // 歌者跟随当前槽位实际装备的模型：换过模型后不得继续沿用 PV 演出角色。
+        ConfigureCustomizationSingerResolver([](const NativePageSnapshot&) {return std::optional<CustomizationCharacter>(CustomizationCharacter::Luka);});
+        auto moduleCharacters=std::make_shared<std::unordered_map<int,CustomizationCharacter>>();
+        (*moduleCharacters)[40]=CustomizationCharacter::Rin;
+        PublishCustomizationModelCharacters(moduleCharacters);
+        route={};songRoute={};previewContinuation={};testPreview=false;testBusy=false;
+        cachedAt=0;f.Customize(3);Put(f.controller+0x38,int32_t(1));Put(f.controller+0x3C,int32_t(0));Put(f.controller+8,int32_t(730));
+        Put(f.controller+0x320,int32_t(40));Put(f.base+0x12B5A74,int32_t(3));Put(f.base+kOuter+0x1C,int32_t(6));Put(f.base+kOuter+0x20,int32_t(7));
+        const auto modelSinger=ReadCustomizationSingerContext();
+        Check(modelSinger && modelSinger->character==CustomizationCharacter::Rin,"换过模型后歌者仍沿用 PV 演出角色");
+        auto rinHair=itemRequest(CustomizationDomain::Hair,511,CustomizationPart::Hair);rinHair.character=CustomizationCharacter::Rin;
+        SubmitCustomizationRequest(rinHair,message);
+        Check(message.find("仅供浏览")==std::string::npos,"当前模型为镜音铃时，镜音铃发型仍被当成其他角色");
+        auto mikuHair=itemRequest(CustomizationDomain::Hair,512,CustomizationPart::Hair);mikuHair.character=CustomizationCharacter::Miku;
+        SubmitCustomizationRequest(mikuHair,message);
+        Check(message.find("仅供浏览")!=std::string::npos,"当前模型为镜音铃时，初音未来发型未被拒绝");
+        // 模型映射缺失时退回 PV 演出角色，保持无目录时的既有行为。
+        PublishCustomizationModelCharacters(nullptr);cachedAt=0;
+        const auto fallbackSinger=ReadCustomizationSingerContext();
+        Check(fallbackSinger && fallbackSinger->character==CustomizationCharacter::Luka,"模型映射缺失时未退回 PV 演出角色");
+        ConfigureCustomizationSingerResolver(nullptr);route={};nativeLog.clear();
+        std::cout<<"原生路由隔离回归通过：页面树、来源、取消、超时、预览后定位／换装／预览、歌曲双击接续、发型／道具泛化路由及按实际模型解析歌者；未访问游戏。\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"原生路由验证失败："<<error.what()<<"\n";return 1;}
 }

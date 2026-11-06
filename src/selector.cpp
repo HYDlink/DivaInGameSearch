@@ -16,16 +16,18 @@ bool Selector::Submit(Request value,bool available,const Snapshot& snapshot,uint
     if(!available || value.pvid<=0 || value.difficulty<0 || value.difficulty>4 || value.style<0 || value.style>2) { message=Tr(Tx::selector_no_chart); return false; }
     if(!snapshot.supported) { message=Tr(Tx::selector_unsupported); return false; }
     // 实机普通选曲长期稳定为 5/6、控制值 1；两个枚举不是必须相等的当前/目标副本。
-    if(snapshot.current!=5 || snapshot.next!=6 || !snapshot.stable || snapshot.changing!=1) { message=Trf(Tx::selector_not_ready,{{"details",DescribeSnapshot(snapshot)}}); return false; }
-    if(snapshot.mode!=0 && snapshot.mode!=1) { message=Tr(Tx::selector_pv_mode); return false; }
-    if(snapshot.visiblePvid<=0 || snapshot.visibleDifficulty<0) { message=Trf(Tx::selector_read_failed,{{"details",DescribeSnapshot(snapshot)}}); return false; }
-    request=value; start=phaseTime=now; confirmations=0; phase=Phase::Begin;
+    if(!snapshot.stable || snapshot.changing!=1 || (!snapshot.playlistSong && (snapshot.current!=5 || snapshot.next!=6))) { message=Trf(Tx::selector_not_ready,{{"details",DescribeSnapshot(snapshot)}}); return false; }
+    if(!snapshot.playlistSong && snapshot.mode!=0 && snapshot.mode!=1) { message=Tr(Tx::selector_pv_mode); return false; }
+    if(snapshot.visiblePvid<=0 || (!snapshot.playlistSong && snapshot.visibleDifficulty<0)) { message=Trf(Tx::selector_read_failed,{{"details",DescribeSnapshot(snapshot)}}); return false; }
+    request=value; playlist=snapshot.playlistSong; start=phaseTime=now; confirmations=0; phase=Phase::Begin;
     original={snapshot.visiblePvid,snapshot.visibleDifficulty,snapshot.style,0};failure.clear();
     message=Tr(Tx::selector_preparing); return true;
 }
 // 中途失败也要尝试返回原选曲，不把用户留在自己触发的播放列表；参数 memory/snapshot/reason/now 为恢复条件。
 void Selector::Abort(Memory& memory,const Snapshot& s,const std::string& reason,uint64_t now) {
     succeeded=false;
+    // 播放列表是用户主动进入的页面，失败时绝不能套用普通选曲的返回菜单协议。
+    if(playlist) { phase=Phase::Idle;message=reason+"（"+DescribeSnapshot(s)+"）";return; }
     if(direct && s.supported && s.current==5 && s.next==6 && s.changing==1 && memory.DirectSelect(original)) {
         phase=Phase::Recover;phaseTime=now;failure=reason;message=Trf(Tx::selector_recovering,{{"reason",reason}});return;
     }
@@ -38,6 +40,7 @@ void Selector::Abort(Memory& memory,const Snapshot& s,const std::string& reason,
 void Selector::Tick(Memory& memory,uint64_t now) {
     if(!Busy()) return;
     auto s=memory.Read();
+    if(playlist && !s.playlistSong) { phase=Phase::Idle;message=Tr(Tx::selector_left_song_select);return; }
     if(phase==Phase::Recover) {
         if(s.supported && s.current==5 && s.next==6 && s.changing==1 && s.stable && s.visiblePvid==original.pvid && s.visibleDifficulty==original.difficulty) {
             phase=Phase::Idle;message=Trf(Tx::selector_returned,{{"reason",failure}});
@@ -64,7 +67,7 @@ void Selector::Tick(Memory& memory,uint64_t now) {
         phase=Phase::Verify; phaseTime=now; message=Tr(Tx::selector_verifying);
     } else {
         if(s.current!=5 && s.current!=6) { Abort(memory,s,Tr(Tx::selector_left_song_select),now);return; }
-        bool matches=s.current==5 && s.next==6 && s.changing==1 && s.stable && (s.mode==0 || s.mode==1) && s.visiblePvid==request.pvid && s.visibleDifficulty==request.difficulty && s.pvid==request.pvid && s.difficulty==request.difficulty && s.style==request.style;
+        bool matches=playlist ? s.playlistSong && s.playlistHighlightMatched && s.stable && s.visiblePvid==request.pvid : s.current==5 && s.next==6 && s.changing==1 && s.stable && (s.mode==0 || s.mode==1) && s.visiblePvid==request.pvid && s.visibleDifficulty==request.difficulty && s.pvid==request.pvid && s.difficulty==request.difficulty && s.style==request.style;
         confirmations=matches?confirmations+1:0;
         if(confirmations>=3 && now-phaseTime>=100) { succeeded=true; phase=Phase::Idle; message=Tr(Tx::selector_success); }
     }

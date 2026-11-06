@@ -75,6 +75,8 @@ struct View {
     std::string initialConfiguration;
     bool hasInitialConfiguration=false;
     std::function<void(Request,bool)> submit;
+    // 只在播放列表歌曲选择页允许按歌曲身份定位，无需谱面难度。
+    std::function<bool()> songLocateWithoutChart;
     std::function<void()> onOpen;
     // 本次运行首次打开面板时调用一次，早于其他打开逻辑，用于确定界面语言。
     std::function<void()> onFirstOpen;

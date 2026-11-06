@@ -187,6 +187,18 @@ int main() {
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair),Frame(CustomizationDomain::Hair),message),"目录代数场景未受理");
         TickCustomizationItemLocator(1100,6);Frames(1,Frame(CustomizationDomain::Hair));
         Check(PollCustomizationItemLocator().completed && native.highlights==0,"目录重载后旧事务继续");
+        // 播放列表来源：事务绑定外层子状态，离开列表即取消；单曲来源沿用既有判据。
+        Reset();
+        auto playlistFrame=Frame(CustomizationDomain::Hair);
+        playlistFrame.playlist=true;playlistFrame.mode=2;playlistFrame.currentSub=6;playlistFrame.nextSub=7;playlistFrame.sourcePvid=730;
+        Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair),playlistFrame,message),"播放列表来源发型定位未受理");
+        auto leftPlaylist=playlistFrame;leftPlaylist.nextSub=8;Frames(1,leftPlaylist);
+        Check(PollCustomizationItemLocator().completed && !PollCustomizationItemLocator().succeeded && native.highlights==0,"离开播放列表外层子状态后旧事务继续执行");
+        Reset();
+        Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair),playlistFrame,message),"播放列表来源事务恢复后未受理");
+        Frames(3,playlistFrame);status=PollCustomizationItemLocator();
+        Check(status.succeeded && native.highlights==1,"稳定播放列表上下文的定位未按读回成功");
+        Reset();
         Check(SubmitCustomizationItemRequest(Request(CustomizationDomain::Hair,500,CustomizationPart::Hair),Frame(CustomizationDomain::Hair),message),"超时场景未受理");
         TickCustomizationItemLocator(1000+20000,5);Check(PollCustomizationItemLocator().completed && !PollCustomizationItemLocator().succeeded,"超时未停止");
         auto fingerprint=Request(CustomizationDomain::Hair,500,CustomizationPart::Hair);fingerprint.catalogFingerprint="另一目录";

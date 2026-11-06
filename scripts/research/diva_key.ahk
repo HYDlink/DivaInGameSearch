@@ -8,7 +8,7 @@ try {
     targetKey := A_Args[2]
     allowed := Map('Esc', 'sc001', 'Enter', 'sc01C', 'R', 'sc013',
         'Up', 'sc148', 'Down', 'sc150', 'Left', 'sc14B', 'Right', 'sc14D', 'F3', 'sc03D',
-        'F4', 'sc03E', 'Q', 'sc010', 'E', 'sc012')
+        'F4', 'sc03E', 'Q', 'sc010', 'E', 'sc012', 'T', 'sc014')
     if !allowed.Has(targetKey)
         throw Error('按键不在实验白名单')
     if StrLower(ProcessGetName(targetPid)) != 'divamegamix.exe'

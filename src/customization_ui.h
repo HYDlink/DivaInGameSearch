@@ -68,6 +68,8 @@ struct CustomizationView {
     };
     fs::path home,game;
     std::shared_ptr<const CustomizationCatalog> catalog;
+    // 参数 catalog 为最新目录快照；目录加载或更换后在界面线程回调，供游戏帧线程发布只读映射。
+    std::function<void(const std::shared_ptr<const CustomizationCatalog>&)> onCatalogChanged;
     std::future<CustomizationCatalog> pending;
     std::future<SearchReply> searching;
     // 下标见 Slot()：0 模型、1 发型、2～5 自定义道具的头／脸／胸口／背部子标签，各自保存查询、选择与滚动。

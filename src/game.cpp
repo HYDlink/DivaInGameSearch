@@ -160,6 +160,7 @@ std::string GameMemory::CurrentLanguage() const {
 // 只读复用直接定位的页面身份守卫，避免把仍驻留的选曲对象误作当前选曲页。
 bool GameMemory::IsSongSearchPage() {
     const auto snapshot=Read();uintptr_t object=0;int state=-1,pvid=-1;
+    if(snapshot.playlistSong) return true;
     return snapshot.supported && snapshot.current==5 && snapshot.next==6 && snapshot.changing==1
         && (snapshot.mode==0 || snapshot.mode==1) && snapshot.visiblePvid>0
         && ReadAt(base+0xCC5EF18,object) && object && ReadAt(object+0x6C,state) && state==6
@@ -189,10 +190,17 @@ Snapshot GameMemory::Read() {
     if(ReadAt(base+0xCC5EF18,menuObject) && menuObject && ReadAt(base+0x6EFE8C,member) && member>=0x9C8 && member<=0x100000) {
         if(!ReadAt(menuObject+(intptr_t)member-0x9C8,s.visiblePvid) || s.visiblePvid<=0 || s.visiblePvid>=10000000) s.visiblePvid=-1;
     }
+    int menuState=-1,taskPvid=-1;
+    s.playlistSong=s.current==6 && s.next==7 && s.changing==1 && menuObject && s.visiblePvid>0
+        && ReadAt(menuObject+0x6C,menuState) && menuState==6 && ReadAt(menuObject+0x262A4,taskPvid)
+        && taskPvid==s.visiblePvid && FindNativeIndex(menuObject,taskPvid)>=0;
+    int nativeTarget=-1;
+    s.playlistHighlightMatched=s.playlistSong && ReadAt(menuObject+0x25A10,nativeTarget)
+        && nativeTarget==FindNativeIndex(menuObject,taskPvid);
     s.supported=ok && s.current>=0 && s.current<=64 && s.next>=0 && s.next<=64 && s.style>=0 && s.style<=2;
     auto now=GetTickCount64();
     bool unchanged=s.current==previous.current && s.next==previous.next && s.changing==previous.changing
-        && s.visiblePvid==previous.visiblePvid && s.visibleDifficulty==previous.visibleDifficulty && s.mode==previous.mode;
+        && s.visiblePvid==previous.visiblePvid && s.visibleDifficulty==previous.visibleDifficulty && s.mode==previous.mode && s.playlistSong==previous.playlistSong;
     if(!unchanged || !stableSince) stableSince=now;
     s.stable=s.supported && unchanged && now-stableSince>=150;
     previous=s;
@@ -217,6 +225,23 @@ bool GameMemory::SupportsDirect() const { return true; }
 bool GameMemory::DirectSelect(const Request& request) {
     if(!supported || request.pvid<=0 || request.difficulty<0 || request.difficulty>4 || request.style<0 || request.style>2) return false;
     auto snapshot=Read();uintptr_t object=0;int internalState=-1,mode=-1,diff=-1,edition=-1,pvid=-1;
+    // 播放列表选曲不改变难度、风格和播放列表条目，只在当前生效向量中定位。
+    if(snapshot.playlistSong) {
+        if(!snapshot.stable || !ReadAt(base+0xCC5EF18,object) || !object) return false;
+        int index=FindNativeIndex(object,request.pvid);
+        if(index<0) {
+            // 仅对实机确认的曲名排序切回全曲，其他排序保持原筛选并拒绝未知目标。
+            int sort=-1;if(!ReadAt(object+0x262C0,sort) || sort!=0) return false;
+            const uintptr_t folder=object+0x262AC;
+            if(!WriteAt(folder,10) || !WriteValue(object+0x26240,folder) || !WriteAt(object+0x262BC,1)
+                || !RefreshNativeList(base+0x6F2F40,object)) return false;
+            index=FindNativeIndex(object,request.pvid);
+        }
+        if(index<0 || !WriteAt(object+0x262A4,request.pvid)) return false;
+        if(!RefreshNativeList(base+0x6F2F40,object)) return false;
+        index=FindNativeIndex(object,request.pvid);
+        return index>=0 && HighlightNativeList(base+0x217500,object+0x25930,index);
+    }
     if(!snapshot.supported || snapshot.current!=5 || snapshot.next!=6 || snapshot.changing!=1 || !ReadAt(base+0xCC5EF18,object) || !object
         || !ReadAt(object+0x6C,internalState) || internalState!=6 || !ReadAt(object+0x262C0,mode) || mode<0 || mode>3
         || !ReadAt(object+0x262C8,diff) || diff<0 || diff>3 || !ReadAt(object+0x262CC,edition) || edition<0 || edition>1

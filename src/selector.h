@@ -19,6 +19,10 @@ struct Snapshot {
     // 实际选曲对象的难度与模式；稳定性由连续观察判定，不把控制标记当布尔值。
     int visibleDifficulty=-1,mode=0;
     bool stable=true;
+    // 播放列表添加曲目时的活动歌曲列表；右侧编辑状态不得置位。
+    bool playlistSong=false;
+    // 原生定位入口写入的列表目标索引与当前歌曲身份一致。
+    bool playlistHighlightMatched=false;
 };
 // 生成中文状态诊断；参数 snapshot 为独立读回的菜单与选曲数据。
 std::string DescribeSnapshot(const Snapshot& snapshot);
@@ -56,6 +60,7 @@ private:
     Request original;
     std::string failure;
     bool direct=false;
+    bool playlist=false;
     uint64_t start=0,phaseTime=0;
     int confirmations=0;
     // 仅在自己进入的已知中间菜单恢复原高亮；参数 memory/snapshot/reason/now 为适配器、状态、原因与时钟。

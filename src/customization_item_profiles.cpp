@@ -43,6 +43,8 @@ bool ReadPcOwnership(uintptr_t base,uintptr_t record,bool& owned) {
 uintptr_t SavedPcSlot(uintptr_t base,const CustomizationItemFrame& frame,int slot) {
     uintptr_t overrides=0;if(!Read(frame.controller+0x10,overrides)) return 0;
     if(overrides) return overrides+static_cast<uintptr_t>(slot)*0x1C;
+    // 播放列表来源的独立记录只在 controller+0x10；缺失时不退回单曲配置，避免把另一对象当成本槽装备。
+    if(frame.playlist) return 0;
     __try {
         auto* save=reinterpret_cast<void*(__fastcall*)()>(base+0x1D6510)();
         return save?reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+0x1D5E30)(save,frame.sourcePvid,slot):0;

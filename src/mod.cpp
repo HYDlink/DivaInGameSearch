@@ -6,6 +6,8 @@
 #include "customization_item_profiles.h"
 #include <fstream>
 #include <atomic>
+#include <memory>
+#include <unordered_map>
 
 namespace {
 // 延迟创建定位状态，避免 DllMain 中初始化业务。
@@ -64,6 +66,17 @@ __declspec(dllexport) void Init() {
         return diva::ResolvePerformerCharacter(*recommendations,page.sourcePvid,page.slot);
     });
     host.view.customization.singerProvider=diva::ReadCustomizationSingerContext;
+    // 参数 catalog 为最新目录；发布模块 ID 到人物的只读映射，游戏帧线程据此按实际装备模型解析歌者。
+    host.view.customization.onCatalogChanged=[](const std::shared_ptr<const diva::CustomizationCatalog>& catalog) {
+        auto characters=std::make_shared<std::unordered_map<int,diva::CustomizationCharacter>>();
+        if(catalog) for(const auto& item:catalog->items) {
+            // 同一 ID 以首个生效定义为准；未知与共通不写入，避免把 ALL 当成具体人物。
+            if(item.key.kind!=diva::CustomizationKind::Module || item.character==diva::CustomizationCharacter::Unknown
+                || item.character==diva::CustomizationCharacter::All) continue;
+            characters->try_emplace(item.key.id,item.character);
+        }
+        diva::PublishCustomizationModelCharacters(std::move(characters));
+    };
     // 参数key/fingerprint为请求稳定键与目录指纹；网关据最新目录重算领域、部位和人物，指纹不符即拒绝。
     diva::ConfigureCustomizationTargetResolver([](const diva::CustomizationKey& key,const std::string& fingerprint) -> std::optional<diva::CustomizationTargetFacts> {
         const auto catalog=diva::App().view.customization.catalog;
@@ -147,16 +160,18 @@ __declspec(dllexport) void Init() {
         if(mode==diva::SearchMode::Songs) return page==diva::NativePage::Song || diva::Game().IsSongSearchPage();
         return page==(mode==diva::SearchMode::Modules?diva::NativePage::Module:mode==diva::SearchMode::Hair?diva::NativePage::Hair:diva::NativePage::Accessory);
     };
+    // 播放列表只定位歌曲，不要求当前选择难度有对应谱面。
+    host.view.songLocateWithoutChart=[] {return diva::Game().Read().playlistSong;};
     // 参数 request/available 为界面验证后的动作与谱面可用性。
     host.view.submit=[](diva::Request request,bool available) {
         auto snapshot=diva::Game().Read();Log("定位请求：目标="+std::to_string(request.pvid)+"，难度="+std::to_string(request.difficulty)+"；"+diva::DescribeSnapshot(snapshot));
         std::string message;
-        if(!nativeRoutingAvailable && diva::Game().IsSongSearchPage()) {
+        if(snapshot.playlistSong || (!nativeRoutingAvailable && diva::Game().IsSongSearchPage())) {
             auto& selector=Selection();selector.Submit(request,available,snapshot,GetTickCount64());message=selector.message;
         } else diva::SubmitSongNavigation(request,available,message);
         diva::App().view.status=message;Log(message);
     };
-    Log("已初始化原生搜索 1.2.2，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
+    Log("已初始化原生搜索 1.2.3，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
 }
 // 所有 Mod 完成 Init 后再安装链式输入隔离。
 __declspec(dllexport) void PostInit() {

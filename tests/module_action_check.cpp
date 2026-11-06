@@ -5,6 +5,10 @@
 namespace diva {
 // 参数base为未使用的隔离基址；本回归直接构造只读样本，不访问游戏场景。
 NativePageSnapshot ReadNativePage(uintptr_t base) {(void)base;return {};}
+// 参数page为隔离样本；播放列表来源判定与生产同一规则，仅使用本回归构造的字段。
+bool IsPlaylistCustomization(const NativePageSnapshot& page) {
+    return page.controller && page.mode==2 && page.currentSub==6 && page.nextSub==7;
+}
 }
 namespace {
 // 参数condition/message为断言条件及中文说明。
@@ -63,6 +67,46 @@ void CrossCategoryActions() {
         Check(current.equippedId==(action==CustomizationAction::Equip?900:origin.equippedId) && current.page.slot==origin.page.slot,"跨人物动作改错装备或歌者槽位");
         Check(status.previewRestored==(action==CustomizationAction::Preview),"预览恢复与普通换装的搜索重开标记混淆");
     }
+}
+// 创建播放列表自定义的隔离样本：外层 mode2 子状态6／7，显示模型与 controller+0x10 独立记录一致。
+diva::action_runtime::Snapshot PlaylistSample() {
+    auto s=Sample();s.page.mode=2;s.page.currentSub=6;s.page.nextSub=7;s.page.sourcePvid=730;
+    s.page.slot=0;s.page.slotCount=1;s.page.internal=0;s.page.popup=-1;
+    s.equippedId=334;s.equippedIndex=0;s.highlight=0;s.highlightId=334;s.equippedCharacter=1;
+    s.models={334,0,0,0,0,0};return s;
+}
+// 验证播放列表来源的独立记录读取、预览与更换区分及外层子状态绑定；不访问游戏。
+void PlaylistActions() {
+    using namespace diva;using namespace action_runtime;
+    std::array<int,7> slotRecord{334,-1,-1,-1,-1,-1,31};
+    std::array<uintptr_t,4> playlistController{};playlistController[2]=reinterpret_cast<uintptr_t>(slotRecord.data());
+    auto page=PlaylistSample().page;page.controller=reinterpret_cast<uintptr_t>(playlistController.data());
+    int equipped=-1;
+    Check(ReadEquippedModule(page,equipped) && equipped==334,"播放列表独立记录未按 controller+0x10 读取");
+    page.slot=1;Check(!ReadEquippedModule(page,equipped),"播放列表槽位越界仍读取独立记录");
+    base=1;generation=7;uiGeneration=9;lastFrame=GetTickCount64();active={};cards.clear();targets.clear();status={};
+    Card card;card.index=0;card.record=600;card.character=1;card.owned=Ownership::Owned;card.checked=lastFrame;
+    // 更换：独立记录与临时显示必须同时等于目标，跨两帧确认。
+    auto equipRequest=ActionRequest(900);equipRequest.slot=0;equipRequest.nativeScope=3;equipRequest.key.id=316;
+    active.phase=Phase::Loading;active.request=equipRequest;active.before=active.expected=PlaylistSample();
+    active.origin=active.before;active.card=card;status.action=CustomizationAction::Equip;
+    auto playlistEquipped=PlaylistSample();playlistEquipped.equippedIndex=0;playlistEquipped.equippedId=316;playlistEquipped.models[0]=316;
+    Confirm(playlistEquipped);Check(active.phase==Phase::Loading,"播放列表单次读回提前完成更换");
+    Confirm(playlistEquipped);Check(status.succeeded && status.completed,"播放列表独立记录与显示模型一致仍未成功");
+    // 预览：只改临时显示，独立记录保持原值时进入预览状态，不算更换成功。
+    active={};active.phase=Phase::Loading;active.request=ActionRequest(901,CustomizationAction::Preview);
+    active.request.slot=0;active.request.key.id=316;active.before=PlaylistSample();active.origin=active.before;
+    active.card=card;status={};status.action=CustomizationAction::Preview;
+    auto playlistPreview=PlaylistSample();playlistPreview.page.internal=2;playlistPreview.page.idle=false;playlistPreview.models[0]=316;
+    Confirm(playlistPreview);Check(active.phase==Phase::Preview && status.previewReady,"播放列表临时预览被当成已更换");
+    Confirm(PlaylistSample());Confirm(PlaylistSample());
+    Check(status.succeeded && status.previewRestored,"播放列表预览退出未按独立记录恢复");
+    // 离开播放列表外层子状态后，仍在进行的确认必须停止，不得把其他上下文的记录当成本次结果。
+    active={};active.phase=Phase::Loading;active.request=ActionRequest(902);
+    active.request.slot=0;active.request.key.id=316;active.before=PlaylistSample();active.origin=active.before;
+    active.card=card;status={};status.action=CustomizationAction::Equip;
+    auto leftPlaylist=PlaylistSample();leftPlaylist.page.nextSub=8;leftPlaylist.equippedId=316;leftPlaylist.models[0]=316;
+    Confirm(leftPlaylist);Check(status.completed && !status.succeeded,"离开播放列表外层子状态后旧动作仍继续确认");
 }
 }
 // 覆盖未知/未拥有、过期槽位范围、重复提交及预览退出不反向覆盖玩家装备。
@@ -133,6 +177,7 @@ int main() {
         active={};active.phase=Phase::Preview;active.abandoned=true;active.request=ActionRequest(7,CustomizationAction::Preview);active.before=Sample();status={};
         Confirm(Sample());Confirm(Sample());Check(status.succeeded && !status.previewRestored,"用户已放弃预览事务仍后台重新打开面板");
         CrossCategoryActions();
+        PlaylistActions();
         for(auto next:{CustomizationAction::Locate,CustomizationAction::Preview,CustomizationAction::Equip}) {
             active={};active.phase=Phase::Preview;active.request=ActionRequest(400,CustomizationAction::Preview);active.before=active.origin=Sample();active.cancelled=cancelled.load();
             latest=Sample();lastFrame=GetTickCount64();status={};status.serial=400;status.action=CustomizationAction::Preview;status.previewReady=true;
@@ -147,6 +192,6 @@ int main() {
             ProcessPreviewExit(Sample(),exit);Check(!status.completed,"尚未跨帧确认便完成退出");ProcessPreviewExit(Sample(),exit);
             Check(status.succeeded && !status.previewRestored,"旧预览退出没有核对原装备或抢回新请求的搜索窗口");
         }
-        std::cout<<"原生服装动作隔离回归通过：84组跨分类预览／换装的能力、提交、执行与恢复；拥有、范围、槽位保护保留；未访问游戏。\n";return 0;
+        std::cout<<"原生服装动作隔离回归通过：84组跨分类预览／换装的能力、提交、执行与恢复；播放列表独立记录读取、预览与更换区分、外层子状态绑定；拥有、范围、槽位保护保留；未访问游戏。\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"服装动作验证失败："<<error.what()<<"\n";return 1;}
 }
