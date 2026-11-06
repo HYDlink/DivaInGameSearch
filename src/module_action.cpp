@@ -2,7 +2,7 @@
 #include "module_action.h"
 #include "native_page_router.h"
 #include "module_category.h"
-#include "native_layout.h"
+#include "native_memory.h"
 #include <Windows.h>
 #include <array>
 #include <atomic>
@@ -22,18 +22,6 @@ DWORD frameThread=0;
 std::array<int,10> specialIds{};
 bool specialProfileReadable=false;
 std::string lockedCatalogFingerprint;
-// 参数address/value为当前进程的已知地址与接收变量。
-template<class T> bool Read(uintptr_t address,T& value) {
-    SIZE_T count=0;return address && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address),&value,sizeof(T),&count) && count==sizeof(T);
-}
-// 参数address/value为经过提交及保护核查的动作暂存字段，不改原生高亮。
-template<class T> bool Write(uintptr_t address,T value) {
-    MEMORY_BASIC_INFORMATION info{};SIZE_T count=0;
-    return address && VirtualQuery(reinterpret_cast<void*>(address),&info,sizeof(info)) && info.State==MEM_COMMIT
-        && !(info.Protect&(PAGE_NOACCESS|PAGE_GUARD))
-        && (info.Protect&(PAGE_READWRITE|PAGE_WRITECOPY|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))
-        && WriteProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address),&value,sizeof(T),&count) && count==sizeof(T);
-}
 struct Snapshot {
     NativePageSnapshot page;
     uintptr_t begin=0,end=0;
@@ -66,7 +54,7 @@ ModuleLocateStatus status;
 bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
     if(page.slot<0 || page.slot>=6 || page.slot>=page.slotCount || page.nativeScope!=CustomizeScope::Song || page.sourcePvid<=0 || page.sourcePvid>=10000000) return false;
     uintptr_t overrideTable=0,record=0;
-    if(!Read(page.controller+0x10,overrideTable)) return false;
+    if(!ReadAt(page.controller+0x10,overrideTable)) return false;
     if(overrideTable) record=overrideTable+static_cast<uintptr_t>(page.slot)*0x1C;
     // 播放列表来源的独立记录就在 controller+0x10；该指针不可用时不能退回单曲getter冒充当前槽位配置。
     else if(IsPlaylistCustomization(page)) return false;
@@ -78,7 +66,7 @@ bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
             record=reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+rva::kGetPvSlotConfig)(save,page.sourcePvid,page.slot);
         } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
     }
-    return record && Read(record,id) && id>=0;
+    return record && ReadAt(record,id) && id>=0;
 }
 
 // 参数s为新鲜场景，列表记录、装备索引及六个槽位分别读取，不使用请求缓存当装备值。
@@ -86,20 +74,20 @@ Snapshot Capture() {
     Snapshot s;s.page=ReadNativePage(base);
     if(s.page.page!=NativePage::Module || s.page.slotCount<1 || s.page.slotCount>6
         || s.page.slot<0 || s.page.slot>=s.page.slotCount || s.page.nativeScope<CustomizeScope::CommonA || s.page.nativeScope>CustomizeScope::Song) return s;
-    if(!Read(s.page.scene+0x70,s.begin) || !Read(s.page.scene+0x78,s.end) || !s.begin || s.end<s.begin || (s.end-s.begin)%8
-        || !Read(s.page.scene+0x11C,s.count) || s.count<1 || s.count>10000 || (s.end-s.begin)/8!=static_cast<uintptr_t>(s.count)
-        || !Read(s.page.scene+0x110,s.highlight) || s.highlight<0 || s.highlight>=s.count
-        || !Read(s.page.scene+0x2C,s.equippedIndex) || !Read(s.page.controller+0x40,s.category)) return s;
+    if(!ReadAt(s.page.scene+0x70,s.begin) || !ReadAt(s.page.scene+0x78,s.end) || !s.begin || s.end<s.begin || (s.end-s.begin)%8
+        || !ReadAt(s.page.scene+0x11C,s.count) || s.count<1 || s.count>10000 || (s.end-s.begin)/8!=static_cast<uintptr_t>(s.count)
+        || !ReadAt(s.page.scene+0x110,s.highlight) || s.highlight<0 || s.highlight>=s.count
+        || !ReadAt(s.page.scene+0x2C,s.equippedIndex) || !ReadAt(s.page.controller+0x40,s.category)) return s;
     if(!ReadEquippedModule(s.page,s.equippedId)) return s;
     uintptr_t highlighted=0;
-    if(!Read(s.begin+s.highlight*8,highlighted) || !Read(highlighted,s.highlightId)) return s;
+    if(!ReadAt(s.begin+s.highlight*8,highlighted) || !ReadAt(highlighted,s.highlightId)) return s;
     if(s.equippedIndex>=0 && s.equippedIndex<s.count) {
         uintptr_t record=0;
         int indexedId=-1;
-        if(!Read(s.begin+s.equippedIndex*8,record) || !Read(record,indexedId)) return s;
-        if(indexedId==s.equippedId && !Read(record+8,s.equippedCharacter)) return s;
+        if(!ReadAt(s.begin+s.equippedIndex*8,record) || !ReadAt(record,indexedId)) return s;
+        if(indexedId==s.equippedId && !ReadAt(record+8,s.equippedCharacter)) return s;
     }
-    for(int slot=0;slot<6;++slot) if(!Read(s.page.controller+0x320+slot*0xE0,s.models[slot])) return s;
+    for(int slot=0;slot<6;++slot) if(!ReadAt(s.page.controller+0x320+slot*0xE0,s.models[slot])) return s;
     s.valid=true;return s;
 }
 // 参数a/b为动作前后的页面；播放列表来源必须保持同一外层子状态与配置对象，单曲来源沿用既有判据。
@@ -161,8 +149,8 @@ bool ReadOwnership(int id,Ownership& owned) {
 // 参数s/index/id/card为真实当前列表和接收值，索引只由列表记录映射。
 bool ReadCard(const Snapshot& s,int index,int& id,Card& card) {
     card={};card.index=index;
-    return index>=0 && index<s.count && Read(s.begin+index*8,card.record) && Read(card.record,id)
-        && Read(card.record+8,card.character);
+    return index>=0 && index<s.count && ReadAt(s.begin+index*8,card.record) && ReadAt(card.record,id)
+        && ReadAt(card.record+8,card.character);
 }
 // 参数s为当前空闲列表；每帧最多核对4个拥有判定，不在渲染线程批量调用游戏函数。
 void RefreshCards(const Snapshot& s) {
@@ -206,14 +194,14 @@ bool FindActionTarget(const Snapshot& s,int id,Card& card) {
 // 参数s/id为恢复后的真实列表与原高亮ID；不装备、不购买，仅恢复列表控件。
 bool RestoreActionHighlight(const Snapshot& s,int id) {
     Card card;if(!FindActionTarget(s,id,card)) return false;
-    int saved=-1;if(!Read(s.page.scene+0x30,saved)) return false;
+    int saved=-1;if(!ReadAt(s.page.scene+0x30,saved)) return false;
     bool invoked=false;
     __try {
-        if(Write(s.page.scene+0x30,card.index)) {
+        if(WriteAt(s.page.scene+0x30,card.index)) {
             reinterpret_cast<void(__fastcall*)(void*,uint8_t)>(base+rva::kSceneModuleInitChoice)(reinterpret_cast<void*>(s.page.scene),1);invoked=true;
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {invoked=false;}
-    return Write(s.page.scene+0x30,saved) && invoked;
+    return WriteAt(s.page.scene+0x30,saved) && invoked;
 }
 // 参数text/success/restored为结果、成功与原生预览安全恢复；此处从不反向写回装备。
 void Finish(const std::string& text,bool success=false,bool restored=false) {
@@ -229,36 +217,36 @@ bool OtherSlotsUnchanged(const Snapshot& s) {
 // 参数s/card/action为当前已核实列表、真实目标记录与动作；只可能派发命令7或3。
 bool Invoke(const Snapshot& s,const Card& card,CustomizationAction action) {
     uintptr_t callback=0,owner=0,function=0;
-    if(!Read(s.page.scene+0x308,callback) || !Read(callback+8,owner) || owner!=s.page.scene
-        || !Read(callback+0x10,function) || function!=base+rva::kSceneModuleAction) return false;
+    if(!ReadAt(s.page.scene+0x308,callback) || !ReadAt(callback+8,owner) || owner!=s.page.scene
+        || !ReadAt(callback+0x10,function) || function!=base+rva::kSceneModuleAction) return false;
     int savedIndex=-1;uintptr_t savedRecord=0;
-    if(!Read(s.page.scene+0x60,savedIndex) || savedIndex!=-1 || !Read(s.page.scene+0x68,savedRecord)) return false;
+    if(!ReadAt(s.page.scene+0x60,savedIndex) || savedIndex!=-1 || !ReadAt(s.page.scene+0x68,savedRecord)) return false;
     bool submitted=false;
     __try {
-        if(!Write(s.page.scene+0x60,card.index) || !Write(s.page.scene+0x68,card.record)) __leave;
+        if(!WriteAt(s.page.scene+0x60,card.index) || !WriteAt(s.page.scene+0x68,card.record)) __leave;
         const int command=action==CustomizationAction::Preview?7:3;
         reinterpret_cast<void(__fastcall*)(void*,int)>(function)(reinterpret_cast<void*>(s.page.scene),command);
         int next=-1;
-        if(!Read(s.page.scene+0x14,next) || (next!=3 && !(action==CustomizationAction::Preview && next==2))) __leave;
+        if(!ReadAt(s.page.scene+0x14,next) || (next!=3 && !(action==CustomizationAction::Preview && next==2))) __leave;
         const auto accepted=reinterpret_cast<uint8_t(__fastcall*)(void*,int)>(base+rva::kSceneStateSwitch)(reinterpret_cast<void*>(s.page.state),next);
         int actual=-1;
-        submitted=accepted && Read(s.page.state+0x18,actual) && actual==next;
+        submitted=accepted && ReadAt(s.page.state+0x18,actual) && actual==next;
     } __except(EXCEPTION_EXECUTE_HANDLER) {submitted=false;}
     if(!submitted) {
         int internal=-1;
-        if(Read(s.page.state+0x18,internal) && internal==0) {Write(s.page.scene+0x60,savedIndex);Write(s.page.scene+0x68,savedRecord);}
+        if(ReadAt(s.page.state+0x18,internal) && internal==0) {WriteAt(s.page.scene+0x60,savedIndex);WriteAt(s.page.scene+0x68,savedRecord);}
     }
     return submitted;
 }
 // 参数s为稳定预览状态；严格复用6963E0的原生返回分支，不模拟按键、不直接写回装备。
 bool InvokePreviewExit(const Snapshot& s) {
-    uint8_t direct=0;if(s.page.internal!=2 || !Read(s.page.scene+0x28,direct)) return false;
+    uint8_t direct=0;if(s.page.internal!=2 || !ReadAt(s.page.scene+0x28,direct)) return false;
     __try {
         const int next=direct?0:3;
-        if(direct) {if(!Write(s.page.scene+0x28,uint8_t(0))) return false;}
-        else if(!Write(s.page.scene+0x1C,int(2)) || !Write(s.page.scene+0x18,int(0))) return false;
+        if(direct) {if(!WriteAt(s.page.scene+0x28,uint8_t(0))) return false;}
+        else if(!WriteAt(s.page.scene+0x1C,int(2)) || !WriteAt(s.page.scene+0x18,int(0))) return false;
         const auto accepted=reinterpret_cast<uint8_t(__fastcall*)(void*,int)>(base+rva::kSceneStateSwitch)(reinterpret_cast<void*>(s.page.state),next);
-        int actual=-1;return accepted && Read(s.page.state+0x18,actual) && actual==next;
+        int actual=-1;return accepted && ReadAt(s.page.state+0x18,actual) && actual==next;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 // 参数s/ownershipReader/invoke为真实状态帧快照及原生适配器；测试可隔离原生调用，生产仍重新查唯一目标与拥有状态。
@@ -346,7 +334,7 @@ void InitializeModuleActions(uintptr_t imageBase) {
     using namespace action_runtime;
     std::lock_guard lock(mutex);base=imageBase;specialProfileReadable=true;
     for(size_t index=0;index<specialIds.size();++index)
-        if(!Read(base+rva::kSpecialModuleIds+index*4,specialIds[index])) specialProfileReadable=false;
+        if(!ReadAt(base+rva::kSpecialModuleIds+index*4,specialIds[index])) specialProfileReadable=false;
 }
 
 // 参数page是定位器Hook取得的真实模型页；分类切换不借用选曲／渲染线程，不需要先单击定位。

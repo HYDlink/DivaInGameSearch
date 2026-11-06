@@ -1,6 +1,6 @@
 #include "i18n.h"
 #include "recommendation.h"
-#include "native_layout.h"
+#include "native_memory.h"
 #include <Windows.h>
 #include <atomic>
 #include <cstring>
@@ -18,10 +18,6 @@ std::vector<uintptr_t> entries;
 uintptr_t tableBegin=0,tableEnd=0;
 size_t cursor=0;
 uint64_t nextRead=0;
-// 参数 address/value 为本进程只读地址和接收值；不可读时拒绝，不改变页权限。
-template<class T> bool ReadValue(uintptr_t address,T& value) {
-    SIZE_T count=0;return address && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(address),&value,sizeof(value),&count) && count==sizeof(value);
-}
 // 参数 snapshot 为完整值快照；只有内容或就绪状态改变才递增代数。
 void Publish(std::shared_ptr<RecommendationSnapshot> snapshot) {
     std::lock_guard lock(publicationMutex);
@@ -46,11 +42,11 @@ void TickRecommendations() {
     const auto now=GetTickCount64();
     if(!building && now<nextRead) return;
     uintptr_t begin=0,end=0;
-    if(!ReadValue(base+rva::kPvDb+pv_db::kEntriesBegin,begin) || !ReadValue(base+rva::kPvDb+pv_db::kEntriesEnd,end)
+    if(!ReadAt(base+rva::kPvDb+pv_db::kEntriesBegin,begin) || !ReadAt(base+rva::kPvDb+pv_db::kEntriesEnd,end)
         || !begin || end<=begin || (end-begin)%sizeof(uintptr_t) || (end-begin)/sizeof(uintptr_t)>4096) {Invalidate(Tr(Tx::reco_db_not_ready));return;}
     if(!building) {
         std::array<unsigned char,8> code{};int32_t displacement=0;
-        if(!ReadValue(base+rva::kGetPvDb,code) || code[0]!=0x48 || code[1]!=0x8D || code[2]!=0x05 || code[7]!=0xC3) {Invalidate(Tr(Tx::reco_getter_mismatch));return;}
+        if(!ReadAt(base+rva::kGetPvDb,code) || code[0]!=0x48 || code[1]!=0x8D || code[2]!=0x05 || code[7]!=0xC3) {Invalidate(Tr(Tx::reco_getter_mismatch));return;}
         std::memcpy(&displacement,code.data()+3,4);
         if(base+rva::kGetPvDbLeaEnd+displacement!=base+rva::kPvDb) {Invalidate(Tr(Tx::reco_source_mismatch));return;}
         entries.resize((end-begin)/sizeof(uintptr_t));SIZE_T bytes=0;
@@ -60,22 +56,22 @@ void TickRecommendations() {
     if(begin!=tableBegin || end!=tableEnd) {Invalidate(Tr(Tx::reco_rebuilding));return;}
     for(size_t batch=0;batch<8 && cursor<entries.size();++batch,++cursor) {
         uintptr_t entry=0,performerBegin=0,performerEnd=0;int pvid=-1;
-        if(!ReadValue(begin+cursor*sizeof(uintptr_t),entry) || entry!=entries[cursor] || !ReadValue(entry,pvid) || pvid<0 || pvid>1000000
-            || !ReadValue(entry+pv_db::kEntryPerformersBegin,performerBegin) || !ReadValue(entry+pv_db::kEntryPerformersEnd,performerEnd) || performerEnd<performerBegin
+        if(!ReadAt(begin+cursor*sizeof(uintptr_t),entry) || entry!=entries[cursor] || !ReadAt(entry,pvid) || pvid<0 || pvid>1000000
+            || !ReadAt(entry+pv_db::kEntryPerformersBegin,performerBegin) || !ReadAt(entry+pv_db::kEntryPerformersEnd,performerEnd) || performerEnd<performerBegin
             || (performerEnd-performerBegin)%pv_db::kPerformerSize || (performerEnd-performerBegin)/pv_db::kPerformerSize>6) {Invalidate(Tr(Tx::reco_layout_changed));return;}
         std::vector<RecommendedPerformer> values;
         for(uintptr_t at=performerBegin;at<performerEnd;at+=pv_db::kPerformerSize) {
             std::array<int32_t,17> raw{};
-            if(!ReadValue(at,raw)) {Invalidate(Tr(Tx::reco_performer_unreadable));return;}
+            if(!ReadAt(at,raw)) {Invalidate(Tr(Tx::reco_performer_unreadable));return;}
             RecommendedPerformer value;value.type=raw[0];value.character=raw[1];value.pseudoSameId=raw[11];for(int d=0;d<5;++d)value.costumes[d]=raw[3+d];values.push_back(value);
         }
         uintptr_t checkBegin=0,checkEnd=0;
-        if(!ReadValue(entry+pv_db::kEntryPerformersBegin,checkBegin) || !ReadValue(entry+pv_db::kEntryPerformersEnd,checkEnd) || checkBegin!=performerBegin || checkEnd!=performerEnd || building->songs.contains(pvid)) {Invalidate(Tr(Tx::reco_identity_unstable));return;}
+        if(!ReadAt(entry+pv_db::kEntryPerformersBegin,checkBegin) || !ReadAt(entry+pv_db::kEntryPerformersEnd,checkEnd) || checkBegin!=performerBegin || checkEnd!=performerEnd || building->songs.contains(pvid)) {Invalidate(Tr(Tx::reco_identity_unstable));return;}
         building->songs.emplace(pvid,std::move(values));
     }
     if(cursor==entries.size()) {
         uintptr_t checkBegin=0,checkEnd=0;
-        if(!ReadValue(base+rva::kPvDb+pv_db::kEntriesBegin,checkBegin) || !ReadValue(base+rva::kPvDb+pv_db::kEntriesEnd,checkEnd) || checkBegin!=begin || checkEnd!=end) {Invalidate(Tr(Tx::reco_rebuilt));return;}
+        if(!ReadAt(base+rva::kPvDb+pv_db::kEntriesBegin,checkBegin) || !ReadAt(base+rva::kPvDb+pv_db::kEntriesEnd,checkEnd) || checkBegin!=begin || checkEnd!=end) {Invalidate(Tr(Tx::reco_rebuilt));return;}
         building->ready=true;building->reason.clear();Publish(building);building.reset();entries.clear();nextRead=now+2000;
     }
     } catch(...) {

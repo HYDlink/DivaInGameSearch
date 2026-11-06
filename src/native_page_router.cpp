@@ -3,7 +3,7 @@
 #include "customization_item_locator.h"
 #include "customization_item_profiles.h"
 #include "module_action.h"
-#include "native_layout.h"
+#include "native_memory.h"
 #include "performance_trace.h"
 #include <Windows.h>
 #include <detours.h>
@@ -164,33 +164,15 @@ std::function<void(double)> nativePerformance;
 // 返回歌曲事务是否仍持有导航或定位权限，供两类搜索共享互斥网关。
 bool SongBusy() {return songRoute.phase!=SongPhase::Idle && songRoute.phase!=SongPhase::Done;}
 
-// 参数 address/value 为当前进程内地址与输出，拒绝不可读对象。
-template<class T> bool Read(uintptr_t address,T& value) {
-    SIZE_T count=0;return address && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address),&value,sizeof(T),&count) && count==sizeof(T);
-}
-// 参数 address/value 为已核实原生状态字段；仅写当前进程可写提交页。
-template<class T> bool Write(uintptr_t address,T value) {
-    MEMORY_BASIC_INFORMATION info{};SIZE_T count=0;
-    return address && VirtualQuery(reinterpret_cast<void*>(address),&info,sizeof(info)) && info.State==MEM_COMMIT
-        && !(info.Protect&(PAGE_NOACCESS|PAGE_GUARD))
-        && (info.Protect&(PAGE_READWRITE|PAGE_WRITECOPY|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))
-        && WriteProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address),&value,sizeof(T),&count) && count==sizeof(T);
-}
-// 参数 address 为已核实构建中的候选函数入口，保留其他Mod的已有跳转链。
-bool Executable(uintptr_t address) {
-    MEMORY_BASIC_INFORMATION info{};
-    return address && VirtualQuery(reinterpret_cast<void*>(address),&info,sizeof(info)) && info.State==MEM_COMMIT
-        && !(info.Protect&(PAGE_NOACCESS|PAGE_GUARD)) && (info.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY));
-}
 // 参数 head/node 为树头和目标节点；有界遍历且拒绝循环，不接受堆扫描候选。
 bool Contains(uintptr_t head,uintptr_t node) {
-    uintptr_t root=0;if(!head || !node || head==node || !Read(head+scene_manager::kNodeParent,root)) return false;
+    uintptr_t root=0;if(!head || !node || head==node || !ReadAt(head+scene_manager::kNodeParent,root)) return false;
     std::vector<uintptr_t> pending{root};std::set<uintptr_t> visited;
     while(!pending.empty() && visited.size()<32) {
         const auto current=pending.back();pending.pop_back();
         if(!current || current==head || !visited.insert(current).second) continue;
         if(current==node) return true;
-        uintptr_t left=0,right=0;if(!Read(current+scene_manager::kNodeLeft,left) || !Read(current+scene_manager::kNodeRight,right)) return false;
+        uintptr_t left=0,right=0;if(!ReadAt(current+scene_manager::kNodeLeft,left) || !ReadAt(current+scene_manager::kNodeRight,right)) return false;
         pending.push_back(left);pending.push_back(right);
     }
     return false;
@@ -231,10 +213,10 @@ bool SupportedSource(const NativePageSnapshot& s,NativePage target) {
 bool InvokeSibling(const NativePageSnapshot& s,int targetKey) {
     if(s.key<SceneKey::Module || s.key>SceneKey::Item || targetKey<SceneKey::TopMenu || targetKey>SceneKey::Item || targetKey==s.key || !s.idle) return false;
     const uintptr_t panelOffset=s.key==SceneKey::Module?0x310:s.key==SceneKey::Hairstyle?0x380:0x2E0;
-    uintptr_t panel=0;if(!Read(s.scene+panelOffset,panel) || !panel) return false;
+    uintptr_t panel=0;if(!ReadAt(s.scene+panelOffset,panel) || !panel) return false;
     if(!nativeCalls.requestScene(s.manager,targetKey)) return false;
     if(!nativeCalls.hidePanel(panel)) return false;
-    return Write(s.scene+(s.key==SceneKey::Item?0x29:0x25),uint8_t(1));
+    return WriteAt(s.scene+(s.key==SceneKey::Item?0x29:0x25),uint8_t(1));
 }
 // 参数 s/next 为匹配真实帧边界后的新鲜页面与下一跳；只调用报告已验证的导航协议。
 bool InvokeRoute(const NativePageSnapshot& s,NativePage next) {
@@ -243,7 +225,7 @@ bool InvokeRoute(const NativePageSnapshot& s,NativePage next) {
     if(s.page==NativePage::Parent) {
         if(s.parentCursor!=0 || s.parentPhase!=1 || next!=NativePage::Module) return false;
         if(!nativeCalls.parentConfirm(s.scene)) return false;
-        return Write(s.scene+0x1C,int32_t(2));
+        return WriteAt(s.scene+0x1C,int32_t(2));
     }
     if(s.page==NativePage::Module || s.page==NativePage::Hair || s.page==NativePage::Accessory) return InvokeSibling(s,PageKey(next));
     return false;
@@ -262,7 +244,7 @@ bool InvokeSongExit(const NativePageSnapshot& s,bool finish) {
     if(finish) {
         if(s.page!=NativePage::Parent || !s.idle || s.parentPhase!=1) return false;
         if(!nativeCalls.requestScene(s.manager,SceneKey::Finish)) return false;
-        return Write(s.controller+0x28,int32_t(1)) && Write(s.scene+0x19,uint8_t(1));
+        return WriteAt(s.controller+0x28,int32_t(1)) && WriteAt(s.scene+0x19,uint8_t(1));
     }
     return InvokeSibling(s,SceneKey::TopMenu);
 }
@@ -443,43 +425,43 @@ bool IsPlaylistCustomization(const NativePageSnapshot& page) {return PlaylistCus
 
 NativePageSnapshot ReadNativePage(uintptr_t base) {
     NativePageSnapshot s;if(!base) return s;
-    if(!Read(base+mode_info::kCurrent,s.mode) || !Read(base+mode_info::kProc,s.modeProc) || !Read(base+mode_info::kShift,s.modeShift)
-        || !Read(base+mode_info::kSubCurrent,s.subCurrent) || !Read(base+mode_info::kSubNext,s.subNext) || !Read(base+mode_info::kSubProc,s.subProc)
-        || !Read(base+mode_info::kSubShift,s.subShift) || !Read(base+rva::kCustomizeTask+customize_task::kController,s.controller) || !Read(base+rva::kPvSelectorSwitch,s.song)) return s;
+    if(!ReadAt(base+mode_info::kCurrent,s.mode) || !ReadAt(base+mode_info::kProc,s.modeProc) || !ReadAt(base+mode_info::kShift,s.modeShift)
+        || !ReadAt(base+mode_info::kSubCurrent,s.subCurrent) || !ReadAt(base+mode_info::kSubNext,s.subNext) || !ReadAt(base+mode_info::kSubProc,s.subProc)
+        || !ReadAt(base+mode_info::kSubShift,s.subShift) || !ReadAt(base+rva::kCustomizeTask+customize_task::kController,s.controller) || !ReadAt(base+rva::kPvSelectorSwitch,s.song)) return s;
     const bool outerIdle=s.modeProc==ModeProc::Ctrl && s.subProc==ModeProc::Ctrl && !s.modeShift && !s.subShift;
     if(!s.controller) {
         if(!s.song && s.mode==Mode::MenuSwitch && s.subCurrent==ModeSub::MenuSwitchHome && s.subNext==ModeSub::MenuSwitchUnk43 && outerIdle) {s.page=NativePage::Home;s.idle=true;}
         int32_t member=0;
         if(s.song && s.mode==Mode::Game && s.subCurrent==ModeSub::PvSel && s.subNext==ModeSub::PlaylistSel && outerIdle
-            && Read(s.song+pv_selector::kState,s.songState) && s.songState==pv_selector::kStateIdle && Read(base+rva::kVisiblePvidMember,member)
-            && member>=pv_selector::kVisiblePvidBias && member<=pv_selector::kVisiblePvidMemberMax && Read(s.song+member-pv_selector::kVisiblePvidBias,s.pvid) && s.pvid>0 && s.pvid<10000000) {s.page=NativePage::Song;s.idle=true;}
+            && ReadAt(s.song+pv_selector::kState,s.songState) && s.songState==pv_selector::kStateIdle && ReadAt(base+rva::kVisiblePvidMember,member)
+            && member>=pv_selector::kVisiblePvidBias && member<=pv_selector::kVisiblePvidMemberMax && ReadAt(s.song+member-pv_selector::kVisiblePvidBias,s.pvid) && s.pvid>0 && s.pvid<10000000) {s.page=NativePage::Song;s.idle=true;}
         return s;
     }
     uintptr_t table=0;
     if(!outerIdle || !((s.mode==Mode::Game && ((s.subCurrent==ModeSub::PvSel && s.subNext==ModeSub::PlaylistSel) || (s.subCurrent==ModeSub::PlaylistSel && s.subNext==ModeSub::Game))) || (s.mode==Mode::Customize && s.subCurrent==ModeSub::CsCustomizeSel && s.subNext==ModeSub::CsUnk37))
-        || !Read(s.controller+0x18,s.configuration) || !s.configuration
-        || !Read(s.controller+0x998,s.manager) || !Read(s.manager,table) || table!=base+rva::kSceneManagerVtable
-        || !Read(s.manager+scene_manager::kTreeHead,s.head) || !Read(s.manager+scene_manager::kCurrentNode,s.node) || !Contains(s.head,s.node)
-        || !Read(s.manager+scene_manager::kTargetNode,s.target) || !Read(s.manager+scene_manager::kTransition,s.transition)
-        || !Read(s.node+scene_manager::kNodeKey,s.key) || s.key<SceneKey::TopMenu || s.key>SceneKey::Item || !Read(s.node+scene_manager::kNodeScene,s.scene)
-        || !Read(s.scene,table) || table!=base+rva::kSceneVtables[s.key]) return s;
+        || !ReadAt(s.controller+0x18,s.configuration) || !s.configuration
+        || !ReadAt(s.controller+0x998,s.manager) || !ReadAt(s.manager,table) || table!=base+rva::kSceneManagerVtable
+        || !ReadAt(s.manager+scene_manager::kTreeHead,s.head) || !ReadAt(s.manager+scene_manager::kCurrentNode,s.node) || !Contains(s.head,s.node)
+        || !ReadAt(s.manager+scene_manager::kTargetNode,s.target) || !ReadAt(s.manager+scene_manager::kTransition,s.transition)
+        || !ReadAt(s.node+scene_manager::kNodeKey,s.key) || s.key<SceneKey::TopMenu || s.key>SceneKey::Item || !ReadAt(s.node+scene_manager::kNodeScene,s.scene)
+        || !ReadAt(s.scene,table) || table!=base+rva::kSceneVtables[s.key]) return s;
     uintptr_t sceneController=0;
-    if(!Read(s.scene+8,sceneController) || sceneController!=s.controller) return s;
-    Read(s.controller+0x38,s.slotCount);Read(s.controller+0x3C,s.slot);
-    Read(s.controller+8,s.sourcePvid);Read(base+rva::kCustomizeScopeSelector,s.nativeScope);
+    if(!ReadAt(s.scene+8,sceneController) || sceneController!=s.controller) return s;
+    ReadAt(s.controller+0x38,s.slotCount);ReadAt(s.controller+0x3C,s.slot);
+    ReadAt(s.controller+8,s.sourcePvid);ReadAt(base+rva::kCustomizeScopeSelector,s.nativeScope);
     // 当前槽位实际装备的模型：独立记录优先（播放列表来源于 controller+0x10），缺失时用临时显示配置。
     if(s.slot>=0 && s.slot<6) {
         uintptr_t record=0;int32_t value=-1;
-        if(Read(s.controller+0x10,record) && record
-            && Read(record+static_cast<uintptr_t>(s.slot)*0x1C,value) && value>=0) s.model=value;
-        else if(Read(s.controller+0x320+static_cast<uintptr_t>(s.slot)*0xE0,value) && value>=0) s.model=value;
+        if(ReadAt(s.controller+0x10,record) && record
+            && ReadAt(record+static_cast<uintptr_t>(s.slot)*0x1C,value) && value>=0) s.model=value;
+        else if(ReadAt(s.controller+0x320+static_cast<uintptr_t>(s.slot)*0xE0,value) && value>=0) s.model=value;
     }
     const uintptr_t stateOffset=s.key==SceneKey::TopMenu?0x178:s.key==SceneKey::Module?0x330:s.key==SceneKey::Hairstyle?0x3A0:0x300;
-    if(!Read(s.scene+stateOffset,s.state) || !s.state || !Read(s.state+0x18,s.internal)) return s;
+    if(!ReadAt(s.scene+stateOffset,s.state) || !s.state || !ReadAt(s.state+0x18,s.internal)) return s;
     s.page=s.key==SceneKey::TopMenu?NativePage::Parent:s.key==SceneKey::Module?NativePage::Module:s.key==SceneKey::Hairstyle?NativePage::Hair:NativePage::Accessory;
     s.idle=s.target==s.head && s.transition==scene_manager::kTransitionIdle && s.internal==0;
-    if(s.key==SceneKey::TopMenu) {if(!Read(s.scene+0x28,s.parentCursor) || !Read(s.scene+0x1C,s.parentPhase)) s.idle=false;}
-    if(s.key==SceneKey::Module) {if(!Read(s.scene+0x60,s.popup) || s.popup!=-1) s.idle=false;}
+    if(s.key==SceneKey::TopMenu) {if(!ReadAt(s.scene+0x28,s.parentCursor) || !ReadAt(s.scene+0x1C,s.parentPhase)) s.idle=false;}
+    if(s.key==SceneKey::Module) {if(!ReadAt(s.scene+0x60,s.popup) || s.popup!=-1) s.idle=false;}
     return s;
 }
 
@@ -488,7 +470,7 @@ bool InitializeNativePageRouter(uintptr_t base) {
     // 调用者只有在定位器完整核验SHA、PE及签名后才提供基址；拒绝直接绕过初始化。
     if(!base || PollModuleLocator().phase==ModuleLocatePhase::Disabled) return false;
     for(auto entry:{rva::kModeCtrl,rva::kPvSelectorSwitchCtrl,rva::kSceneStateFrame,rva::kRequestMode,rva::kActivateCustomize,rva::kHideSelector,rva::kTopMenuConfirm,rva::kSceneManagerRequest,rva::kScenePanelHide})
-        if(!Executable(base+entry)) return false;
+        if(!IsExecutable(base+entry)) return false;
     imageBase=base;originalOuter=reinterpret_cast<OuterFrame>(base+rva::kModeCtrl);
     originalSong=reinterpret_cast<ObjectFrame>(base+rva::kPvSelectorSwitchCtrl);originalState=reinterpret_cast<ObjectFrame>(base+rva::kSceneStateFrame);
     DetourTransactionBegin();DetourUpdateThread(GetCurrentThread());

@@ -197,6 +197,7 @@ constexpr uintptr_t kPvId=0x262A4;              // pv_id
 constexpr uintptr_t kSortIndices=0x262AC;       // sort_indices[4]，按 sort_mode 取下标
 constexpr uintptr_t kSortChangeDir=0x262BC;     // sort_change_dir
 constexpr uintptr_t kSortMode=0x262C0;          // sort_mode，0 为曲名排序
+constexpr std::array<int32_t,4> kAllSongsSortIndex{10,19,6,5};  // [自拟] 各 sort_mode 下“全曲”分组写入 kSortIndices 的值
 constexpr uintptr_t kDifficulty=0x262C8;        // difficulty
 constexpr uintptr_t kEdition=0x262CC;           // edition
 // 选曲里可见 PVID 的成员偏移要从 rva::kVisiblePvidMember 现读，再减去这个差值。[QS]

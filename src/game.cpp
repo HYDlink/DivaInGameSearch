@@ -1,7 +1,7 @@
 #include "i18n.h"
 #include "game.h"
 #include "host.h"
-#include "native_layout.h"
+#include "native_memory.h"
 #include <detours.h>
 #include <Psapi.h>
 #include <vector>
@@ -16,19 +16,6 @@ static void* __fastcall FilterInput(int player) {
     if(App().captures.load(std::memory_order_relaxed)) return originalInput(1);
     return originalInput(player);
 }
-// 只读访问已提交内存；参数 address/value 为地址与输出。
-template<class T> static bool ReadAt(uintptr_t address,T& value) {
-    SIZE_T done=0; return ReadProcessMemory(GetCurrentProcess(),(void*)address,&value,sizeof(T),&done) && done==sizeof(T);
-}
-// 写入已经确认可写的数据页；参数 address/value 为目标与数值。
-template<class T> static bool WriteValue(uintptr_t address,T value) {
-    MEMORY_BASIC_INFORMATION info{};
-    if(!VirtualQuery((void*)address,&info,sizeof(info)) || info.State!=MEM_COMMIT || info.Protect&(PAGE_GUARD|PAGE_NOACCESS)) return false;
-    if(!(info.Protect&(PAGE_READWRITE|PAGE_WRITECOPY|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))) return false;
-    SIZE_T done=0; return WriteProcessMemory(GetCurrentProcess(),(void*)address,&value,sizeof(value),&done) && done==sizeof(value);
-}
-// 写入经过页保护核查的整数字段；参数 address/value 为目标和值。
-static bool WriteAt(uintptr_t address,int value) { return WriteValue(address,value); }
 // 调用已按 PC 上游与构建核对的列表重建函数；参数 address/object 为入口和实际任务。
 static bool CreateNativeList(uintptr_t address,uintptr_t object) {
     __try { return ((bool(__fastcall*)(void*))address)((void*)object); } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -87,7 +74,7 @@ void GameMemory::Initialize() {
     wchar_t path[32768]{}; GetModuleFileNameW(nullptr,path,32768);
     if(fs::path(path).filename()!=L"DivaMegaMix.exe") { inputReady=true;diagnostic="当前是验证宿主，已禁用游戏内存访问。"; return; }
     IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
-    if(!ReadAt(base,dos) || !ReadAt(base+dos.e_lfanew,nt) || nt.FileHeader.TimeDateStamp!=build::kTimestamp || nt.OptionalHeader.SizeOfImage!=build::kImageSize) {
+    if(!ReadAt(base,dos) || !ReadAt(base+dos.e_lfanew,nt) || !IsVerifiedBuild(nt)) {
         diagnostic=Tr(Tx::game_build_unknown); return;
     }
     // 允许前一 Mod 已安装 detour：核对固定入口之后未被补丁覆盖的原函数尾部。
@@ -219,7 +206,7 @@ bool GameMemory::Select(const Request& request) {
     if(!supported || (!styleAddress && request.style!=0)) return false;
     auto s=Read(); if(!s.supported || (s.subCurrent!=ModeSub::PvSel && s.subCurrent!=ModeSub::PlaylistSel)) return false;
     return WriteAt(base+rva::kLastSelectDifficulty+dataOffset,request.difficulty) && WriteAt(base+rva::kLastSelectPvId+dataOffset,request.pvid)
-        && (!styleAddress || WriteAt(styleAddress,request.style)) && WriteAt(base+rva::kLastSelectSortMode+dataOffset,1) && WriteAt(base+rva::kLastSelectSortIndex+dataOffset,19);
+        && (!styleAddress || WriteAt(styleAddress,request.style)) && WriteAt(base+rva::kLastSelectSortMode+dataOffset,1) && WriteAt(base+rva::kLastSelectSortIndex+dataOffset,pv_selector::kAllSongsSortIndex[1]);
 }
 // 只要此构建通过启动核查，就坚持原界面路径；失败不会自动把用户送到播放列表。
 bool GameMemory::SupportsDirect() const { return true; }
@@ -235,7 +222,7 @@ bool GameMemory::DirectSelect(const Request& request) {
             // 仅对实机确认的曲名排序切回全曲，其他排序保持原筛选并拒绝未知目标。
             int sort=-1;if(!ReadAt(object+pv_selector::kSortMode,sort) || sort!=0) return false;
             const uintptr_t folder=object+pv_selector::kSortIndices;
-            if(!WriteAt(folder,10) || !WriteValue(object+pv_selector::kCurSortIndex,folder) || !WriteAt(object+pv_selector::kSortChangeDir,1)
+            if(!WriteAt(folder,pv_selector::kAllSongsSortIndex[0]) || !WriteAt(object+pv_selector::kCurSortIndex,folder) || !WriteAt(object+pv_selector::kSortChangeDir,1)
                 || !RefreshNativeList(base+rva::kChangeSortFilter,object)) return false;
             index=FindNativeIndex(object,request.pvid);
         }
@@ -259,13 +246,13 @@ bool GameMemory::DirectSelect(const Request& request) {
         if(!ReadAt(styleWindowAddress,styleWindow) || !styleWindow || !WriteAt(styleWindow+preferredStyleOffset,request.style)) return false;
     } else if(request.style!=0) return false;
     int targetDiff=request.difficulty==kRequestExtraExtreme?PvDifficulty::Extreme:request.difficulty,targetEdition=request.difficulty==kRequestExtraExtreme?PvEdition::Extra:PvEdition::Original;
-    const int allFolders[]={10,19,6,5};int all=allFolders[mode];
+    const int all=pv_selector::kAllSongsSortIndex[mode];
     uintptr_t currentVector=object+pv_selector::kSortedPvLists+(8*mode+2*targetDiff+targetEdition)*pv_selector::kSortedPvListStride;
     uintptr_t begin=0,end=0;
     if(!ReadAt(currentVector,begin) || !ReadAt(currentVector+8,end) || end<begin || (end-begin)%pv_selector::kPvDataSize || (end-begin)/pv_selector::kPvDataSize>100000) return false;
     if(!WriteAt(object+pv_selector::kDifficulty,targetDiff) || !WriteAt(object+pv_selector::kEdition,targetEdition)
-        || !WriteValue(object+pv_selector::kCurPvList,currentVector) || !WriteAt(object+pv_selector::kSortIndices+mode*4,all)
-        || !WriteValue(object+pv_selector::kCurSortIndex,object+pv_selector::kSortIndices+mode*4) || !WriteAt(object+pv_selector::kSortChangeDir,1)) return false;
+        || !WriteAt(object+pv_selector::kCurPvList,currentVector) || !WriteAt(object+pv_selector::kSortIndices+mode*4,all)
+        || !WriteAt(object+pv_selector::kCurSortIndex,object+pv_selector::kSortIndices+mode*4) || !WriteAt(object+pv_selector::kSortChangeDir,1)) return false;
     if(!CreateNativeList(functions[0],object)) { diagnostic="原生歌曲列表重建失败。";return false; }
     int index=FindNativeIndex(object,request.pvid);
     if(index<0) { diagnostic="目标歌曲不在该风格与难度的实际生效列表中。";return false; }
@@ -275,7 +262,7 @@ bool GameMemory::DirectSelect(const Request& request) {
     if(!RefreshNativeList(functions[1],object)) return false;
     index=FindNativeIndex(object,request.pvid);
     if(index<0 || !HighlightNativeList(functions[2],object+pv_selector::kSelPvList,index)) return false;
-    if(styleWindow) WriteValue<unsigned char>(styleWindow+preferredStyleOffset+6,1);
+    if(styleWindow) WriteAt<unsigned char>(styleWindow+preferredStyleOffset+6,1);
     diagnostic="已调用 PC 原生列表重建、筛选刷新与高亮入口，没有请求切换顶层菜单。";return true;
 }
 // 返回通过现有游戏构建核查的动态基址；不向未支持构建暴露可写内存入口。

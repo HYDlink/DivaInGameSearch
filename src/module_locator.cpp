@@ -2,7 +2,7 @@
 #include "module_locator.h"
 #include "module_category.h"
 #include "module_action.h"
-#include "native_layout.h"
+#include "native_memory.h"
 
 #include <Windows.h>
 #include <wincrypt.h>
@@ -31,32 +31,6 @@ using MoveCategoryFunction=void(__fastcall*)(void*,int32_t);
 ModuleFrameFunction g_originalModuleFrame=nullptr;
 std::atomic<uint64_t> g_cancelGeneration{0};
 
-// 读取当前进程已提交内存；参数 address/value 分别为地址和接收值。
-template<class T>
-bool ReadAt(uintptr_t address,T& value) {
-    SIZE_T read=0;
-    return address && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(address),&value,sizeof(T),&read) && read==sizeof(T);
-}
-
-// 写入经过提交页与保护检查的字段；参数 address/value 为目标地址和值。
-template<class T>
-bool WriteValue(uintptr_t address,T value) {
-    MEMORY_BASIC_INFORMATION info{};
-    if(!address || !VirtualQuery(reinterpret_cast<const void*>(address),&info,sizeof(info))
-        || info.State!=MEM_COMMIT || (info.Protect&(PAGE_GUARD|PAGE_NOACCESS))
-        || !(info.Protect&(PAGE_READWRITE|PAGE_WRITECOPY|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))) return false;
-    SIZE_T written=0;
-    return WriteProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address),&value,sizeof(T),&written) && written==sizeof(T);
-}
-
-// 验证地址落在可执行提交页；参数 address 为候选原生函数入口。
-bool IsExecutable(uintptr_t address) {
-    MEMORY_BASIC_INFORMATION info{};
-    return address && VirtualQuery(reinterpret_cast<const void*>(address),&info,sizeof(info))
-        && info.State==MEM_COMMIT && !(info.Protect&(PAGE_GUARD|PAGE_NOACCESS))
-        && (info.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY));
-}
-
 // 读取并核对已记录的 PE 构建标记；参数 base 为动态主程序基址。
 bool ValidatePeProfile(uintptr_t base) {
     IMAGE_DOS_HEADER dos{};
@@ -64,8 +38,7 @@ bool ValidatePeProfile(uintptr_t base) {
     if(!ReadAt(base,dos) || dos.e_magic!=IMAGE_DOS_SIGNATURE || dos.e_lfanew<=0
         || !ReadAt(base+static_cast<uintptr_t>(dos.e_lfanew),nt)) return false;
     return nt.Signature==IMAGE_NT_SIGNATURE && nt.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64
-        && nt.FileHeader.TimeDateStamp==build::kTimestamp
-        && nt.OptionalHeader.SizeOfImage==build::kImageSize;
+        && IsVerifiedBuild(nt);
 }
 
 // 对当前游戏可执行文件计算 SHA-256；参数 path 为主程序路径，digest 接收 64 个十六进制字符。
@@ -161,20 +134,20 @@ bool InvokeChoiceAtIndex(uintptr_t function,void* page,int32_t index) {
     bool invoked=false;
     bool restored=false;
     __try {
-        if(WriteValue(pageAddress+0x30,index)) {
+        if(WriteAt(pageAddress+0x30,index)) {
             __try {
                 reinterpret_cast<InitializeChoiceFunction>(function)(page,1);
                 invoked=true;
             }
             __finally {
-                restored=WriteValue(pageAddress+0x30,saved);
+                restored=WriteAt(pageAddress+0x30,saved);
             }
         }
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
-        restored=WriteValue(pageAddress+0x30,saved);
+        restored=WriteAt(pageAddress+0x30,saved);
     }
-    if(!restored) restored=WriteValue(pageAddress+0x30,saved);
+    if(!restored) restored=WriteAt(pageAddress+0x30,saved);
     return invoked && restored;
 }
 
