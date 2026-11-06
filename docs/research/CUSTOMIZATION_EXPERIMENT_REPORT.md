@@ -185,9 +185,11 @@ Mod 名称后缀 (-2)、(-6)、(-5)、(0) 不是 ID。已核对 All Skirts Lengt
 
 最关键的三组画面：
 
-- 仅写索引不同步：[部分失败图](../../artifacts/customization-research/20261029-controlled-index-155-during.png)。
-- 同分类：[定位图](../../artifacts/customization-research/20261029-controlled-native-choice-155.png)、[恢复图](../../artifacts/customization-research/20261029-controlled-native-choice-restored.png)。
-- 跨分类：[定位图](../../artifacts/customization-research/20261029-cross-category-target.png)、[恢复图](../../artifacts/customization-research/20261029-cross-category-restored.png)。
+- 仅写索引不同步：部分失败图 `20261029-controlled-index-155-during.png`。
+- 同分类：定位图 `20261029-controlled-native-choice-155.png`、恢复图 `20261029-controlled-native-choice-restored.png`。
+- 跨分类：定位图 `20261029-cross-category-target.png`、恢复图 `20261029-cross-category-restored.png`。
+
+以上截图留在本机，未随仓库公开。
 
 截图均实际打开检查。后台路径为PrintWindow，前台部分自动输入核查为GDI BitBlt，均不是D3D帧读取。带标题栏分支有底部裁切，核心分类、标题、卡片和大模型可见。图中内存不可见部分仍依赖独立字段，不以PNG存在宣称通过。
 

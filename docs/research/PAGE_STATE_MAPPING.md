@@ -239,16 +239,11 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
 | 文件 | 用途 |
 | --- | --- |
-| `artifacts/native-routing-research/page-stage-sampler-v2.js` | 七阶段菜单/对象采样 |
-| `artifacts/native-routing-research/rtti-vtables-v3.js` | 类名 → COL → 虚表反解 |
-| `artifacts/native-routing-research/scene-table-dump-v1.js` | 场景红黑树遍历 + 查表返回 |
-| `artifacts/native-routing-research/sibling-switch-v1.js` | L3 同层切换观测 |
-| `artifacts/native-routing-research/confirm-caller-v1.js` | confirm 调用栈 |
-| `artifacts/native-routing-research/readonly-page-watch-v1.js` | **零 hook 页面识别（待实机验证）** |
-| `artifacts/native-routing-research/dump-runtime-code-v1.js` | 运行时 rwx 页转储 |
-| `artifacts/native-routing-research/ghidra-scripts/DecompileAt.java` | 按地址反编译 |
-| `artifacts/native-routing-research/find_callers.py` | 静态搜 call 站点（结论：这两个函数是虚表分发，无直接调用点） |
-| `artifacts/native-routing-research/runtime-code/` | 三个运行时页快照（各 16KB） |
+| `scripts/research/page-stage-sampler-v2.js` | 七阶段菜单/对象采样（只读） |
+| `scripts/research/rtti-vtables-v3.js` | 类名 → COL → 虚表反解（只读） |
+| `scripts/research/readonly-page-watch-v1.js` | **零 hook 页面识别（待实机验证）** |
+
+仓库只收录这三个帮助理解方法的只读脚本。其余探针、Ghidra 输出和运行时页快照（游戏机器码）留在本机，不公开。
 
 配套文档：`NATIVE_SELECTION_METHODS.md`（歌曲定位）、`NATIVE_PAGE_ROUTING_HANDOFF.md`（本轮任务清单）、`CUSTOMIZATION_*`（服装定位历史实验）。
 

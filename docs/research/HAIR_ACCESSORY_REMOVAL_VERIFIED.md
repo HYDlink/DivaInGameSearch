@@ -53,6 +53,8 @@
 
 ## 可复用工具
 
+本节提到的研究脚本未随仓库公开，这里只记录当时的做法。
+
 - `scripts/research/item_methods_probe.js`新增`armremove`：经过来源／装备／record／回调绑定守卫，游戏线程帧末单次提交。无直接装备写入。`removalstate`只轮询已确认字段，避免重复读完整目录与无关指针邻域。
 - `scripts/research/run_removal_experiment.py`：`--mode compare`自然与注入对照并恢复**进入本轮时**的配置；`--mode remove`只卸除当前真实装备，保留卸除结果。每个部位单独运行，同轮一个Frida Session；退出会卸载并分离。
 - `--part`支持`hair/head/face/chest/back`。发型要求发型列表起点；道具允许从发型F3进入，再逐次验证Down切到指定部位。未实现任意游戏页面起点导航，这部分复用既有路由调度器。
