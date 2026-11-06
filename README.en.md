@@ -5,7 +5,7 @@ English · [简体中文](README.md)
 A search mod for *Hatsune Miku: Project DIVA Mega Mix+*. Press **Ctrl+F** in-game to search songs, modules, hairstyles and accessories, then jump straight to what you picked.
 
 
-![Song search panel](docs/images/search.png)
+![Song search panel](docs/images/search.en.png)
 
 ## Installation
 
@@ -26,7 +26,7 @@ To update, close the game and overwrite the folder. Skip `settings.ini` if you w
 
 You can only switch to items you already own. The mod never buys anything for you and never starts a song for you.
 
-![Module search panel](docs/images/modules.png)
+![Module search panel](docs/images/modules.en.png)
 
 ## Controls
 

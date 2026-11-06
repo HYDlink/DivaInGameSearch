@@ -4,6 +4,8 @@
 
 《初音未来 Project DIVA Mega Mix+》的搜索 Mod：在游戏里按 **Ctrl+F**，搜歌曲、服装、发型和道具，选中就跳过去。
 
+[演示视频](https://www.bilibili.com/video/BV1JMxm6YEsN)
+
 ![歌曲搜索界面](docs/images/search.png)
 
 ## 安装
