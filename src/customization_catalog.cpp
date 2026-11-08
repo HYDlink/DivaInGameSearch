@@ -10,26 +10,11 @@
 #include <sstream>
 #include <climits>
 #include <Windows.h>
-#include <wincrypt.h>
 
 namespace diva {
 namespace {
-// 参数 game 为游戏根目录；仅支持已核实构建的旧式平面名称映射。
-bool LegacyNameBuild(const fs::path& game) {
-    HCRYPTPROV provider=0;HCRYPTHASH hash=0;bool valid=false;
-    if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT)) return false;
-    if(CryptCreateHash(provider,CALG_SHA_256,0,0,&hash)) {
-        std::ifstream file(game/"DivaMegaMix.exe",std::ios::binary);char buffer[65536];bool okay=file.good();
-        while(file.read(buffer,sizeof(buffer)) || file.gcount()) if(!CryptHashData(hash,reinterpret_cast<const BYTE*>(buffer),static_cast<DWORD>(file.gcount()),0)) {okay=false;break;}
-        BYTE digest[32];DWORD size=32;
-        if(okay && file.eof() && CryptGetHashParam(hash,HP_HASHVAL,digest,&size,0)) {
-            const char* digits="0123456789ABCDEF";std::string text;for(auto byte:digest) {text+=digits[byte>>4];text+=digits[byte&15];}
-            valid=text=="6F4DF714C28515C93B3023E7D6DAFA9095DD8835F762D54DB1726FB8BC04504D";
-        }
-        CryptDestroyHash(hash);
-    }
-    CryptReleaseContext(provider,0);return valid;
-}
+// 语言表偏移核对门槛：参与比对的官方条目下限，以及日文表与实体表原名一致的最低百分比。
+constexpr size_t kLanguageOffsetMinimum=20,kLanguageOffsetPercent=90;
 // 参数 path 为文件系统路径，转换为可保存的UTF-8，不使用本机ANSI代码页。
 std::string PathText(const fs::path& path) {auto text=path.generic_u8string();return std::string(reinterpret_cast<const char*>(text.data()),text.size());}
 // 参数 text 为UTF-8路径字符串，保持中文目录可用。
@@ -335,22 +320,40 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
     for(const auto& root:roots) if(std::none_of(automatic.begin(),automatic.end(),[&](const auto& table){return table.source==root.id;})) {
         out.diagnostics.push_back("未检测到标准定制实体定义："+root.id+"；资源替换、PV引用或DLL动态注册需另行核查。");
     }
-    const bool legacyBuild=LegacyNameBuild(game);
     // 已核查的PC语言表中，官方模型使用ID+0x113，发型与道具使用ID+0x3a8；Mod名称随后按DML优先级覆盖。
-    if(legacyBuild && out.language.size()==2 && out.language.find_first_not_of("abcdefghijklmnopqrstuvwxyz")==std::string::npos) {
-        const auto suffix="rom/lang2/"+out.language+"/str_array.bin";
-        auto strings=ReadOfficialCpkEntries(game,home,suffix,out.diagnostics);
-        for(const auto& entry:strings) if(entry.internalPath=="rom_steam/"+suffix) {
-            const auto names=ReadCustomizationStrings(entry.entryData);
-            out.configurationKey+=entry.fingerprint+"\n";
-            for(auto& [key,item]:merged) if(item.definitionSource.starts_with("official:")) {
-                const int offset=key.kind==CustomizationKind::Module?0x113:0x3a8;
-                if(key.id>100000-offset) continue;
-                const auto name=names.find(key.id+offset);if(name==names.end()) continue;
+    // 用日文语言表逐条比对实体表原名（日文）来确认偏移适用于本机数据，再取界面语言对应的名称。
+    if(out.language.size()==2 && out.language.find_first_not_of("abcdefghijklmnopqrstuvwxyz")==std::string::npos) {
+        // 参数 kind 为定制种类；返回该种类在语言表中的ID偏移。
+        const auto offsetOf=[](CustomizationKind kind) {return kind==CustomizationKind::Module?0x113:0x3a8;};
+        // 参数 language 为语言目录代码；返回PC版语言表字符串与指纹，找不到时为空。
+        const auto readStrings=[&](const std::string& language)->std::optional<std::pair<std::map<int,std::string>,std::string>> {
+            const auto suffix="rom/lang2/"+language+"/str_array.bin";
+            for(const auto& entry:ReadOfficialCpkEntries(game,home,suffix,out.diagnostics)) if(entry.internalPath=="rom_steam/"+suffix) return std::pair{ReadCustomizationStrings(entry.entryData),entry.fingerprint};
+            return std::nullopt;
+        };
+        const auto localized=readStrings(out.language);
+        if(!localized || localized->first.empty()) out.diagnostics.push_back("未读取到官方定制语言表："+out.language+"；官方条目保留实体表原名。");
+        else {
+            out.configurationKey+=localized->second+"\n";
+            // 模型与定制道具分别核对；核对不通过的种类保留实体表原名，不贴错名称。
+            std::map<CustomizationKind,bool> trusted{{CustomizationKind::Module,false},{CustomizationKind::Accessory,false}};
+            const auto japanese=out.language=="jp"?localized:readStrings("jp");
+            if(!japanese || japanese->first.empty()) out.diagnostics.push_back("未读取到日文定制语言表，无法核对偏移；官方条目保留实体表原名。");
+            else for(auto& [kind,accepted]:trusted) {
+                size_t total=0,matched=0;
+                for(const auto& [key,item]:merged) if(key.kind==kind && item.definitionSource.starts_with("official:") && key.id<=100000-offsetOf(kind)) {
+                    const auto original=item.rawFields.find("name");if(original==item.rawFields.end() || original->second.empty()) continue;
+                    ++total;const auto name=japanese->first.find(key.id+offsetOf(kind));if(name!=japanese->first.end() && name->second==original->second) ++matched;
+                }
+                accepted=total>=kLanguageOffsetMinimum && matched*100>=total*kLanguageOffsetPercent;
+                out.diagnostics.push_back(std::string("官方")+(kind==CustomizationKind::Module?"模型":"定制道具")+"语言表偏移核对：日文一致 "+std::to_string(matched)+"/"+std::to_string(total)+(accepted?"，采用。":"，不足，保留实体表原名。"));
+            }
+            for(auto& [key,item]:merged) if(item.definitionSource.starts_with("official:") && trusted[key.kind]) {
+                if(key.id>100000-offsetOf(key.kind)) continue;
+                const auto name=localized->first.find(key.id+offsetOf(key.kind));if(name==localized->first.end()) continue;
                 item.namesByLanguage[out.language]=name->second;item.name=name->second;
             }
-            out.diagnostics.push_back("官方定制语言表："+out.language+"，有效字符串 "+std::to_string(names.size())+" 条。");
-            break;
+            out.diagnostics.push_back("官方定制语言表："+out.language+"，有效字符串 "+std::to_string(localized->first.size())+" 条。");
         }
     }
     std::set<CustomizationKey> named;
@@ -361,7 +364,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         auto strings=Config(root.path/"rom/lang2/mod_str_array.toml",out);
         // 已核实的旧式名称仅在精确来源、实体及COS对应时映射；绝不统一减275。
         auto legacy=merged.find({CustomizationKind::Module,997});
-        if(legacyBuild && root.modDirectory=="X Song Pack" && legacy!=merged.end() && legacy->second.definitionSource==root.id && legacy->second.cos=="COS_482") {
+        if(root.modDirectory=="X Song Pack" && legacy!=merged.end() && legacy->second.definitionSource==root.id && legacy->second.cos=="COS_482") {
             for(const auto* locale:{"cn","tw","fr","ge","it","kr","sp",""}) {
                 auto name=std::string(locale).empty()?strings["1272"].value<std::string>():strings[locale]["1272"].value<std::string>();
                 if(!name) continue;

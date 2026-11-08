@@ -20,7 +20,6 @@ namespace diva::native {
 namespace build {
 constexpr uint32_t kTimestamp=1666920875;
 constexpr uint32_t kImageSize=602353664;
-constexpr char kSha256[]="6F4DF714C28515C93B3023E7D6DAFA9095DD8835F762D54DB1726FB8BC04504D";
 }
 
 // 外层模式，即 ModeInfo::current。[MMS] PC 实测过 Game、Customize、MenuSwitch。

@@ -38,7 +38,6 @@ const diva::CustomizationItem& Find(const diva::CustomizationCatalog& catalog,in
 void AutomaticCatalog(const diva::fs::path& root) {
     using namespace diva;
     const auto home=root/"home",game=root/"game",mods=game/"mods";
-    Write(game/"DivaMegaMix.exe","不匹配的测试构建指纹");
     Write(game/"config.toml","enabled=true\nmods='mods'\npriority=['High','Disabled','LowBase','Low','X Song Pack']\n");
     Write(mods/"High/config.toml","name='重复显示名'\ninclude=['content']\n");
     Write(mods/"LowBase/config.toml","name='重复显示名'\ninclude=['.']\n");
@@ -70,7 +69,7 @@ void AutomaticCatalog(const diva::fs::path& root) {
         "cn.module.0='高优先级中文名'\ncn.module.1='高追加定义中文名'\nmodule.999='孤立补丁'\n");
     Write(mods/"Low/rom/lang2/mod_str_array.toml",
         "cn.module.0='低优先级中文名'\nen.module.0='English Alias'\n");
-    Write(mods/"X Song Pack/rom/lang2/mod_str_array.toml","1272='未授权旧式名称'\n");
+    Write(mods/"X Song Pack/rom/lang2/mod_str_array.toml","1272='X旧式名称'\n");
 
     // 同一高优先级追加归档也存在旧式解包登记；自动归档应取代这份重复表。
     Write(home/"dump/high/gm_module_id.bin",
@@ -118,8 +117,8 @@ void AutomaticCatalog(const diva::fs::path& root) {
     query.character=CustomizationCharacter::Teto;Check(SearchCustomization(catalog,query).empty(),"衍生角色仍作为独立游戏分类出现");
     query.character=CustomizationCharacter::Random;Check(SearchCustomization(catalog,query).empty(),"随机角色被展开为静态实体或全部服装");
 
-    query={};query.character.reset();query.text="未授权旧式名称";
-    Check(SearchCustomization(catalog,query).empty(),"未匹配已核实SHA的构建错误应用1272到997名称映射");
+    query={};query.character.reset();query.text="X旧式名称";auto legacyName=SearchCustomization(catalog,query);
+    Check(legacyName.size()==1 && catalog.items[legacyName[0]].key.id==997,"X Song Pack旧式1272名称未映射到997");
     query.text="997";auto legacyId=SearchCustomization(catalog,query);
     Check(legacyId.size()==1 && catalog.items[legacyId[0]].key.id==997,"X高ID实体自身的编号检索失败");
 }

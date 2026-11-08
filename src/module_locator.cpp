@@ -5,7 +5,6 @@
 #include "native_memory.h"
 
 #include <Windows.h>
-#include <wincrypt.h>
 #include <detours.h>
 #include <algorithm>
 #include <array>
@@ -39,40 +38,6 @@ bool ValidatePeProfile(uintptr_t base) {
         || !ReadAt(base+static_cast<uintptr_t>(dos.e_lfanew),nt)) return false;
     return nt.Signature==IMAGE_NT_SIGNATURE && nt.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64
         && IsVerifiedBuild(nt);
-}
-
-// 对当前游戏可执行文件计算 SHA-256；参数 path 为主程序路径，digest 接收 64 个十六进制字符。
-bool CalculateSha256(const wchar_t* path,std::string& digest) {
-    HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
-    if(file==INVALID_HANDLE_VALUE) return false;
-    HCRYPTPROV provider=0;
-    HCRYPTHASH hash=0;
-    bool ok=false;
-    if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT)) goto cleanup;
-    if(!CryptCreateHash(provider,CALG_SHA_256,0,0,&hash)) goto cleanup;
-    {
-        std::array<BYTE,64*1024> buffer{};
-        for(;;) {
-            DWORD read=0;
-            if(!ReadFile(file,buffer.data(),static_cast<DWORD>(buffer.size()),&read,nullptr)) goto cleanup;
-            if(!read) break;
-            if(!CryptHashData(hash,buffer.data(),read,0)) goto cleanup;
-        }
-    }
-    {
-        std::array<BYTE,32> bytes{};
-        DWORD size=static_cast<DWORD>(bytes.size());
-        if(!CryptGetHashParam(hash,HP_HASHVAL,bytes.data(),&size,0) || size!=bytes.size()) goto cleanup;
-        static constexpr char digits[]="0123456789ABCDEF";
-        digest.clear();digest.reserve(64);
-        for(BYTE byte:bytes) { digest.push_back(digits[byte>>4]);digest.push_back(digits[byte&0x0F]); }
-        ok=true;
-    }
-cleanup:
-    if(hash) CryptDestroyHash(hash);
-    if(provider) CryptReleaseContext(provider,0);
-    CloseHandle(file);
-    return ok;
 }
 
 // 核对固定 RVA 的指令形状并允许同一指令中的相对调用地址变化；参数 base 为动态主程序基址。
@@ -321,13 +286,6 @@ bool ModuleLocator::Initialize(uintptr_t base) {
     status_.phase=ModuleLocatePhase::Disabled;
     status_.message=Tr(Tx::modloc_validating);
     if(!base || !ValidatePeProfile(base)) { status_.message=Tr(Tx::modloc_pe_mismatch);return false; }
-    wchar_t executablePath[32768]{};
-    DWORD pathLength=GetModuleFileNameW(nullptr,executablePath,static_cast<DWORD>(std::size(executablePath)));
-    if(!pathLength || pathLength>=std::size(executablePath)) { status_.message=Tr(Tx::modloc_path_failed);return false; }
-    std::string digest;
-    if(!CalculateSha256(executablePath,digest) || digest!=build::kSha256) {
-        status_.message=Tr(Tx::modloc_hash_mismatch);return false;
-    }
     if(!ValidateNativeSignatures(base)) { status_.message=Tr(Tx::modloc_signature_mismatch);return false; }
     base_=base;choiceFunction_=base+rva::kSceneModuleInitChoice;categoryFunction_=base+rva::kSceneModuleMoveCategory;
     g_originalModuleFrame=reinterpret_cast<ModuleFrameFunction>(base+rva::kSceneModuleFrame);
