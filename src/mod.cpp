@@ -171,7 +171,7 @@ __declspec(dllexport) void Init() {
         } else diva::SubmitSongNavigation(request,available,message);
         diva::App().view.status=message;Log(message);
     };
-    Log("已初始化原生搜索 1.2.4，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
+    Log("已初始化原生搜索 1.2.5，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
 }
 // 所有 Mod 完成 Init 后再安装链式输入隔离。
 __declspec(dllexport) void PostInit() {
