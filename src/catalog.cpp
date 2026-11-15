@@ -88,9 +88,8 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
         if(!cfg["enabled"].value_or(true)) continue;
         if(auto dlls=cfg["dll"].as_array()) for(auto& dll:*dlls) if(Normalize(dll.value_or<std::string>(""))=="newclassics.dll") ncEnabled=true;
         auto name=cfg["name"].value_or(Utf8(path.filename().wstring()));
-        // 仅识别已核对的中文歌词包；其可选歌名表不参与游戏 PVDB 覆盖。
-        if(name=="Chinese lyrics Base" || name=="Chinese lyrics DLC" ||
-           name=="Chinese lyrics Restore Cut Songs" || name=="Chinese lyrics F2 Pack" || name=="Chinese lyrics X Pack") {
+        // 歌词包的可选歌名表 use_song_name 只作检索别名，不参与游戏 PVDB 覆盖；按目录识别，不依赖包名。
+        if(fs::is_directory(path/"use_song_name")) {
             for(const auto& region:{"rom_steam_cn","rom_steam_tw"}) for(const auto& file:{"pv_db.txt","mdata_pv_db.txt","mod_pv_db.txt"}) {
                 auto translated=path/"use_song_name"/region/"rom"/file;
                 Fingerprint(translated,out.configurationKey);

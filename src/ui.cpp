@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <sstream>
+#include <cmath>
+#include <cfloat>
 
 namespace diva {
 // 在后台生成独立快照，不持有界面状态引用。
@@ -199,15 +202,62 @@ void View::ReloadStyle() {
         auto key=line.substr(0,eq),value=line.substr(eq+1);
         try {
             if(key=="shortcut_vk") shortcut=std::stoi(value,nullptr,0);
-            if(key=="row_height") rowHeight=std::clamp(std::stof(value),56.0f,100.0f);
+            if(key=="row_height") rowHeight=std::clamp(std::stof(value),44.0f,100.0f);
             if(key=="opacity") opacity=std::clamp(std::stof(value),0.7f,1.0f);
             if(key=="font_size") { float size=std::clamp(std::stof(value),16.0f,26.0f); if(size!=fontSize) { fontSize=size; fontDirty=true; } }
             if(key=="close_on_success") closeOnSuccess=std::stoi(value)!=0;
+            if(key=="ui_theme") {
+                std::string themeName;std::istringstream(value)>>themeName;
+                if(const auto theme=ParseUiTheme(themeName); theme && *theme!=CurrentUiTheme()) {SetUiTheme(*theme);styleDirty=true;}
+            }
+            if(key=="ui_color_output") {
+                std::string outputMode;std::istringstream(value)>>outputMode;
+                if(outputMode=="auto" || outputMode=="sdr" || outputMode=="hdr10" || outputMode=="scrgb") uiOutputMode=outputMode;
+            }
+            if(key=="ui_white_nits") {
+                std::string whiteValue;std::istringstream(value)>>whiteValue;
+                if(whiteValue=="auto") uiWhiteNits=0;
+                else {
+                    const float nits=std::stof(whiteValue);
+                    if(std::isfinite(nits)) uiWhiteNits=std::clamp(nits,80.0f,400.0f);
+                }
+            }
         } catch(...) {}
     }
     if(shortcut==0x47 || shortcut==0x4C || shortcut==0x53) { shortcut=0x46; status=Tr(Tx::song_status_hotkey_conflict); }
 }
-// 按界面语言选择字体并建立青绿色主色调；参数 size 为基准字号。
+// 参数 path/key/value 为配置文件、键和新值；替换唯一的同名行，没有时追加到末尾，保留其他行与换行风格。
+// 只在后台执行器调用，写入临时文件后替换，避免写到一半的配置。
+static bool WriteSettingValue(const fs::path& path,const std::string& key,const std::string& value) {
+    std::string text;
+    {std::ifstream in(path,std::ios::binary);text.assign(std::istreambuf_iterator<char>(in),{});}
+    const std::string newline=text.find("\r\n")!=std::string::npos?"\r\n":"\n";
+    std::string out;bool replaced=false;size_t start=0;
+    while(start<text.size()) {
+        size_t end=text.find('\n',start);const bool last=end==std::string::npos;if(last) end=text.size();
+        std::string line=text.substr(start,end-start);if(!line.empty() && line.back()=='\r') line.pop_back();
+        if(line.starts_with(key+"=")) {if(replaced){start=end+1;continue;}line=key+"="+value;replaced=true;}
+        out+=line;if(!last) out+=newline;
+        start=end+1;
+    }
+    if(!replaced) {if(!out.empty() && !out.ends_with("\n")) out+=newline;out+=key+"="+value+newline;}
+    const auto temporary=fs::path(path).concat(L".tmp");
+    {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);file<<out;if(!file) return false;}
+    std::error_code error;fs::rename(temporary,path,error);return !error;
+}
+void View::ToggleTheme() {
+    const auto next=CurrentUiTheme()==UiTheme::Pearl?UiTheme::Classic:UiTheme::Pearl;
+    SetUiTheme(next);styleDirty=true;
+    themeSave=searchExecutor->Submit([path=home/"settings.ini",value=std::string(UiThemeName(next))] {
+        return WriteSettingValue(path,"ui_theme",value);
+    });
+}
+// 按界面语言选择字体并套用当前界面主题；参数 size 为基准字号。
+// 难度色块专用字体：微软雅黑 UI 的数字，按 19px 正文时为 20px，与参照图一致；当前难度改用同字号的粗体。未找到时回退正文字体。
+static ImFont* difficultyFont=nullptr;
+static ImFont* difficultyBoldFont=nullptr;
+// 歌曲表难度与 PVID 列名专用字体：微软雅黑 UI，按 19px 正文时为 17px；按实际字号栅格化，不靠缩放，字形底部不会被吃掉。
+static ImFont* headerFont=nullptr;
 void SetupStyle(float size) {
     auto& io=ImGui::GetIO(); io.IniFilename=nullptr; io.LogFilename=nullptr;
     // 下拉框弹层内用方向键选择；搜索框内方向键由列表统一处理。
@@ -233,55 +283,40 @@ void SetupStyle(float size) {
             io.Fonts->AddFontFromFileTTF(Utf8(yahei.wstring()).c_str(),size,&merge,ranges.Data);
         }
     }
-    auto& s=ImGui::GetStyle(); ImGui::StyleColorsDark();
-    s.WindowPadding={24,18}; s.FramePadding={12,8}; s.ItemSpacing={10,10}; s.WindowRounding=12; s.FrameRounding=5;
-    s.CellPadding={10,7}; s.ScrollbarSize=12;
-    s.Colors[ImGuiCol_Text]={0.91f,0.93f,0.94f,1};
-    s.Colors[ImGuiCol_TextDisabled]={0.53f,0.57f,0.61f,1};
-    s.Colors[ImGuiCol_WindowBg]={0.065f,0.073f,0.086f,1};
-    s.Colors[ImGuiCol_ChildBg]={0,0,0,0};
-    s.Colors[ImGuiCol_PopupBg]={0.095f,0.107f,0.123f,1};
-    s.Colors[ImGuiCol_TitleBg]={0.085f,0.096f,0.11f,1};
-    s.Colors[ImGuiCol_TitleBgActive]=s.Colors[ImGuiCol_TitleBg];
-    s.Colors[ImGuiCol_Border]={0.22f,0.25f,0.28f,0.7f};
-    s.Colors[ImGuiCol_Separator]={0.22f,0.25f,0.28f,0.7f};
-    s.Colors[ImGuiCol_FrameBg]={0.12f,0.137f,0.157f,1};
-    s.Colors[ImGuiCol_FrameBgHovered]={0.17f,0.20f,0.22f,1};
-    s.Colors[ImGuiCol_FrameBgActive]={0.18f,0.23f,0.25f,1};
-    s.Colors[ImGuiCol_Header]={0.18f,0.29f,0.29f,1};
-    s.Colors[ImGuiCol_HeaderHovered]={0.21f,0.34f,0.33f,1};
-    s.Colors[ImGuiCol_HeaderActive]={0.22f,0.39f,0.36f,1};
-    s.Colors[ImGuiCol_Button]={0.15f,0.175f,0.195f,1};
-    s.Colors[ImGuiCol_ButtonHovered]={0.22f,0.27f,0.29f,1};
-    s.Colors[ImGuiCol_ButtonActive]={0.22f,0.35f,0.33f,1};
-    s.Colors[ImGuiCol_CheckMark]={0.42f,0.88f,0.76f,1};
-    s.Colors[ImGuiCol_SliderGrab]=s.Colors[ImGuiCol_CheckMark];
-    s.Colors[ImGuiCol_NavHighlight]=s.Colors[ImGuiCol_CheckMark];
-    s.Colors[ImGuiCol_ScrollbarBg]={0,0,0,0};
-    s.Colors[ImGuiCol_ScrollbarGrab]={0.25f,0.29f,0.32f,1};
-    s.Colors[ImGuiCol_TableHeaderBg]={0.105f,0.12f,0.14f,1};
-    s.Colors[ImGuiCol_TableRowBgAlt]={1,1,1,0.025f};
+    // msyh.ttc 第 2 个字体为微软雅黑 UI；只收录数字和占位破折号，图集开销很小。
+    difficultyFont=difficultyBoldFont=headerFont=nullptr;
+    if(fs::exists(yahei)) {
+        static ImVector<ImWchar> digits;
+        if(digits.empty()) {ImFontGlyphRangesBuilder digitBuilder;digitBuilder.AddText("0123456789.—");digitBuilder.BuildRanges(&digits);}
+        // 单独栅格化时笔画偏细，略微加深以接近系统 ClearType 下的观感。
+        ImFontConfig config;config.FontNo=1;config.RasterizerMultiply=1.15f;
+        const float digitSize=std::round(size*20.0f/19.0f);
+        difficultyFont=io.Fonts->AddFontFromFileTTF(Utf8(yahei.wstring()).c_str(),digitSize,&config,digits.Data);
+        if(const auto bold=fonts/"msyhbd.ttc";fs::exists(bold))
+            difficultyBoldFont=io.Fonts->AddFontFromFileTTF(Utf8(bold.wstring()).c_str(),digitSize,&config,digits.Data);
+        // 列名只有固定英文，收录基本拉丁字符即可。
+        ImFontConfig header;header.FontNo=1;
+        headerFont=io.Fonts->AddFontFromFileTTF(Utf8(yahei.wstring()).c_str(),std::round(size*17.0f/19.0f),&header,io.Fonts->GetGlyphRangesDefault());
+    }
+    ApplyUiTheme(ImGui::GetStyle());
 }
 // 参数 label/selected/width 为分段名称、当前状态和宽度；保留原生按钮的键盘导航与焦点描边。
 static bool SearchSegment(const char* label,bool selected,float width) {
-    ImGui::PushStyleColor(ImGuiCol_Button,selected?ImVec4(0.20f,0.32f,0.30f,1):ImVec4(0.105f,0.12f,0.14f,1));
-    ImGui::PushStyleColor(ImGuiCol_Text,selected?ImVec4(0.63f,0.97f,0.86f,1):ImVec4(0.66f,0.71f,0.75f,1));
     // 译文较长时加宽按钮；中文标签不会超过传入的基准宽度。
-    const bool pressed=ImGui::Button(label,{std::max(width,ImGui::CalcTextSize(label,nullptr,true).x+28),36});
-    if(selected) {
-        auto min=ImGui::GetItemRectMin(),max=ImGui::GetItemRectMax();
-        ImGui::GetWindowDrawList()->AddRectFilled({min.x+14,max.y-3},{max.x-14,max.y-1},IM_COL32(107,224,194,255),1);
-    }
-    ImGui::PopStyleColor(2);return pressed;
+    return ThemedTabButton(label,selected,{std::max(width,ImGui::CalcTextSize(label,nullptr,true).x+28),36});
 }
 // 在固定宽度中省略长标题；参数 text/width 为文本与最大像素宽度。
-static void ClippedText(const std::string& text,float width) {
-    if(ImGui::CalcTextSize(text.c_str()).x<=width) { ImGui::TextUnformatted(text.c_str()); return; }
-    std::string clipped=text;
-    while(!clipped.empty() && ImGui::CalcTextSize((clipped+"…").c_str()).x>width) {
-        size_t i=clipped.size()-1; while(i>0 && ((unsigned char)clipped[i]&0xC0)==0x80) --i; clipped.resize(i);
+// 参数 bold 为真时轻微叠绘加粗，用于选中行曲名。
+static void ClippedText(const std::string& text,float width,bool bold=false) {
+    std::string shown=text;
+    if(ImGui::CalcTextSize(text.c_str()).x>width) {
+        while(!shown.empty() && ImGui::CalcTextSize((shown+"…").c_str()).x>width) {
+            size_t i=shown.size()-1; while(i>0 && ((unsigned char)shown[i]&0xC0)==0x80) --i; shown.resize(i);
+        }
+        shown+="…";
     }
-    ImGui::TextUnformatted((clipped+"…").c_str());
+    ImGui::TextUnformatted(shown.c_str());
+    if(bold) {auto min=ImGui::GetItemRectMin();ImGui::GetWindowDrawList()->AddText({min.x+0.7f,min.y},ImGui::GetColorU32(ImGuiCol_Text),shown.c_str());}
 }
 // 绘制行首分组标签，以轻微叠绘加粗并突出操作类别；参数 text 为含冒号的中文标签。
 static void ControlGroupLabel(const char* text) {
@@ -302,7 +337,9 @@ void View::Draw() {
     ImGui::SetNextWindowSize({std::min(1280.0f,display.x-24),std::min(860.0f,display.y-24)},ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos({display.x/2,display.y/2},ImGuiCond_FirstUseEver,{0.5f,0.5f});
     ImGui::SetNextWindowBgAlpha(opacity);
-    if(!ImGui::Begin((std::string(Tr(Tx::app_title))+"###DivaSearch").c_str(),&open,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoSavedSettings)) { ImGui::End(); return; }
+    std::string windowName;
+    if(!ImGui::Begin(ThemedWindowName(Tr(Tx::app_title),windowName),&open,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoSavedSettings)) { ImGui::End(); return; }
+    DrawThemedWindowFrame(Tr(Tx::app_title));
     // 外部左键关闭搜索；下拉弹层与输入法候选仍先处理自身输入，宿主保留本次鼠标释放隔离。
     if(ImGui::GetCurrentWindow()->WasActive && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !composing && !imeGuard
         && !ImGui::GetCurrentWindow()->Rect().Contains(ImGui::GetIO().MousePos)
@@ -311,10 +348,19 @@ void View::Draw() {
     }
     if(tabMove && !composing && !imeGuard) {const int step=tabMove;tabMove=0;CycleMode(step);}
     // 模型、发型、自定义道具是原生自定义父页下的三个同级入口，搜索面板分别保存条件；性能诊断不面向玩家开放。
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX()+ThemedTabOverhang(36));
     if(SearchSegment((std::string(Tr(Tx::tab_songs))+"##领域").c_str(),mode==SearchMode::Songs,100)) SetMode(SearchMode::Songs);
     ImGui::SameLine(0,4); if(SearchSegment((std::string(Tr(Tx::tab_modules))+"##领域").c_str(),mode==SearchMode::Modules,100)) SetMode(SearchMode::Modules);
     ImGui::SameLine(0,4); if(SearchSegment((std::string(Tr(Tx::tab_hair))+"##领域").c_str(),mode==SearchMode::Hair,100)) SetMode(SearchMode::Hair);
     ImGui::SameLine(0,4); if(SearchSegment((std::string(Tr(Tx::tab_accessories))+"##领域").c_str(),mode==SearchMode::Accessories,128)) SetMode(SearchMode::Accessories);
+    // 主题切换靠右放在标签行，显示当前主题；空间不足时紧跟最后一个标签。
+    {
+        const std::string label=Trf(Tx::tab_theme,{{"name",Tr(CurrentUiTheme()==UiTheme::Pearl?Tx::tab_theme_pearl:Tx::tab_theme_classic)}})+"###theme-toggle";
+        const float width=ImGui::CalcTextSize(label.c_str(),nullptr,true).x+40;
+        ImGui::SameLine(0,12);ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),ImGui::GetWindowContentRegionMax().x-width));
+        if(ThemedSecondaryButton(label.c_str(),{width,36})) ToggleTheme();
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s",Tr(Tx::tab_theme_tip));
+    }
     ImGui::Spacing();ImGui::Separator();ImGui::Spacing();
     if(mode!=SearchMode::Songs) {
         customization.EnsureLoaded(home,game); customization.composing=composing;
@@ -374,7 +420,7 @@ void View::Draw() {
     // Enter 跳过防抖，但仍不等待后台；查询完成后才提交最新结果。
     if(requestEnter) queryDue=std::chrono::steady_clock::time_point{};
     Poll();
-    ImGui::Separator(); ImGui::TextColored(SearchResultTextColor,"%s",(Trf(Tx::song_results,{{"count",std::to_string(results.size())}})+(SearchPending()?Tr(Tx::song_searching):"")+"  ·  "+(composing?Tr(Tx::song_composing):Tr(Tx::song_key_hints))).c_str());
+    ImGui::Separator(); ImGui::TextColored(SearchResultTextColor(),"%s",(Trf(Tx::song_results,{{"count",std::to_string(results.size())}})+(SearchPending()?Tr(Tx::song_searching):"")+"  ·  "+(composing?Tr(Tx::song_composing):Tr(Tx::song_key_hints))).c_str());
     Navigate();
     if(requestEscape && !composing) { open=false; requestEnter=false; }
     if(requestEnter && !composing && catalog && !SearchPending()) {
@@ -394,67 +440,128 @@ void View::Draw() {
     float width=ImGui::GetContentRegionAvail().x;
     if(songListWidth!=width) {ResetSongBodyClick();songListWidth=width;}
     bool songBodyHit=false;
-    float diffWidth=std::clamp(width*0.073f,64.0f,92.0f);
+    // 难度为紧凑扁色块，按 19px 字号时 68×33、块间空隙 12px，随字号等比缩放；行高与曲名排版不变。
+    const float unit=ImGui::GetFontSize()/19.0f;
+    const ImVec2 chip(std::round(68*unit),std::round(33*unit));
+    const ImVec2 cellPadding(std::round(6*unit),std::round(6*unit));
+    const float diffWidth=chip.x;
+    // 按参照图：曲名列左侧内缩 10px；PVID 列与前一色块之间共 72px，数字在这段里居中，表格右侧不再另留边距。
+    const float nameInset=std::round(10*unit);
+    const float pvidWidth=std::round(72*unit)-cellPadding.x*2;
+    const float headerHeight=std::round(40*unit);
+    // 参数 width 为文字宽度；返回 PVID 列中文字左端，居中范围包含左侧列间空隙。
+    const auto pvidTextX=[&](float width){return ImGui::GetCursorScreenPos().x-cellPadding.x*2+std::round((pvidWidth+cellPadding.x*2-width)*0.5f);};
+    // 曲名两行之间留 4px，字形间距与参照图一致；行高不低于两行文字加单元格内边距，避免玩家配置过小时文字重叠。
+    const float lineGap=std::round(4*unit);
+    // 第二行（别名 · 来源）与曲名同字号，信息同等重要。
+    const float nameBlock=ImGui::GetTextLineHeight()*2+lineGap;
+    const float songRow=std::max(rowHeight,nameBlock+cellPadding.y*2);
+    const float cellContent=songRow-cellPadding.y*2;
     // 结果由搜索框方向键操作，不进入键盘焦点。
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav,true);
     const bool playlistSongOnly=songLocateWithoutChart && songLocateWithoutChart();
-    if(ImGui::BeginTable("歌曲列表",7,ImGuiTableFlags_ScrollY|ImGuiTableFlags_RowBg|ImGuiTableFlags_BordersInnerH, {0,ImGui::GetContentRegionAvail().y-62})) {
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,cellPadding);
+    const bool tableOpen=ImGui::BeginTable("歌曲列表",7,ImGuiTableFlags_ScrollY|ImGuiTableFlags_RowBg|ImGuiTableFlags_BordersInnerH, {0,ImGui::GetContentRegionAvail().y-62});
+    ImGui::PopStyleVar();
+    if(tableOpen) {
         const float scroll=ImGui::GetScrollY();
         if(songListScroll!=scroll || ImGui::GetIO().MouseWheel!=0) ResetSongBodyClick();
         songListScroll=scroll;
         ImGui::TableSetupColumn(Tr(Tx::song_column_name),ImGuiTableColumnFlags_WidthStretch);
         const char* headers[]={"EASY","NORMAL","HARD","EXTREME","EX EXT"};
         for(int d=0;d<5;++d) ImGui::TableSetupColumn(headers[d],ImGuiTableColumnFlags_WidthFixed,diffWidth);
-        ImGui::TableSetupColumn("PVID",ImGuiTableColumnFlags_WidthFixed,78); ImGui::TableSetupScrollFreeze(0,1); ImGui::TableHeadersRow();
-        ImGuiListClipper clipper; clipper.Begin((int)results.size(),rowHeight);
+        ImGui::TableSetupColumn("PVID",ImGuiTableColumnFlags_WidthFixed,pvidWidth); ImGui::TableSetupScrollFreeze(0,1);
+        // 自绘表头：加高并让难度与 PVID 列名居中，曲名列与正文同样内缩；各列名与正文同字号。
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers,headerHeight);
+        for(int column=0;column<7;++column) {
+            ImGui::TableSetColumnIndex(column);ImGui::PushID(column);
+            const char* name=ImGui::TableGetColumnName(column);
+            const ImVec2 at=ImGui::GetCursorScreenPos();const float available=ImGui::GetContentRegionAvail().x;
+            ImGui::TableHeader("##表头");
+            ImFont* font=column && headerFont?headerFont:ImGui::GetFont();
+            const ImVec2 size=font->CalcTextSizeA(font->FontSize,FLT_MAX,0,name);
+            const float x=column==0?at.x+nameInset:column==6?pvidTextX(size.x):at.x+(available-size.x)*0.5f;
+            ImGui::GetWindowDrawList()->AddText(font,font->FontSize,{std::round(x),std::round(at.y+(headerHeight-cellPadding.y*2-size.y)*0.5f)},ImGui::GetColorU32(Palette().songMetaText),name);
+            ImGui::PopID();
+        }
+        ImGuiListClipper clipper; clipper.Begin((int)results.size(),songRow);
         // 键盘选中在裁剪范围外时先滚动到目标行，下帧由裁剪器绘制。
         if(scrollSelection) for(size_t i=0;i<results.size();++i) if(catalog->songs[results[i].index].id==selectedId) {
-            float top=(float)i*rowHeight,bottom=top+rowHeight;
+            float top=(float)i*songRow,bottom=top+songRow;
             float scroll=ImGui::GetScrollY(),visible=ImGui::GetWindowHeight()-ImGui::GetFrameHeightWithSpacing();
             if(top<scroll) ImGui::SetScrollY(top);
             else if(bottom>scroll+visible) ImGui::SetScrollY(std::max(0.0f,bottom-visible));
         }
         while(clipper.Step()) for(int row=clipper.DisplayStart;row<clipper.DisplayEnd;++row) {
             const auto& song=catalog->songs[results[row].index]; ImGui::PushID(song.id);
-            ImGui::TableNextRow(0,rowHeight); if(song.id==selectedId) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,IM_COL32(41,63,62,255));
+            ImGui::TableNextRow(0,songRow); if(song.id==selectedId) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,Palette().songSelectedRow);
             ImGui::TableSetColumnIndex(0); auto pos=ImGui::GetCursorScreenPos();
-            auto nameWidth=ImGui::GetContentRegionAvail().x;
-            ImGui::InvisibleButton("名称",{nameWidth,rowHeight-16});
+            // 珍珠白主题在选中行首加初音青指示条；深色主题的指示色透明，不绘制。
+            if(song.id==selectedId && (Palette().songSelectedIndicator>>IM_COL32_A_SHIFT)) {
+                const auto padding=cellPadding;
+                const ImVec2 barMin(pos.x-padding.x,pos.y-padding.y),barMax(barMin.x+4,barMin.y+songRow);
+                // 表格单元格裁剪不含左内边距，单独放开到指示条范围。
+                ImGui::PushClipRect(barMin,barMax,false);
+                ImGui::GetWindowDrawList()->AddRectFilled(barMin,barMax,Palette().songSelectedIndicator);
+                ImGui::PopClipRect();
+            }
+            ImGui::InvisibleButton("名称",{ImGui::GetContentRegionAvail().x,cellContent});
+            const float nameWidth=ImGui::GetItemRectSize().x-nameInset;
             if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 songBodyHit=true;ClickSongBody(song);
             }
-            bool hovered=ImGui::IsItemHovered(); ImGui::SetCursorScreenPos(pos);
-            ClippedText(SongDisplayTitle(song),nameWidth);
-            ImGui::PushStyleColor(ImGuiCol_Text,SearchSecondaryTextColor);
+            // 曲名与别名两行作为一个整体在行内垂直居中；中日文字形在行框里偏下约 1px，上移后视觉居中。
+            bool hovered=ImGui::IsItemHovered(); ImGui::SetCursorScreenPos({pos.x+nameInset,pos.y+std::round((cellContent-nameBlock)*0.5f-unit)});
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{ImGui::GetStyle().ItemSpacing.x,lineGap});
+            ImGui::PushStyleColor(ImGuiCol_Text,Palette().songTitleText);
+            ClippedText(SongDisplayTitle(song),nameWidth,song.id==selectedId);
+            ImGui::PopStyleColor(); ImGui::PushStyleColor(ImGuiCol_Text,Palette().songAliasText);
             // 英文界面的主标题已是英文名，第二行改为原名。
             auto alias=PrefersEnglishTitles()?song.name:song.aliases.empty()?song.english:song.aliases;
             if(auto separator=alias.find('|');separator!=std::string::npos) alias.resize(separator);
             if(alias==SongDisplayTitle(song)) alias.clear();
-            ClippedText((alias.empty()?"":alias+" · ")+song.source,nameWidth); ImGui::PopStyleColor();
+            ImGui::SetCursorScreenPos({pos.x+nameInset,ImGui::GetCursorScreenPos().y});
+            ClippedText((alias.empty()?"":alias+" · ")+song.source,nameWidth);
+            ImGui::PopStyleColor(); ImGui::PopStyleVar();
             if(hovered) {
                 ImGui::BeginTooltip(); ImGui::TextUnformatted(song.name.c_str()); ImGui::TextUnformatted(song.english.c_str()); ImGui::TextUnformatted(song.reading.c_str()); ImGui::TextUnformatted(song.aliases.c_str());
                 for(const auto& p:song.sources) ImGui::TextUnformatted(Trf(Tx::song_tooltip_source,{{"source",p}}).c_str()); ImGui::EndTooltip();
             }
             for(int d=0;d<5;++d) {
                 ImGui::TableSetColumnIndex(d+1); const auto& c=song.charts[query.style][d];
-                ImGui::PushID(d); ImGui::PushStyleColor(ImGuiCol_Text,colors[d]);
+                ImGui::PushID(d);
                 // 难度按钮使用独立不透明底色和彩色边框，避免被选中行的青绿色底色淹没。
-                const auto& tint=colors[d];
-                ImGui::PushStyleColor(ImGuiCol_Button,{0.09f+tint.x*0.06f,0.10f+tint.y*0.06f,0.14f+tint.z*0.06f,1});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,{0.16f+tint.x*0.18f,0.17f+tint.y*0.18f,0.21f+tint.z*0.18f,1});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,{0.20f+tint.x*0.25f,0.21f+tint.y*0.25f,0.25f+tint.z*0.25f,1});
-                ImGui::PushStyleColor(ImGuiCol_Border,{tint.x,tint.y,tint.z,c.available?0.65f:0.15f});
+                const auto tint=DifficultyButtonColors(d,colors[d],c.available);
+                ImGui::PushStyleColor(ImGuiCol_Text,tint.text);
+                ImGui::PushStyleColor(ImGuiCol_Button,tint.bg);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,tint.hovered);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,tint.active);
+                ImGui::PushStyleColor(ImGuiCol_Border,tint.border);
                 bool selected=song.id==selectedId && d==currentDifficulty;
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,selected?3.0f:1.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,selected?2.0f:1.0f);
                 char label[40]; if(c.available) snprintf(label,sizeof(label),"%.1f",c.level); else snprintf(label,sizeof(label),"—");
                 ImGui::BeginDisabled(!c.available && !playlistSongOnly);
-                if(ImGui::Button(label,{diffWidth-8,rowHeight-20})) Locate(song,d,SongOrigin::DifficultyButton);
-                ImGui::EndDisabled(); ImGui::PopStyleVar(); ImGui::PopStyleColor(5);
+                ImGui::SetCursorScreenPos({ImGui::GetCursorScreenPos().x+(ImGui::GetContentRegionAvail().x-chip.x)*0.5f,pos.y+(cellContent-chip.y)*0.5f});
+                // 扁色块高度只比字高多一点，去掉上下内边距，数字才能居中。
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{0,0});
+                if(ImGui::Button("##难度",chip)) Locate(song,d,SongOrigin::DifficultyButton);
+                {
+                    // 数字用难度专用字体自绘居中；当前难度换粗体。
+                    ImFont* font=selected && difficultyBoldFont?difficultyBoldFont:difficultyFont?difficultyFont:ImGui::GetFont();
+                    const ImVec2 min=ImGui::GetItemRectMin(),size=font->CalcTextSizeA(font->FontSize,FLT_MAX,0,label);
+                    const ImVec2 at(std::round(min.x+(chip.x-size.x)*0.5f),std::round(min.y+(chip.y-size.y)*0.5f));
+                    auto* draw=ImGui::GetWindowDrawList();const ImU32 color=ImGui::GetColorU32(ImGuiCol_Text);
+                    draw->AddText(font,font->FontSize,at,color,label);
+                }
+                ImGui::EndDisabled(); ImGui::PopStyleVar(2); ImGui::PopStyleColor(5);
                 if(!playlistSongOnly && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::BeginTooltip(); ImGui::TextUnformatted(c.available?c.source.c_str():Tr(Tx::song_no_chart_style)); if(c.available) ImGui::TextUnformatted(c.script.c_str()); ImGui::EndTooltip();
                 } ImGui::PopID();
             }
-            ImGui::TableSetColumnIndex(6); ImGui::Text("%04d",song.id); ImGui::PopID();
+            ImGui::TableSetColumnIndex(6);
+            {char pvid[16];snprintf(pvid,sizeof(pvid),"%04d",song.id);
+             ImGui::SetCursorScreenPos({pvidTextX(ImGui::CalcTextSize(pvid).x),pos.y+(cellContent-ImGui::GetTextLineHeight())*0.5f});}
+            ImGui::TextColored(Palette().songMetaText,"%04d",song.id); ImGui::PopID();
         }
         ImGui::EndTable();
     }

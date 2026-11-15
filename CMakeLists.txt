@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(DivaInGameSearch VERSION 1.2.5 LANGUAGES CXX)
+project(DivaInGameSearch VERSION 1.3.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -25,11 +25,11 @@ add_custom_command(OUTPUT ${I18N_OUT}/i18n_keys.h ${I18N_OUT}/i18n_data.inc
   DEPENDS I18nGen ${I18N_LOCALES})
 add_custom_target(i18n_generated DEPENDS ${I18N_OUT}/i18n_keys.h ${I18N_OUT}/i18n_data.inc)
 add_library(search_core STATIC src/core.cpp src/i18n.cpp src/catalog.cpp src/selector.cpp
-  src/customization.cpp src/customization_catalog.cpp src/recommendation.cpp src/recommendation_runtime.cpp src/farc.cpp src/sprite_resolver.cpp src/module_assets.cpp third_party/vendor/miniz/miniz_tinfl.cpp)
+  src/customization.cpp src/customization_catalog.cpp src/customization_names.cpp src/user_module_names.cpp src/recommendation.cpp src/recommendation_runtime.cpp src/farc.cpp src/sprite_resolver.cpp src/module_assets.cpp third_party/vendor/miniz/miniz_tinfl.cpp)
 add_dependencies(search_core i18n_generated)
 target_include_directories(search_core PUBLIC src ${I18N_OUT} PRIVATE third_party/vendor/toml third_party/vendor/miniz)
 target_link_libraries(search_core PUBLIC normaliz advapi32)
-add_library(search_ui STATIC src/ui.cpp src/host.cpp src/customization_ui.cpp
+add_library(search_ui STATIC src/ui.cpp src/ui_theme.cpp src/host.cpp src/ui_color_output.cpp src/ui_color_profile.cpp src/customization_ui.cpp
   third_party/vendor/imgui/imgui.cpp third_party/vendor/imgui/imgui_draw.cpp
   third_party/vendor/imgui/imgui_tables.cpp third_party/vendor/imgui/imgui_widgets.cpp
   third_party/vendor/imgui/backends/imgui_impl_win32.cpp
@@ -82,6 +82,9 @@ add_test(NAME 归档边界验收 COMMAND FarcCheck)
 add_executable(ModuleCatalogCheck tests/module_catalog_check.cpp)
 target_link_libraries(ModuleCatalogCheck PRIVATE search_core)
 add_test(NAME 自动服装目录验收 COMMAND ModuleCatalogCheck)
+add_executable(CustomizationNamesCheck tests/customization_names_check.cpp)
+target_link_libraries(CustomizationNamesCheck PRIVATE search_core)
+add_test(NAME 定制名称继承验收 COMMAND CustomizationNamesCheck)
 add_executable(SpriteResolverCheck tests/sprite_resolver_check.cpp)
 target_link_libraries(SpriteResolverCheck PRIVATE search_core)
 add_test(NAME 发型道具缩略图解析验收 COMMAND SpriteResolverCheck)
@@ -106,6 +109,9 @@ add_test(NAME 发型道具原生规格验收 COMMAND CustomizationItemProfilesCh
 add_executable(ModuleActionCheck tests/module_action_check.cpp)
 target_link_libraries(ModuleActionCheck PRIVATE search_ui)
 add_test(NAME 原生服装动作守卫验收 COMMAND ModuleActionCheck)
+add_executable(CustomizationConfigCheck tests/customization_config_check.cpp)
+target_link_libraries(CustomizationConfigCheck PRIVATE search_core)
+add_test(NAME 共通单曲配置读取验收 COMMAND CustomizationConfigCheck)
 add_executable(RecommendationCheck tests/recommendation_check.cpp)
 target_link_libraries(RecommendationCheck PRIVATE search_ui)
 add_test(NAME 歌曲推荐服装验收 COMMAND RecommendationCheck)
@@ -114,3 +120,6 @@ target_link_libraries(RecommendationRuntimeCheck PRIVATE search_core)
 add_test(NAME 推荐读取器隔离验收 COMMAND RecommendationRuntimeCheck)
 add_executable(ModuleAssetAudit tests/module_asset_audit.cpp)
 target_link_libraries(ModuleAssetAudit PRIVATE search_core windowscodecs ole32 bcrypt)
+add_executable(UiColorOutputCheck tests/ui_color_output_check.cpp)
+target_link_libraries(UiColorOutputCheck PRIVATE search_ui)
+add_test(NAME UI色彩适配像素验收 COMMAND UiColorOutputCheck)

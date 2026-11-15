@@ -111,7 +111,7 @@ static void TestCatalog(const diva::fs::path& root) {
     Check(!song.charts[2][3].available,"未定义 NC 风格误生效");
     Check(song.aliases.empty(),"已废弃的 aliases.toml 仍被读取");
     Write(g/L"config.toml","enabled=true\nmods='mods'\npriority=['高','禁用','低','NC','歌词']\n");
-    Write(g/L"mods/歌词/config.toml","enabled=true\nname='Chinese lyrics Base'\ninclude=['.']\n");
+    Write(g/L"mods/歌词/config.toml","enabled=true\nname='改过名的歌词包'\ninclude=['.']\n");
     Write(g/L"mods/歌词/use_song_name/rom_steam_cn/rom/pv_db.txt","pv_001.song_name=简体译名\npv_999.song_name=不存在歌曲\n");
     Write(g/L"mods/歌词/use_song_name/rom_steam_tw/rom/pv_db.txt","pv_001.song_name=繁體譯名\n");
     auto translated=LoadCatalog(h,g); Query translatedQuery; translatedQuery.text="简体译名";
@@ -119,7 +119,7 @@ static void TestCatalog(const diva::fs::path& root) {
     translatedQuery.text="繁體譯名"; Check(Search(translated,translatedQuery,{}).size()==1,"繁体歌名未加载");
     translatedQuery.text="中文别名"; Check(Search(translated,translatedQuery,{}).empty(),"已废弃的 aliases.toml 仍参与检索");
     Check(translated.configurationKey!=c.configurationKey,"中文歌名文件未加入配置指纹");
-    Write(g/L"mods/歌词/config.toml","enabled=false\nname='Chinese lyrics Base'\ninclude=['.']\n");
+    Write(g/L"mods/歌词/config.toml","enabled=false\nname='改过名的歌词包'\ninclude=['.']\n");
     translatedQuery.text="简体译名"; Check(Search(LoadCatalog(h,g),translatedQuery,{}).empty(),"禁用的歌词模组仍被加载");
     // 重现641：人物包复制原版脚本字段，磁盘无松散文件时仍应读取官方CPK谱面。
     Write(g/L"mods/低/rom/mod_pv_db.txt","pv_001.song_name=不应覆盖\npv_001.song_name_en=English Alias\npv_001.difficulty.extreme.0.script_file_name=rom/script/base.dsc\n");

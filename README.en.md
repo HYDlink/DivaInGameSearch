@@ -41,7 +41,11 @@ You can only switch to items you already own. The mod never buys anything for yo
 | Ctrl+P / Ctrl+E | Preview / equip |
 | Esc or click outside | Close |
 
-The hotkey, font size, row height and opacity can be changed in `settings.ini`.
+The panel uses the bright pearl-white theme by default; the Theme button at the top right switches to the original dark look and remembers your choice. With HDR 10-bit output from mods such as Luma, the panel and thumbnails adjust their brightness automatically instead of looking blown out. The hotkey, font size, row height and opacity can be changed in `settings.ini`.
+
+## Custom module names
+
+The first time you open module search, the mod folder gets a `module_names.toml` listing each module's ID, original name, character and source. Fill in your own name on any line, then refresh the catalog from Options. Your names only appear in the search panel, and the original names stay searchable. After adding new mods, compare against the automatically updated `module_names_reference.toml`; your own file is never overwritten. See the [name table guide](docs/MODULE_NAMES.md) (Chinese).
 
 ## Language
 

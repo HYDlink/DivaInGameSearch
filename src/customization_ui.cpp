@@ -598,17 +598,10 @@ void CustomizationView::Draw() {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(ImGui::GetStyle().FramePadding.x,0.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign,ImVec2(0.5f,0.42f));
         for(auto part:{CustomizationPart::Head,CustomizationPart::Face,CustomizationPart::Neck,CustomizationPart::Back}) {
-            if(part!=CustomizationPart::Head) ImGui::SameLine(0,4);
+            if(part!=CustomizationPart::Head) ImGui::SameLine(0,4); else ImGui::SetCursorPosX(ImGui::GetCursorPosX()+ThemedTabOverhang(30));
             const bool selected=accessoryPart==part;
-            ImGui::PushStyleColor(ImGuiCol_Button,selected?ImVec4(0.20f,0.32f,0.30f,1):ImVec4(0.105f,0.12f,0.14f,1));
-            ImGui::PushStyleColor(ImGuiCol_Text,selected?ImVec4(0.63f,0.97f,0.86f,1):ImVec4(0.66f,0.71f,0.75f,1));
             const std::string label=std::string(CustomizationPartName(part))+"##accessory-part";
-            if(ImGui::Button(label.c_str(),ImVec2(std::max(72.0f,ImGui::CalcTextSize(label.c_str(),nullptr,true).x+24.0f),30.0f))) SetAccessoryPart(part);
-            if(selected) {
-                auto min=ImGui::GetItemRectMin(),max=ImGui::GetItemRectMax();
-                ImGui::GetWindowDrawList()->AddRectFilled({min.x+12,max.y-3},{max.x-12,max.y-1},IM_COL32(107,224,194,255),1);
-            }
-            ImGui::PopStyleColor(2);
+            if(ThemedTabButton(label.c_str(),selected,ImVec2(std::max(72.0f,ImGui::CalcTextSize(label.c_str(),nullptr,true).x+24.0f),30.0f))) SetAccessoryPart(part);
         }
         ImGui::PopStyleVar(2);
     }
@@ -703,7 +696,7 @@ void CustomizationView::Draw() {
     auto* parent=ImGui::GetCurrentWindow();
     const std::string gridFocusLabel=Trf(Tx::catalog_results,{{"count",std::to_string(state.results.size())}})+"###结果卡片键盘焦点";
     const ImGuiID gridFocusId=parent->GetID(gridFocusLabel.c_str());
-    ImGui::PushStyleColor(ImGuiCol_Text,SearchResultTextColor);
+    ImGui::PushStyleColor(ImGuiCol_Text,SearchResultTextColor());
     const bool clickedFocus=ImGui::Selectable(gridFocusLabel.c_str(),false,0,ImVec2(std::max(120.0f,ImGui::CalcTextSize(gridFocusLabel.c_str(),nullptr,true).x+8.0f),22.0f));
     ImGui::PopStyleColor();
     gridNavigation=ImGui::IsItemFocused();
@@ -836,12 +829,13 @@ void CustomizationView::Draw() {
 
                 auto* draw=ImGui::GetWindowDrawList();
                 const ImVec2 cardMax(origin.x+cellWidth,origin.y+cardHeight);
-                draw->AddRectFilled(origin,cardMax,selected?IM_COL32(38,52,53,255):IM_COL32(29,33,39,255),8.0f);
-                draw->AddRect(origin,cardMax,selected?IM_COL32(107,224,194,255):hovered?IM_COL32(99,115,122,255):IM_COL32(53,61,69,255),8.0f,0,selected?2.0f:1.0f);
+                const auto& palette=Palette();
+                draw->AddRectFilled(origin,cardMax,selected?palette.cardSelectedBg:palette.cardBg,palette.cardRounding);
+                draw->AddRect(origin,cardMax,selected?palette.cardSelectedBorder:hovered?palette.cardHoveredBorder:palette.cardBorder,palette.cardRounding,0,selected?2.0f:1.0f);
 
                 const ImVec2 imageMin(origin.x+1.0f,origin.y+1.0f);
                 const ImVec2 imageMax(origin.x+cellWidth-1.0f,origin.y+imageHeight+1.0f);
-                draw->AddRectFilled(imageMin,imageMax,IM_COL32(35,40,47,255),7.0f);
+                draw->AddRectFilled(imageMin,imageMax,palette.cardImageBg,palette.cardImageRounding);
                 CustomizationPreview preview;
                 if(previewProvider) preview=previewProvider(item,true);
                 else if(index<previewFacts.size()) preview=previewFacts[index];
@@ -877,17 +871,17 @@ void CustomizationView::Draw() {
                     draw->PopClipRect();
                     if(preview.fallback && previewStyle==2) {
                         const char* badge=Tr(Tx::card_badge_generic);const ImVec2 badgeSize=ImGui::CalcTextSize(badge);
-                        draw->AddText(ImVec2(imageMax.x-badgeSize.x-8.0f,imageMax.y-badgeSize.y-6.0f),IM_COL32(120,143,154,255),badge);
+                        draw->AddText(ImVec2(imageMax.x-badgeSize.x-8.0f,imageMax.y-badgeSize.y-6.0f),palette.cardMutedText,badge);
                     }
                 } else {
                     // 资源读取中或确实缺图时显示简短占位，不显示其他种类图片，也不冒充原生 3D 预览。
                     const char* missing=Tr(preview.loading?Tx::card_image_loading:Tx::card_image_missing);
                     const ImVec2 labelSize=ImGui::CalcTextSize(missing);
-                    draw->AddText(ImVec2(imageMin.x+(cellWidth-labelSize.x)*0.5f,imageMin.y+imageHeight*0.5f-labelSize.y*0.5f),IM_COL32(141,163,174,255),missing);
+                    draw->AddText(ImVec2(imageMin.x+(cellWidth-labelSize.x)*0.5f,imageMin.y+imageHeight*0.5f-labelSize.y*0.5f),palette.cardPlaceholderText,missing);
                     if(preview.width>0 && preview.height>0) {
                         const std::string dimensions=std::to_string(preview.width)+" × "+std::to_string(preview.height);
                         const ImVec2 size=ImGui::CalcTextSize(dimensions.c_str());
-                        draw->AddText(ImVec2(imageMax.x-size.x-9.0f,imageMax.y-size.y-7.0f),IM_COL32(120,143,154,255),dimensions.c_str());
+                        draw->AddText(ImVec2(imageMax.x-size.x-9.0f,imageMax.y-size.y-7.0f),palette.cardMutedText,dimensions.c_str());
                     }
                 }
 
@@ -895,13 +889,13 @@ void CustomizationView::Draw() {
                 if(recommendation!=state.recommendationReasons.end() && !recommendation->second.empty()) {
                     auto title=recommendation->second.front();const auto separator=title.find(" [PVID");if(separator!=std::string::npos) title.resize(separator);
                     const auto badge=EllipsizeText(Trf(Tx::card_badge_recommended,{{"title",title}}),cellWidth-24);
-                    draw->AddRectFilled(ImVec2(origin.x+5,origin.y+5),ImVec2(origin.x+cellWidth-5,origin.y+34),IM_COL32(24,43,43,240),4);
-                    draw->AddText(ImVec2(origin.x+10,origin.y+9),IM_COL32(137,229,207,255),badge.c_str());
+                    draw->AddRectFilled(ImVec2(origin.x+5,origin.y+5),ImVec2(origin.x+cellWidth-5,origin.y+34),palette.recommendBg,palette.badgeRounding);
+                    draw->AddText(ImVec2(origin.x+10,origin.y+9),palette.recommendText,badge.c_str());
                 }
                 if(browseOnly) {
                     const char* badge=Tr(Tx::card_browse_only);const ImVec2 badgeSize=ImGui::CalcTextSize(badge);
-                    draw->AddRectFilled(ImVec2(imageMax.x-badgeSize.x-14.0f,imageMin.y+5.0f),ImVec2(imageMax.x-4.0f,imageMin.y+badgeSize.y+11.0f),IM_COL32(24,30,36,220),4.0f);
-                    draw->AddText(ImVec2(imageMax.x-badgeSize.x-9.0f,imageMin.y+8.0f),IM_COL32(150,165,175,255),badge);
+                    draw->AddRectFilled(ImVec2(imageMax.x-badgeSize.x-14.0f,imageMin.y+5.0f),ImVec2(imageMax.x-4.0f,imageMin.y+badgeSize.y+11.0f),palette.browseBg,palette.badgeRounding);
+                    draw->AddText(ImVec2(imageMax.x-badgeSize.x-9.0f,imageMin.y+8.0f),palette.browseText,badge);
                 }
                 const float textWidth=cellWidth-20.0f;
                 const std::string name=EllipsizeText(item.name,textWidth);
@@ -915,7 +909,7 @@ void CustomizationView::Draw() {
                 if(!models && catalog) secondLine+=" · "+SourceShortLabel(*catalog,item);
                 secondLine=EllipsizeText(secondLine,textWidth);
                 draw->PushClipRect(ImVec2(origin.x+8.0f,origin.y+detailOffset-2.0f),ImVec2(origin.x+cellWidth-6.0f,origin.y+cardHeight-2.0f),true);
-                draw->AddText(ImVec2(origin.x+10.0f,origin.y+detailOffset),ImGui::GetColorU32(SearchSecondaryTextColor),secondLine.c_str());
+                draw->AddText(ImVec2(origin.x+10.0f,origin.y+detailOffset),ImGui::GetColorU32(SearchSecondaryTextColor()),secondLine.c_str());
                 draw->PopClipRect();
 
                 if(clicked) {
@@ -932,12 +926,9 @@ void CustomizationView::Draw() {
                     ImGui::SetCursorPos(ImVec2(x+8,rowY+actionY));
                     const bool removal=!models && capability.equipped;
                     ImGui::BeginDisabled(unavailable || (removal?!capability.remove:!capability.equip));
-                    ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0.15f,0.28f,0.25f,1));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,ImVec4(0.21f,0.39f,0.34f,1));
                     const Tx equipText=removal?(domain==CustomizationDomain::Hair?Tx::card_match_module:Tx::card_remove)
                         :capability.equipped?Tx::card_equipped:models?Tx::card_equip:Tx::card_change;
-                    const bool equip=ImGui::Button((std::string(Tr(equipText))+"###card-equip").c_str(),ImVec2(actionWidth,32));
-                    ImGui::PopStyleColor(2);
+                    const bool equip=ThemedPrimaryButton((std::string(Tr(equipText))+"###card-equip").c_str(),ImVec2(actionWidth,32));
                     ImGui::EndDisabled();
                     const std::string pageHint=Trf(Tx::card_open_page_hint,{{"page",CustomizationDomainPageName(domain)}});
                     // 参数 reason/shortcut 为当前按钮说明和快捷键；悬浮时总是显示快捷键，让用户下次可以直接按。
@@ -947,7 +938,7 @@ void CustomizationView::Draw() {
                     if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",actionTip(!capability.targetPage?pageHint:capability.equipReason,"Ctrl+E").c_str());
                     ImGui::SetCursorPos(ImVec2(x+14+actionWidth,rowY+actionY));
                     ImGui::BeginDisabled(unavailable || !capability.preview);
-                    const bool previewClicked=ImGui::Button((std::string(Tr(Tx::card_preview))+"###card-preview").c_str(),ImVec2(actionWidth,32));
+                    const bool previewClicked=ThemedSecondaryButton((std::string(Tr(Tx::card_preview))+"###card-preview").c_str(),ImVec2(actionWidth,32));
                     ImGui::EndDisabled();
                     if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",actionTip(!capability.targetPage?pageHint:capability.previewReason,"Ctrl+P").c_str());
                     if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) && inButton) {
@@ -957,7 +948,7 @@ void CustomizationView::Draw() {
                     const bool duplicate=suppressActionRelease && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
                     if(equip && !duplicate) RequestAction(item.key,removal?CustomizationAction::Remove:CustomizationAction::Equip);
                     if(previewClicked && !duplicate) RequestAction(item.key,CustomizationAction::Preview);
-                    if(capability.equipped) draw->AddText(ImVec2(origin.x+cellWidth-13-ImGui::CalcTextSize(Tr(Tx::card_equipped)).x,origin.y+8),IM_COL32(107,224,194,255),Tr(Tx::card_equipped));
+                    if(capability.equipped) draw->AddText(ImVec2(origin.x+cellWidth-13-ImGui::CalcTextSize(Tr(Tx::card_equipped)).x,origin.y+8),palette.equippedText,Tr(Tx::card_equipped));
                 }
                 const bool keyboardFocused=gridNavigation && selected;
                 const bool hoverMature=hovered && hoveredKey && *hoveredKey==item.key && std::chrono::steady_clock::now()-hoverSince>=kHoverDelay;
@@ -1016,7 +1007,8 @@ void CustomizationView::Draw() {
         }
         if(compactFooter) ImGui::SameLine(footerWidth-buttonWidth+ImGui::GetWindowContentRegionMin().x);
         ImGui::BeginDisabled(!canSubmit);
-        if(ImGui::Button((footerLabel+"###footer-locate").c_str(),ImVec2(buttonWidth,30.0f))) RequestLocate(selected.key);
+        // 与搜索框、筛选框同为标准控件高度，左侧状态文字按同一高度对齐。
+        if(ThemedPrimaryButton((footerLabel+"###footer-locate").c_str(),ImVec2(buttonWidth,ImGui::GetFrameHeight()))) RequestLocate(selected.key);
         ImGui::EndDisabled();
         if(!canSubmit && !models && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("%s",!targetPage?Trf(Tx::card_tooltip_open_page,{{"page",CustomizationDomainPageName(domain)}}).c_str():capability.locateReason.c_str());

@@ -11,15 +11,6 @@
 
 namespace diva {
 
-// 官方 CPK 条目及其游戏内逻辑路径；entryData 只在显式读取时保留。
-struct OfficialCpkEntry {
-    fs::path cpkPath;
-    std::string internalPath;
-    std::string logicalPath;
-    std::string entryData;
-    std::string fingerprint;
-};
-
 // 官方服装实体表的物理归档、内部条目、逻辑路径、UTF-8 文本和文件指纹；与定制表共用同一结构。
 using OfficialModuleTable = OfficialEntityTable;
 

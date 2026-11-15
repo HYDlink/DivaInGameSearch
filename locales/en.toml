@@ -7,6 +7,10 @@ songs = "Songs"
 modules = "Module"
 hair = "Hairstyles"
 accessories = "Accessories"
+theme = "Theme: {name}"
+theme_pearl = "Pearl"
+theme_classic = "Dark"
+theme_tip = "Switch the panel theme"
 
 [song]
 results = "Results: {count}"
@@ -56,6 +60,11 @@ linked = "{name} ({count} linked)"
 character = "Character:"
 source = "Source:"
 current_singer = " (current singer)"
+
+[module_names]
+source = "Personal module names"
+user_header = "# Personal module names: changes search display and matching only, not the game's native menus.\n# Edit only the double-quoted value; an empty string keeps the current name. Save as UTF-8.\n# Example: 0 = \"My Miku\". Escape double quotes and backslashes as \\\" and \\\\.\n# Save, then refresh the catalog from Options in module search, or restart the game.\n# This file is created once and never overwritten. Find new IDs in module_names_reference.toml and copy their rows under [module].\n# Columns: stable ID = \"custom name\" # current name | definition name | character | definition source | COS\n\n"
+reference_header = "# Automatically generated module reference. Do not enter names here; catalog refresh replaces this file.\n# Copy the desired ID rows under [module] in module_names.toml, then fill in their quoted values.\n# You can search by ID in the panel; these are the IDs shown on module cards.\n# Columns: stable ID = \"custom name\" # current name | definition name | character | definition source | COS\n\n"
 
 [source]
 official = "Official"

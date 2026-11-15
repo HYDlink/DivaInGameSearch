@@ -3,7 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <map>
-// 参数 argc/argv 为插件目录、游戏目录、审计文件和可选语言表代码；只读磁盘，不访问游戏进程。
+// 参数 argc/argv 为插件目录、游戏目录、审计文件和可选语言表代码；不访问游戏进程，插件目录会生成服装名称模板和参照表。
 int wmain(int argc,wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     if(argc!=4 && argc!=5) {std::cout<<"用法：CustomizationAudit 插件目录 游戏目录 输出文件 [游戏语言表代码]\n";return 2;}

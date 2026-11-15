@@ -1,6 +1,9 @@
 # 本项目生成的构建、测试与运行产物。
 /build/
 /artifacts/
+# 按本机有效服装生成的参照表及个人名称；不提交或随包覆盖。
+/module_names.toml
+/module_names_reference.toml
 /scripts/research/__pycache__/
 /.vs/
 /CMakeUserPresets.json

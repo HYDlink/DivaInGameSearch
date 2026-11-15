@@ -145,7 +145,7 @@ constexpr uintptr_t kSceneItemAction=0x68F430;          // [自拟] void(scene,i
 constexpr uintptr_t kGetSaveData=0x1D6510;              // [NC] GetSaveData
 constexpr uintptr_t kFindModuleRecord=0x1D5C90;         // [DML] 同样 hook 此入口；void*(save,int id)
 constexpr uintptr_t kIsModuleOwned=0x1DA550;            // [自拟] uint8(record)
-constexpr uintptr_t kGetPvSlotConfig=0x1D5E30;          // [自拟] record(save,int pvid,int slot)，单曲槽位配置
+constexpr uintptr_t kGetCustomizationSlotConfig=0x1D5E30; // [自拟] record(save,int pvid,int slot)，按当前范围取共通/单曲配置，见 COMMON_CUSTOMIZATION_SCOPE.md
 constexpr uintptr_t kIsItemOwned=0x6809A0;              // [自拟] uint8(0,record)，发型／道具拥有判定
 
 // ---- 其他 ----
@@ -164,6 +164,13 @@ constexpr uintptr_t kSceneHairstyleVtable=0xCC4678;
 constexpr uintptr_t kSceneItemVtable=0xCC48C8;
 // 按 SceneKey 取下标；键 0～4 以外没有用到。
 constexpr std::array<uintptr_t,5> kSceneVtables{kSceneLoadingVtable,kSceneTopMenuVtable,kSceneModuleVtable,kSceneHairstyleVtable,kSceneItemVtable};
+}
+
+// [自拟] 681CE0与1D5E30静态交叉核对：独立记录优先，获取器按存档范围选择共通A/B/C或单曲。
+namespace customize_config {
+constexpr uintptr_t kOverrideTable=0x10; // 控制器中的独立槽位记录数组指针。
+constexpr uintptr_t kSlotRecordSize=0x1C; // 每个槽位的模型、道具、发型及标记记录大小。
+constexpr uintptr_t kScope=0x169410; // 存档对象中的当前共通/单曲范围，与kCustomizeScopeSelector一致。
 }
 
 // rva::kModeInfo 各字段相对主程序基址的地址。

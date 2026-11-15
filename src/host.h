@@ -1,6 +1,8 @@
 #pragma once
 #include "ui.h"
 #include "module_assets.h"
+#include "ui_color_output.h"
+#include "ui_color_profile.h"
 #include <Windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
@@ -29,6 +31,15 @@ struct Host {
     WNDPROC previous=nullptr;
     ID3D11Device* device=nullptr;
     ID3D11DeviceContext* deviceContext=nullptr;
+    // HDR 适配完全独立于原 SDR 后端；仅保存本 Mod 的中间资源。
+    UiColorRenderer uiColorRenderer;
+    // 色彩路径或错误改变时才记录一次，避免逐帧刷写日志。
+    std::string lastUiColorDiagnostic;
+    // 配置只在已有后台执行器读取；future 的析构不等待文件任务，游戏帧仅检查就绪状态。
+    std::future<UiColorProfile> uiColorProfilePending;
+    UiColorProfile uiColorProfile;
+    fs::path uiColorProfileGame;
+    uint64_t nextUiColorProfileRead=0;
     std::recursive_mutex mutex;
     std::atomic<bool> captures{false};
     bool initialized=false,preview=false;
@@ -67,6 +78,8 @@ struct Host {
     void PumpModuleAssetRetirements();
     // 释放本 Mod 创建的 DX11 预览纹理；调用时必须不处于 ImGui 绘制提交中。
     void ClearPreviewTextures();
+    // 参数 knownLuma 为插件识别结果；每秒后台刷新配置，返回带来源说明的亮度决策。
+    UiWhiteDecision SyncUiWhite(bool knownLuma);
     // 参数 key/pixels/width/height 为服装键和 RGBA 缓冲及尺寸；返回本 Mod 创建的 DX11 SRV。
     ImTextureID UploadPreviewPixels(const CustomizationKey& key,const unsigned char* pixels,int width,int height);
     // 初始化本 Mod 的数据和上下文；参数 home/game 为资源和游戏目录。

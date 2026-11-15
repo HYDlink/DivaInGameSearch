@@ -141,12 +141,12 @@ CustomizationActionCapability CustomizationItemCapabilities(CustomizationDomain 
         if(observed && latestNow>=observed->frame.now && latestNow-observed->frame.now<500) {
             const auto& frame=observed->frame;const auto& snapshot=observed->snapshot;
             c.slot=frame.slot;c.nativeScope=frame.nativeScope;c.contextGeneration=frame.scene;
-            c.scope=frame.nativeScope==native::CustomizeScope::Song?CustomizationScope::Song:CustomizationScope::Common;
+            c.scope=NativeCustomizationScope(frame.nativeScope);
             if(frame.slot>=0 && frame.slot<6) {
                 const size_t start=static_cast<size_t>(frame.slot)*6;
                 for(size_t part=domain==CustomizationDomain::Hair?5:1;part<=(domain==CustomizationDomain::Hair?5:4);++part)
                     if(snapshot.configurationIds[start+part]==key->id) c.equipped=true;
-                c.remove=c.equipped && bool(profile.remove) && frame.nativeScope==native::CustomizeScope::Song;
+                c.remove=c.equipped && bool(profile.remove) && c.scope!=CustomizationScope::Unknown;
                 if(c.equipped) c.equipReason=c.remove?(domain==CustomizationDomain::Hair?Tr(Tx::itemop_restore_module_hair):Tr(Tx::itemop_remove_equipped)) :Tr(Tx::itemop_remove_unavailable);
             }
         }
@@ -179,8 +179,12 @@ bool SubmitCustomizationItemRequest(const CustomizationLocateRequest& request,co
     const bool supported=profile && profile->read && (request.action==CustomizationAction::Locate?(bool(profile->highlight) || bool(profile->step))
         :request.action==CustomizationAction::Preview?bool(profile->preview):request.action==CustomizationAction::Remove?bool(profile->remove):bool(profile->equip));
     if(!supported) return reject(ShortGap(request.domain,request.action),DetailGap(request.domain,request.action));
-    if(request.action==CustomizationAction::Remove && (frame.nativeScope!=native::CustomizeScope::Song || (request.contextGeneration && request.contextGeneration!=frame.scene)))
-        return reject(Tr(Tx::itemop_scope_changed));
+    // 卡片已绑定的范围和槽位必须与提交帧一致；A/B/C共用场景地址，不能仅靠场景地址识别旧请求。
+    if(request.action!=CustomizationAction::Locate
+        && (NativeCustomizationScope(frame.nativeScope)==CustomizationScope::Unknown
+            || (request.contextGeneration && request.contextGeneration!=frame.scene)
+            || (request.nativeScope>=0 && (request.nativeScope!=frame.nativeScope || request.scope!=NativeCustomizationScope(frame.nativeScope)))
+            || (request.slot>=0 && request.slot!=frame.slot))) return reject(Tr(Tx::itemop_scope_changed));
     if(!request.serial || request.serial<=lastSerial) return reject(Tr(Tx::itemop_stale_request));
     if(request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256
         || (!lockedFingerprint.empty() && lockedFingerprint!=request.catalogFingerprint)) return reject(Tr(Tx::itemop_catalog_changed));

@@ -30,8 +30,8 @@ diva::CustomizationLocateRequest ActionRequest(uint64_t serial,diva::Customizati
 void CrossCategoryActions() {
     using namespace diva;using namespace action_runtime;
     uint64_t serial=100;const int rawCharacters[]={0,1,2,3,6,7,4};
-    for(int from=0;from<7;++from) for(int to=0;to<7;++to) if(from!=to) for(auto action:{CustomizationAction::Preview,CustomizationAction::Equip}) {
-        auto current=Sample();current.category=from;current.highlightId=1000+from;
+    for(int scope=0;scope<4;++scope) for(int from=0;from<7;++from) for(int to=0;to<7;++to) if(from!=to) for(auto action:{CustomizationAction::Preview,CustomizationAction::Equip}) {
+        auto current=Sample();current.page.nativeScope=scope;current.category=from;current.highlightId=1000+from;
         std::array<int,4> first{current.highlightId,0,rawCharacters[from],0},second{900,0,rawCharacters[from],0};
         std::array<uintptr_t,2> records{reinterpret_cast<uintptr_t>(first.data()),reinterpret_cast<uintptr_t>(second.data())};
         current.begin=reinterpret_cast<uintptr_t>(records.data());current.end=current.begin+sizeof(records);
@@ -39,7 +39,8 @@ void CrossCategoryActions() {
         auto capability=ReadModuleActionCapability({CustomizationKind::Module,900},ModuleMenuCharacter(to));Check(capability.preview,"跨分类预览能力被错误禁用");
         targets[900].owned=Ownership::Owned;targets[900].checked=GetTickCount64();
         capability=ReadModuleActionCapability({CustomizationKind::Module,900},ModuleMenuCharacter(to));Check(capability.equip,"跨分类换装能力被错误禁用");
-        auto request=ActionRequest(++serial,action);request.key.id=900;request.character=ModuleMenuCharacter(to);std::string message;
+        auto request=ActionRequest(++serial,action);request.key.id=900;request.character=ModuleMenuCharacter(to);
+        request.nativeScope=scope;request.scope=NativeCustomizationScope(scope);std::string message;
         Check(SubmitModuleAction(request,message) && active.phase==Phase::Preparing,"跨分类动作提交仍要求预先定位");
         // 参数direction是生产决定的相邻步；模拟原生列表重建，但不更改装备、范围和槽位。
         const auto move=[&](int direction) {current.category+=direction;current.highlightId=2000+current.category;first[0]=current.highlightId;first[2]=rawCharacters[current.category];second[2]=current.category==6?9:rawCharacters[current.category];return true;};
@@ -66,6 +67,50 @@ void CrossCategoryActions() {
         Check(status.succeeded && current.category==from && current.highlightId==origin.highlightId,"跨人物动作未恢复原分类和高亮");
         Check(current.equippedId==(action==CustomizationAction::Equip?900:origin.equippedId) && current.page.slot==origin.page.slot,"跨人物动作改错装备或歌者槽位");
         Check(status.previewRestored==(action==CustomizationAction::Preview),"预览恢复与普通换装的搜索重开标记混淆");
+    }
+}
+// 遍历四范围六槽位，验证独立读取、动作提交、预览退出接续及范围改变取消；仅使用进程内记录和快照。
+void ScopeActions() {
+    using namespace diva;using namespace action_runtime;
+    std::array<std::array<int,7>,6> configured{};
+    std::array<uintptr_t,4> controller{};controller[2]=reinterpret_cast<uintptr_t>(configured.data());
+    uint64_t serial=1000;
+    for(int scope=0;scope<4;++scope) for(int slot=0;slot<6;++slot) {
+        auto current=Sample();current.page.nativeScope=scope;current.page.slot=slot;current.page.slotCount=6;
+        current.equippedId=10+slot;current.models[slot]=current.equippedId;configured[slot][0]=current.equippedId;
+        auto equipmentPage=current.page;equipmentPage.controller=reinterpret_cast<uintptr_t>(controller.data());int id=-1;
+        Check(ReadEquippedModule(equipmentPage,id) && id==current.equippedId,"共通或单曲的独立装备读取失败");
+        base=1;generation=7;uiGeneration=9;lastFrame=GetTickCount64();latest=current;active={};cards.clear();targets.clear();
+        Card card;card.record=600;card.character=0;card.owned=Ownership::Owned;card.checked=lastFrame;cards[316]=card;
+        const auto capability=ReadModuleActionCapability({CustomizationKind::Module,316},CustomizationCharacter::Miku);
+        Check(capability.preview && capability.equip && capability.scope==NativeCustomizationScope(scope),"共通／单曲有效槽位仍禁用预览或换装");
+        for(auto action:{CustomizationAction::Preview,CustomizationAction::Equip}) {
+            active={};auto request=ActionRequest(++serial,action);request.slot=slot;request.nativeScope=scope;request.scope=capability.scope;
+            std::string message;Check(SubmitModuleAction(request,message),"共通／单曲动作提交失败");
+            active.phase=Phase::Loading;active.card.index=1;status={};
+            auto after=current;after.models[slot]=316;
+            if(action==CustomizationAction::Equip) {
+                after.equippedId=316;after.equippedIndex=1;Confirm(after);Confirm(after);
+                Check(status.succeeded,"共通更换未按独立装备和显示模型确认");
+            } else {
+                after.page.internal=2;after.page.idle=false;Confirm(after);
+                Check(status.previewReady && after.equippedId==current.equippedId,"共通预览被当成实际换装");
+                auto follow=request;follow.serial=++serial;
+                auto wrong=follow;wrong.nativeScope=(scope+1)%4;wrong.scope=NativeCustomizationScope(wrong.nativeScope);
+                Check(!RequestModulePreviewExit(wrong,message),"预览接续接受了不同配置范围");
+                Check(RequestModulePreviewExit(follow,message),"共通范围后续动作无法退出旧预览");
+                Confirm(current);Confirm(current);Check(status.succeeded,"共通预览退出未核对原装备恢复");
+            }
+        }
+        active={};active.phase=Phase::Loading;active.before=current;active.request=ActionRequest(++serial);status={};
+        auto switched=current;switched.page.nativeScope=(scope+1)%4;Confirm(switched);
+        Check(status.completed && !status.succeeded,"切换共通A/B/C／单曲后旧事务仍继续");
+    }
+    for(int scope:{-1,4}) {
+        latest=Sample();latest.page.nativeScope=scope;active={};
+        const auto capability=ReadModuleActionCapability({CustomizationKind::Module,316},CustomizationCharacter::Miku);
+        Check(!capability.preview && !capability.equip && capability.scope==CustomizationScope::Unknown
+            && capability.equipReason==Tr(Tx::modloc_scope_unknown),"未知范围未关闭动作或仍误报共通配置");
     }
 }
 // 创建播放列表自定义的隔离样本：外层 mode2 子状态6／7，显示模型与 controller+0x10 独立记录一致。
@@ -178,6 +223,7 @@ int main() {
         Confirm(Sample());Confirm(Sample());Check(status.succeeded && !status.previewRestored,"用户已放弃预览事务仍后台重新打开面板");
         CrossCategoryActions();
         PlaylistActions();
+        ScopeActions();
         for(auto next:{CustomizationAction::Locate,CustomizationAction::Preview,CustomizationAction::Equip}) {
             active={};active.phase=Phase::Preview;active.request=ActionRequest(400,CustomizationAction::Preview);active.before=active.origin=Sample();active.cancelled=cancelled.load();
             latest=Sample();lastFrame=GetTickCount64();status={};status.serial=400;status.action=CustomizationAction::Preview;status.previewReady=true;
@@ -192,6 +238,6 @@ int main() {
             ProcessPreviewExit(Sample(),exit);Check(!status.completed,"尚未跨帧确认便完成退出");ProcessPreviewExit(Sample(),exit);
             Check(status.succeeded && !status.previewRestored,"旧预览退出没有核对原装备或抢回新请求的搜索窗口");
         }
-        std::cout<<"原生服装动作隔离回归通过：84组跨分类预览／换装的能力、提交、执行与恢复；播放列表独立记录读取、预览与更换区分、外层子状态绑定；拥有、范围、槽位保护保留；未访问游戏。\n";return 0;
+        std::cout<<"原生服装动作隔离回归通过：四范围336组跨分类预览／换装，六槽位独立读取与预览接续；播放列表及拥有、范围、槽位保护保留；未访问游戏。\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"服装动作验证失败："<<error.what()<<"\n";return 1;}
 }

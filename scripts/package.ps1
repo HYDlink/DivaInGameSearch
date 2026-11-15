@@ -1,8 +1,16 @@
 # 仅组装玩家安装所需文件、说明与许可证；源码和开发资料通过GitHub单独提供。
+param(
+  # 指定测试主题时使用独立目录；auto-white 为按 Luma 配置解析白亮度的修正版，不改版本号。
+  [ValidateSet('hdr-ui','hdr-ui-auto-white')][string]$TestVariant,
+  # 已完成验证的构建目录；独立预览占用共用输出时，可从隔离构建封包。
+  [string]$BuildDirectory='build/release'
+)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $projectRoot
+$buildRoot=[IO.Path]::GetFullPath($BuildDirectory,$projectRoot)
 $releaseRoot=Join-Path $projectRoot 'artifacts/release'
+if($TestVariant){$releaseRoot=Join-Path $projectRoot "artifacts/test-releases/$TestVariant"}
 $modRoot=Join-Path $releaseRoot 'DivaInGameSearch'
 if(Test-Path -LiteralPath $modRoot){
   $resolvedTarget=[IO.Path]::GetFullPath($modRoot)
@@ -12,11 +20,11 @@ if(Test-Path -LiteralPath $modRoot){
 }
 New-Item -ItemType Directory -Force $modRoot,(Join-Path $modRoot 'data'),(Join-Path $modRoot 'licenses') | Out-Null
 foreach($file in @('DivaInGameSearch.dll','DivaTextureDecoder.dll')){
-  $inputFile=Join-Path $projectRoot "build/release/$file"
+  $inputFile=Join-Path $buildRoot $file
   if(-not (Test-Path -LiteralPath $inputFile)){ throw "缺少已构建文件：$file" }
   Copy-Item -LiteralPath $inputFile -Destination $modRoot -Force
 }
-$assetBridge=Join-Path $projectRoot 'build/release/module-assets/MmlCpkBridge.dll'
+$assetBridge=Join-Path $buildRoot 'module-assets/MmlCpkBridge.dll'
 if(-not (Test-Path -LiteralPath $assetBridge)){ throw '缺少 NativeAOT 官方 CPK 读取组件 MmlCpkBridge.dll。' }
 Copy-Item -LiteralPath $assetBridge -Destination $modRoot -Force
 Copy-Item -LiteralPath config/config.toml -Destination (Join-Path $modRoot 'config.toml') -Force
@@ -44,9 +52,14 @@ if($licenseStart -lt 0){ throw '未找到 bcdec 许可证。' }
 [IO.File]::WriteAllText((Join-Path $modRoot 'licenses/bcdec.txt'),$bcdecSource.Substring($licenseStart),[Text.UTF8Encoding]::new($false))
 # 显式允许清单防止源码、开发文档、截图、研究脚本或预览程序再次混入玩家包。
 $allowed=@('DivaInGameSearch.dll','MmlCpkBridge.dll','DivaTextureDecoder.dll','config.toml','settings.ini','README.zh-CN.txt','README.en.txt','LICENSE','THIRD_PARTY_NOTICES.md','data/base_pv_db.txt','data/dlc_pv_db.txt','licenses/ImGui.txt','licenses/Detours.md','licenses/DivaModLoader.md','licenses/toml++.txt','licenses/NewClassics.txt','licenses/ReDIVA.txt','licenses/QuantumSwitch.txt','licenses/MikuMikuSwitchPlugin.txt','licenses/miniz.txt','licenses/MikuMikuLibrary.md','licenses/MikuMikuLibrary-Dependencies.md','licenses/bcdec.txt')
+if($TestVariant){
+  Copy-Item -LiteralPath config/HDR_UI_TEST.zh-CN.txt -Destination (Join-Path $modRoot 'HDR_UI_TEST.zh-CN.txt') -Force
+  $allowed+='HDR_UI_TEST.zh-CN.txt'
+}
 $actual=@(Get-ChildItem -LiteralPath $modRoot -Recurse -File | ForEach-Object {[IO.Path]::GetRelativePath($modRoot,$_.FullName).Replace('\','/')})
 if(@(Compare-Object $allowed $actual).Count){throw '安装包文件与允许清单不一致，已拒绝打包。'}
-$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.2.5-win64.zip'
+$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.3.0-win64.zip'
+if($TestVariant){$zip=Join-Path $releaseRoot "DivaInGameSearch-1.3.0-win64-$TestVariant-test.zip"}
 Compress-Archive -LiteralPath $modRoot -DestinationPath $zip -Force
 $utf8=[Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText(($zip+'.sha256'),(Get-FileHash $zip -Algorithm SHA256).Hash+'  '+[IO.Path]::GetFileName($zip)+"`n",$utf8)

@@ -1,6 +1,7 @@
 #pragma once
 #include "i18n.h"
 #include "customization.h"
+#include "native_layout.h"
 #include <string>
 
 namespace diva {
@@ -9,6 +10,12 @@ enum class CustomizationAction { Locate, Preview, Equip, Remove };
 enum class CustomizationOrigin { CardSingleClick, CardDoubleClick, HoverButton, Keyboard, Footer };
 enum class CustomizationScope { Unknown, Common, Song };
 enum class Ownership { Unknown, Unowned, Owned };
+
+// 参数 scope 为原生范围值；仅已知A/B/C映射为共通，未知值保持未知，不能冒充共通配置。
+inline CustomizationScope NativeCustomizationScope(int scope) {
+    return scope==native::CustomizeScope::Song?CustomizationScope::Song
+        :scope>=native::CustomizeScope::CommonA && scope<=native::CustomizeScope::CommonC?CustomizationScope::Common:CustomizationScope::Unknown;
+}
 
 // 稳定身份贯穿查询、路由和原生执行，不使用结果行号作为目标。
 struct CustomizationLocateRequest {

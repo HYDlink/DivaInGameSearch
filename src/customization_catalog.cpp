@@ -1,5 +1,6 @@
 #include "i18n.h"
 #include "customization.h"
+#include "customization_names.h"
 #include "farc.h"
 #include "module_assets.h"
 #include <toml.hpp>
@@ -13,8 +14,6 @@
 
 namespace diva {
 namespace {
-// 语言表偏移核对门槛：参与比对的官方条目下限，以及日文表与实体表原名一致的最低百分比。
-constexpr size_t kLanguageOffsetMinimum=20,kLanguageOffsetPercent=90;
 // 参数 path 为文件系统路径，转换为可保存的UTF-8，不使用本机ANSI代码页。
 std::string PathText(const fs::path& path) {auto text=path.generic_u8string();return std::string(reinterpret_cast<const char*>(text.data()),text.size());}
 // 参数 text 为UTF-8路径字符串，保持中文目录可用。
@@ -118,10 +117,10 @@ constexpr OfficialRegionProfile kOfficialModules{CustomizationKind::Module,"gm_m
 // 定制表 DLC 路径沿用模型表的 rom_steam_region_dlc 与 diva_dlc00_region.cpk 命名，属于待本机核对的假设。
 constexpr OfficialRegionProfile kOfficialCustomizeItems{CustomizationKind::Accessory,"gm_customize_item_tbl.farc","gm_customize_item_id.bin",
     "official:pc-region-customize","official:pc-region-dlc-customize","官方PC基础地区定制表","官方PC DLC地区定制表","官方PC地区定制表","定制表"};
-// 参数 tables/profile/roots/merged/out 为官方候选表、表类别、启用Mod根、合并目标与目录快照。
+// 参数 tables/profile/roots/merged/baseline/out 为官方候选表、表类别、启用Mod根、有效实体、原始官方基准与目录快照。
 // 只接受已核对的 PC 地区路径；启用Mod提供同逻辑普通表时官方整表退出，追加表仍按稳定ID覆盖。
 void MergeOfficialRegionTables(const std::vector<OfficialEntityTable>& tables,const OfficialRegionProfile& profile,const std::vector<Root>& roots,
-                               std::map<CustomizationKey,CustomizationItem>& merged,CustomizationCatalog& out) {
+                               CustomizationItemMap& merged,CustomizationItemMap& baseline,CustomizationCatalog& out) {
     bool replaced=false;
     for(const auto& root:roots) {
         std::string reason;
@@ -138,10 +137,14 @@ void MergeOfficialRegionTables(const std::vector<OfficialEntityTable>& tables,co
         const std::string identity=table==base?profile.baseId:profile.dlcId;
         out.sources.push_back({identity,table==base?profile.baseName:profile.dlcName,"","",false});
         out.configurationKey+=table->fingerprint+"\n";
-        if(replaced) continue;
         auto items=ReadCustomizationText(table->tableText,profile.kind,identity,out.diagnostics);
         if(profile.kind==CustomizationKind::Accessory) out.diagnostics.push_back(std::string(table==base?profile.baseName:profile.dlcName)+"："+std::to_string(items.size())+" 条定制实体。");
-        for(auto& item:items) {item.metadataState=profile.metadataState;Overlay(merged,std::move(item));}
+        for(auto& item:items) {
+            item.metadataState=profile.metadataState;
+            // 原始官方基准仅供名称身份核验，不恢复被Mod整表删除的实体。
+            Overlay(baseline,item);
+            if(!replaced) Overlay(merged,std::move(item));
+        }
     }
     if(replaced) out.diagnostics.push_back(std::string("启用Mod提供普通rom/")+profile.archive+"，官方同逻辑"+profile.label+"整表退出，不保留其被删除的ID。");
     if(!base && !dlc && !tables.empty()) out.diagnostics.push_back(profile.kind==CustomizationKind::Module?std::string("发现官方表，但未匹配已支持的PC地区路径；未任意合并其他平台表。")
@@ -149,7 +152,7 @@ void MergeOfficialRegionTables(const std::vector<OfficialEntityTable>& tables,co
 }
 }
 OfficialTableSource ProductionOfficialTables() {
-    return {ReadOfficialModuleTables,ReadOfficialCustomizeItemTables};
+    return {ReadOfficialModuleTables,ReadOfficialCustomizeItemTables,ReadOfficialCpkEntries};
 }
 // 参数 stream/kind/source/diagnostics 为受限文本流、种类、来源与诊断。
 std::vector<CustomizationItem> ReadCustomizationStream(std::istream& stream,CustomizationKind kind,const std::string& source,std::vector<std::string>& diagnostics) {
@@ -228,11 +231,11 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
             if(!directory.empty()) {inactiveModSources.insert(id);out.diagnostics.push_back("导入来源当前未匹配启用的Mod/include，标为离线导入："+id);}
         }
     }
-    std::map<CustomizationKey,CustomizationItem> merged;
+    CustomizationItemMap merged,baseline;
     // 官方目录使用PC地区表；DLC地区表是独立明确来源，不从PS4/Switch同名表任取版本。
     // 模型表与定制表（发型KAMI及四部位道具）分别读取，按各自稳定ID空间合并，不硬编码条目数量。
-    if(official.modules) MergeOfficialRegionTables(official.modules(game,home,out.diagnostics),kOfficialModules,roots,merged,out);
-    if(official.customizeItems) MergeOfficialRegionTables(official.customizeItems(game,home,out.diagnostics),kOfficialCustomizeItems,roots,merged,out);
+    if(official.modules) MergeOfficialRegionTables(official.modules(game,home,out.diagnostics),kOfficialModules,roots,merged,baseline,out);
+    if(official.customizeItems) MergeOfficialRegionTables(official.customizeItems(game,home,out.diagnostics),kOfficialCustomizeItems,roots,merged,baseline,out);
     // 最终清单是用户导入目录，不能通过自填优先级宣称游戏生效集合。
     if(valid) if(auto items=manifest["items"].as_array()) for(auto& node:*items) if(auto table=node.as_table()) {
         auto source=(*table)["source"].value_or<std::string>("");if(!sourceIds.contains(source)) {out.diagnostics.push_back("项目引用未登记来源，跳过");continue;}
@@ -320,42 +323,7 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
     for(const auto& root:roots) if(std::none_of(automatic.begin(),automatic.end(),[&](const auto& table){return table.source==root.id;})) {
         out.diagnostics.push_back("未检测到标准定制实体定义："+root.id+"；资源替换、PV引用或DLL动态注册需另行核查。");
     }
-    // 已核查的PC语言表中，官方模型使用ID+0x113，发型与道具使用ID+0x3a8；Mod名称随后按DML优先级覆盖。
-    // 用日文语言表逐条比对实体表原名（日文）来确认偏移适用于本机数据，再取界面语言对应的名称。
-    if(out.language.size()==2 && out.language.find_first_not_of("abcdefghijklmnopqrstuvwxyz")==std::string::npos) {
-        // 参数 kind 为定制种类；返回该种类在语言表中的ID偏移。
-        const auto offsetOf=[](CustomizationKind kind) {return kind==CustomizationKind::Module?0x113:0x3a8;};
-        // 参数 language 为语言目录代码；返回PC版语言表字符串与指纹，找不到时为空。
-        const auto readStrings=[&](const std::string& language)->std::optional<std::pair<std::map<int,std::string>,std::string>> {
-            const auto suffix="rom/lang2/"+language+"/str_array.bin";
-            for(const auto& entry:ReadOfficialCpkEntries(game,home,suffix,out.diagnostics)) if(entry.internalPath=="rom_steam/"+suffix) return std::pair{ReadCustomizationStrings(entry.entryData),entry.fingerprint};
-            return std::nullopt;
-        };
-        const auto localized=readStrings(out.language);
-        if(!localized || localized->first.empty()) out.diagnostics.push_back("未读取到官方定制语言表："+out.language+"；官方条目保留实体表原名。");
-        else {
-            out.configurationKey+=localized->second+"\n";
-            // 模型与定制道具分别核对；核对不通过的种类保留实体表原名，不贴错名称。
-            std::map<CustomizationKind,bool> trusted{{CustomizationKind::Module,false},{CustomizationKind::Accessory,false}};
-            const auto japanese=out.language=="jp"?localized:readStrings("jp");
-            if(!japanese || japanese->first.empty()) out.diagnostics.push_back("未读取到日文定制语言表，无法核对偏移；官方条目保留实体表原名。");
-            else for(auto& [kind,accepted]:trusted) {
-                size_t total=0,matched=0;
-                for(const auto& [key,item]:merged) if(key.kind==kind && item.definitionSource.starts_with("official:") && key.id<=100000-offsetOf(kind)) {
-                    const auto original=item.rawFields.find("name");if(original==item.rawFields.end() || original->second.empty()) continue;
-                    ++total;const auto name=japanese->first.find(key.id+offsetOf(kind));if(name!=japanese->first.end() && name->second==original->second) ++matched;
-                }
-                accepted=total>=kLanguageOffsetMinimum && matched*100>=total*kLanguageOffsetPercent;
-                out.diagnostics.push_back(std::string("官方")+(kind==CustomizationKind::Module?"模型":"定制道具")+"语言表偏移核对：日文一致 "+std::to_string(matched)+"/"+std::to_string(total)+(accepted?"，采用。":"，不足，保留实体表原名。"));
-            }
-            for(auto& [key,item]:merged) if(item.definitionSource.starts_with("official:") && trusted[key.kind]) {
-                if(key.id>100000-offsetOf(key.kind)) continue;
-                const auto name=localized->first.find(key.id+offsetOf(key.kind));if(name==localized->first.end()) continue;
-                item.namesByLanguage[out.language]=name->second;item.name=name->second;
-            }
-            out.diagnostics.push_back("官方定制语言表："+out.language+"，有效字符串 "+std::to_string(localized->first.size())+" 条。");
-        }
-    }
+    LocalizeOfficialCustomizationNames(merged,baseline,official,home,game,out);
     std::set<CustomizationKey> named;
     for(const auto& root:roots) {
         for(const auto* rom:{"rom","rom_steam","rom_steam_en","rom_steam_cn"}) for(const auto* filename:{"gm_module_tbl.farc","mod_gm_module_tbl.farc","gm_customize_item_tbl.farc","mod_gm_customize_item_tbl.farc"}) {
@@ -383,7 +351,10 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
                 if(item==merged.end()) {++out.orphanNames;continue;}
                 item->second.aliases.push_back(*name);
                 if(std::none_of(item->second.sources.begin(),item->second.sources.end(),[&](const auto& contribution){return contribution.source==root.id && contribution.role==CustomizationContributionRole::Name;})) item->second.sources.push_back({root.id,CustomizationContributionRole::Name,false});
-                if(named.insert(key).second) {item->second.name=*name;item->second.nameSource=root.id;for(auto& contribution:item->second.sources) if(contribution.source==root.id && contribution.role==CustomizationContributionRole::Name) contribution.effective=true;}
+                if(named.insert(key).second) {
+                    item->second.name=*name;item->second.nameSource=root.id;
+                    for(auto& contribution:item->second.sources) if(contribution.role==CustomizationContributionRole::Name) contribution.effective=contribution.source==root.id;
+                }
             }
         }
         // 其他真实语言名称仅用于搜索，不能抢占显示语言优先级。
@@ -402,6 +373,9 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         if(!named.contains(key)) {auto localized=item.namesByLanguage.find(out.language);if(localized!=item.namesByLanguage.end()) item.name=localized->second;}
         if(item.name.empty()) item.name=Trf(key.kind==CustomizationKind::Module?Tx::name_fallback_module:item.part==CustomizationPart::Hair?Tx::name_fallback_hair:Tx::name_fallback_accessory,{{"id",std::to_string(key.id)}});
         if(!CustomizationItemDomain(item)) ++unknownParts;
+    }
+    ApplyUserModuleNames(merged,home,out);
+    for(auto& [key,item]:merged) {
         PrepareCustomizationItem(item,out);out.items.push_back(std::move(item));
     }
     // 未知部位保留在快照与诊断中，不自动当成发型或头部。
@@ -418,6 +392,8 @@ CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::pat
         for(const auto& path:imageFiles) Fingerprint(path,out);
     }
     out.catalogFingerprint=Hash(out.configurationKey);
+    out.diagnostics.push_back("名称合并完成：显示语言 "+out.language+"，有效实体 "+std::to_string(out.items.size())+
+        " 件，分组名称补丁采用 "+std::to_string(named.size())+" 件。");
     if(out.items.empty()) out.diagnostics.push_back("未检测到可读取的服装／饰品实体。请查看来源诊断。");
     if(out.unimportedArchives) out.diagnostics.push_back("发现 "+std::to_string(out.unimportedArchives)+" 个实体归档读取失败；详见来源诊断。");
     if(out.orphanNames) out.diagnostics.push_back("忽略 "+std::to_string(out.orphanNames)+" 个孤立名称补丁；名称不会创建实体。");

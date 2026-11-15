@@ -89,16 +89,26 @@ struct OfficialEntityTable {
     std::string tableText;
     std::string fingerprint;
 };
-// 官方实体表读取入口；生产使用随包 CPK 桥接，隔离测试注入合成表而不访问游戏目录。
+// 官方 CPK 条目及其游戏内逻辑路径；实体和语言表共用，entryData 只在显式读取时保留。
+struct OfficialCpkEntry {
+    fs::path cpkPath;
+    std::string internalPath;
+    std::string logicalPath;
+    std::string entryData;
+    std::string fingerprint;
+};
+// 官方数据读取入口；生产使用随包 CPK 桥接，隔离测试注入合成表而不访问游戏目录。
 struct OfficialTableSource {
     // 参数 game/home/diagnostics 为游戏目录、插件目录与诊断接收器；返回官方模型表候选。
     std::function<std::vector<OfficialEntityTable>(const fs::path&,const fs::path&,std::vector<std::string>&)> modules;
     // 参数同上；返回官方 gm_customize_item_id.bin 候选（发型与四部位道具）。
     std::function<std::vector<OfficialEntityTable>(const fs::path&,const fs::path&,std::vector<std::string>&)> customizeItems;
+    // 参数 game/home/suffix/diagnostics 为游戏目录、插件目录、语言表路径后缀与中文诊断接收器。
+    std::function<std::vector<OfficialCpkEntry>(const fs::path&,const fs::path&,const std::string&,std::vector<std::string>&)> strings;
 };
 // 返回生产官方表来源：随包 CPK 桥接读取模型表及定制表。
 OfficialTableSource ProductionOfficialTables();
-// 参数 home/game 为插件和游戏目录；后台只读当前启用Mod归档与可选兼容导入。
+// 参数 home/game 为插件和游戏目录；后台读取当前启用Mod归档与可选兼容导入，只在插件目录生成服装名称模板和参照表。
 // 参数language为显式目录语言；玩家界面传界面语言对应的语言表，审计未提供时使用导入设置或界面语言。
 CustomizationCatalog LoadCustomizationCatalog(const fs::path& home,const fs::path& game,const std::string& language="");
 // 参数 home/game/language 同上，official 为官方表来源；测试可注入合成官方表。

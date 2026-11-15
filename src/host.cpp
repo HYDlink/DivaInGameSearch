@@ -1,4 +1,5 @@
 #include "host.h"
+#include "ui_theme.h"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
@@ -207,6 +208,24 @@ ImTextureID Host::UploadPreviewPixels(const CustomizationKey& key,const unsigned
     modulePreviewBytes+=bytes;
     return static_cast<ImTextureID>(static_cast<void*>(view));
 }
+// 参数 knownLuma 为实际插件识别；后台读取与显示器查询不阻塞游戏帧，也不写回其他 Mod。
+UiWhiteDecision Host::SyncUiWhite(bool knownLuma) {
+    if(view.uiWhiteNits>0 || !knownLuma) return ResolveUiWhite(view.uiWhiteNits,{});
+    if(uiColorProfileGame!=view.game) {uiColorProfile={};nextUiColorProfileRead=0;}
+    if(uiColorProfilePending.valid() && uiColorProfilePending.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+        try {auto profile=uiColorProfilePending.get();if(uiColorProfileGame==view.game) uiColorProfile=std::move(profile);}
+        catch(...) {uiColorProfile={};}
+    }
+    const auto now=GetTickCount64();
+    if(!uiColorProfilePending.valid() && now>=nextUiColorProfileRead) {
+        uiColorProfileGame=view.game;nextUiColorProfileRead=now+1000;
+        const auto file=view.game/"ReShade.ini";const auto gameWindow=window;
+        // 参数 file/gameWindow 为只读配置与窗口；任务不捕获宿主对象，关闭时不产生悬空访问。
+        try {uiColorProfilePending=view.searchExecutor->Submit([file,gameWindow] {return ReadUiColorProfile(file,gameWindow);});}
+        catch(...) { /* 后台资源暂不可用时保留已知快照，下一轮刷新重试。 */ }
+    }
+    return ResolveUiWhite(0,uiColorProfile);
+}
 // 初始化曲库、收藏和 ImGui；参数 home/game 为工作资源与游戏目录。
 void Host::Init(const fs::path& home,const fs::path& game) {
     std::lock_guard lock(mutex);
@@ -254,6 +273,7 @@ bool Host::Attach(IDXGISwapChain* chain,ID3D11Device* newDevice,ID3D11DeviceCont
         if(device==newDevice && window==desc.OutputWindow) return true;
         ResetInputState("图形设备或窗口重绑");
         ClearPreviewTextures();
+        uiColorRenderer.Reset();lastUiColorDiagnostic.clear();
         ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); initialized=false;
         if(previous && (WNDPROC)GetWindowLongPtrW(window,GWLP_WNDPROC)==SearchWndProc) {
             SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)previous);previous=nullptr;
@@ -448,8 +468,9 @@ void Host::Frame(IDXGISwapChain* chain) {
     UpdateInputCapture(GetTickCount64());
     if(!view.open && !preview) return;
     if(view.fontDirty) {
-        ImGui_ImplDX11_InvalidateDeviceObjects(); ImGui::GetIO().Fonts->Clear(); SetupStyle(view.fontSize); view.fontDirty=false;
+        ImGui_ImplDX11_InvalidateDeviceObjects(); ImGui::GetIO().Fonts->Clear(); SetupStyle(view.fontSize); view.fontDirty=false; view.styleDirty=false;
     }
+    if(view.styleDirty) { ApplyUiTheme(ImGui::GetStyle()); view.styleDirty=false; }
     // 每帧读取真实后缓冲：游戏更改渲染分辨率时，客户区不一定同步变化。
     // UI 与鼠标继续使用 Win32 客户区坐标，只有 DX11 视口和裁剪转换到后缓冲像素。
     ID3D11Texture2D* buffer=nullptr;
@@ -470,21 +491,40 @@ void Host::Frame(IDXGISwapChain* chain) {
     buffer=nullptr; ID3D11RenderTargetView* target=nullptr;
     PerformanceStageScope rendering(view.performance->current.render);
     if(SUCCEEDED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer)))) {
-        device->CreateRenderTargetView(buffer,nullptr,&target); buffer->Release();
+        device->CreateRenderTargetView(buffer,nullptr,&target);
     }
     if(target) {
-        ID3D11RenderTargetView* previousTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{}; ID3D11DepthStencilView* depth=nullptr;
-        deviceContext->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,previousTargets,&depth);
-        deviceContext->OMSetRenderTargets(1,&target,nullptr); ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        deviceContext->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,previousTargets,depth);
-        for(auto rt:previousTargets) if(rt) rt->Release(); if(depth) depth->Release(); target->Release();
+        // 十位后缓冲也可能是 SDR；自动适配要求官方命名的 Luma 同时存在。
+        const bool knownLuma=HasKnownDivaLuma();
+        const auto output=ResolveUiColorOutput(view.uiOutputMode,bufferDesc.Format,knownLuma);
+        const auto white=output==UiColorOutput::Legacy?UiWhiteDecision{}:SyncUiWhite(knownLuma);
+        HRESULT colorResult=S_OK;
+        if(output==UiColorOutput::Legacy) {
+            uiColorRenderer.Reset();
+            ID3D11RenderTargetView* previousTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{}; ID3D11DepthStencilView* depth=nullptr;
+            deviceContext->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,previousTargets,&depth);
+            deviceContext->OMSetRenderTargets(1,&target,nullptr); ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            deviceContext->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,previousTargets,depth);
+            for(auto rt:previousTargets) if(rt) rt->Release();if(depth) depth->Release();
+        } else {
+            colorResult=uiColorRenderer.Render(device,deviceContext,buffer,target,ImGui::GetDrawData(),output,white.nits,&view.hdrBackgroundBounds);
+        }
+        const auto colorDiagnostic=std::string("界面色彩：")+UiColorOutputName(output)+"；配置="+view.uiOutputMode
+            +"；后缓冲格式="+std::to_string(bufferDesc.Format)+"；已知 Luma="+(knownLuma?"是":"否")
+            +"；界面白亮度="+std::to_string(white.nits)+" 尼特；亮度来源="+white.source
+            +"；Luma 显示模式="+(uiColorProfile.displayMode?std::to_string(*uiColorProfile.displayMode):"未知")+"；结果="+std::to_string(colorResult)
+            +(FAILED(colorResult)?"；本帧未提交界面，请检查图形设备或将 ui_color_output 设为 sdr 回退":"");
+        if(colorDiagnostic!=lastUiColorDiagnostic) {lastUiColorDiagnostic=colorDiagnostic;if(diagnostic) diagnostic(colorDiagnostic);}
+        target->Release();
     }
+    if(buffer) buffer->Release();
 }
 // 仅在宿主控制的正常关闭流程清理。
 void Host::Shutdown() {
     std::lock_guard lock(mutex); if(!context) return;
     ResetInputState("宿主关闭");
     ClearPreviewTextures();
+    uiColorRenderer.Reset();lastUiColorDiagnostic.clear();
     // 仅受控的预览或测试退出调用此处；等待副本任务结束，防止工作线程跨过 CRT 静态资源销毁。
     // 游戏帧和 DllMain 不调用 Shutdown，不能把这些等待挪到游戏生命周期回调。
     if(view.pending.valid()) view.pending.wait();

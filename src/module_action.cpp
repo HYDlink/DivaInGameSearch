@@ -3,6 +3,7 @@
 #include "native_page_router.h"
 #include "module_category.h"
 #include "native_memory.h"
+#include "native_customization_config.h"
 #include <Windows.h>
 #include <array>
 #include <atomic>
@@ -50,22 +51,9 @@ struct Transaction {
 } active;
 ModuleLocateStatus status;
 
-// 参数page/id为已核对的单曲槽位与独立装备值；复用681CE0的配置获取路径，不从当前分类列表反推装备。
+// 参数page/id为当前范围槽位与独立装备值；复用681CE0的配置获取路径，支持共通A/B/C及单曲。
 bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
-    if(page.slot<0 || page.slot>=6 || page.slot>=page.slotCount || page.nativeScope!=CustomizeScope::Song || page.sourcePvid<=0 || page.sourcePvid>=10000000) return false;
-    uintptr_t overrideTable=0,record=0;
-    if(!ReadAt(page.controller+0x10,overrideTable)) return false;
-    if(overrideTable) record=overrideTable+static_cast<uintptr_t>(page.slot)*0x1C;
-    // 播放列表来源的独立记录就在 controller+0x10；该指针不可用时不能退回单曲getter冒充当前槽位配置。
-    else if(IsPlaylistCustomization(page)) return false;
-    else {
-        // 原生getter沿既有Mod链返回当前曲目/槽位配置；仅在游戏状态帧读取，不调用保存或更换入口。
-        __try {
-            auto* save=reinterpret_cast<void*(__fastcall*)()>(base+rva::kGetSaveData)();
-            if(!save) return false;
-            record=reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+rva::kGetPvSlotConfig)(save,page.sourcePvid,page.slot);
-        } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
-    }
+    const auto record=ReadCustomizationSlotRecord(base,page.controller,page.nativeScope,page.sourcePvid,page.slot,page.slotCount,IsPlaylistCustomization(page));
     return record && ReadAt(record,id) && id>=0;
 }
 
@@ -115,16 +103,15 @@ bool SameActionConfiguration(const Snapshot& a,const Snapshot& b) {
         && a.equippedId==b.equippedId && a.models==b.models
         && SamePlaylistAnchor(a,b);
 }
-// 参数s为当前快照；首批仅开放已直接核对的单曲范围，共通A/B仍保留明确禁用原因。
+// 参数s为当前快照；共通A/B/C与单曲均核对独立装备、实际模型及槽位，不以配置范围直接禁用动作。
 bool CertifiedContext(const Snapshot& s) {
-    return s.valid && s.page.nativeScope==CustomizeScope::Song && s.page.sourcePvid>0 && s.page.sourcePvid<10000000
-        && s.page.slotCount>=1 && s.page.slotCount<=6 && s.page.slot>=0 && s.page.slot<s.page.slotCount
+    return s.valid && ValidCustomizationSlot(s.page.nativeScope,s.page.sourcePvid,s.page.slot,s.page.slotCount)
         && s.equippedId>=0 && s.category>=0 && s.category<=6
         && s.models[s.page.slot]==s.equippedId;
 }
 // 参数s为当前真实快照；把范围限制与独立装备读取失败分别说明，避免统一误报为角色不支持。
 std::string ContextRejection(const Snapshot& s) {
-    if(s.page.nativeScope!=CustomizeScope::Song) return Tr(Tx::moduleop_shared_scope);
+    if(NativeCustomizationScope(s.page.nativeScope)==CustomizationScope::Unknown) return Tr(Tx::modloc_scope_unknown);
     if(s.page.slot<0 || s.page.slot>=s.page.slotCount || s.page.slotCount<1 || s.page.slotCount>6) return Tr(Tx::moduleop_slot_unknown);
     if(!s.valid || s.equippedId<0) return Tr(Tx::moduleop_config_unreadable);
     if(s.models[s.page.slot]!=s.equippedId) return Tr(Tx::moduleop_model_loading);
@@ -381,7 +368,7 @@ bool SubmitModuleAction(const CustomizationLocateRequest& request,std::string& m
     if(active.phase!=Phase::Idle && active.phase!=Phase::Done) return reject(Tr(Tx::moduleop_already_running));
     if(!base || !latest.page.idle || !CertifiedContext(latest) || GetTickCount64()-lastFrame>500) return reject(Tr(Tx::moduleop_not_certified));
     if(request.contextGeneration!=generation || request.slot!=latest.page.slot || request.nativeScope!=latest.page.nativeScope
-        || request.scope!=CustomizationScope::Song || request.uiGeneration!=uiGeneration) return reject(Tr(Tx::moduleop_context_expired));
+        || request.scope!=NativeCustomizationScope(latest.page.nativeScope) || request.uiGeneration!=uiGeneration) return reject(Tr(Tx::moduleop_context_expired));
     if(!request.serial || request.serial<=lastSerial || request.catalogFingerprint.empty() || request.catalogFingerprint.size()>256
         || (!lockedCatalogFingerprint.empty() && lockedCatalogFingerprint!=request.catalogFingerprint)) return reject(Tr(Tx::moduleop_identity_bad));
     const int targetCategory=ModuleMenuCategory(request.character);
@@ -419,7 +406,7 @@ CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey&
     c.targetPage=latest.page.page==NativePage::Module && GetTickCount64()-lastFrame<=500;
     c.busy=active.phase!=Phase::Idle && active.phase!=Phase::Done && active.phase!=Phase::Preview;
     c.contextGeneration=generation;c.slot=latest.page.slot;c.nativeScope=latest.page.nativeScope;
-    c.scope=c.nativeScope==CustomizeScope::Song?CustomizationScope::Song:c.nativeScope>=CustomizeScope::CommonA && c.nativeScope<CustomizeScope::Song?CustomizationScope::Common:CustomizationScope::Unknown;
+    c.scope=NativeCustomizationScope(c.nativeScope);
     if(!CertifiedContext(latest)) {c.previewReason=c.equipReason=ContextRejection(latest);return c;}
     if(c.busy) {c.previewReason=c.equipReason=Tr(Tx::moduleop_finish_first);return c;}
     const auto found=cards.find(key.id);int targetCategory=ModuleMenuCategory(targetCharacter);
@@ -448,7 +435,7 @@ bool RequestModulePreviewExit(const CustomizationLocateRequest& request,std::str
     using namespace action_runtime;std::unique_lock lock(mutex,std::try_to_lock);
     if(!lock.owns_lock() || active.phase!=Phase::Preview || !status.previewReady) {message=Tr(Tx::moduleop_preview_state_wait);return false;}
     if(request.serial<=active.request.serial || request.catalogFingerprint!=active.request.catalogFingerprint || request.uiGeneration!=uiGeneration
-        || (request.action!=CustomizationAction::Locate && (request.slot!=active.before.page.slot || request.nativeScope!=active.before.page.nativeScope || request.scope!=CustomizationScope::Song))) {
+        || (request.action!=CustomizationAction::Locate && (request.slot!=active.before.page.slot || request.nativeScope!=active.before.page.nativeScope || request.scope!=NativeCustomizationScope(active.before.page.nativeScope)))) {
         message=Tr(Tx::moduleop_continuation_expired);return false;
     }
     active.phase=Phase::Exiting;active.abandoned=true;active.exitSubmitted=false;active.stable=0;active.deadline=GetTickCount64()+15000;

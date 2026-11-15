@@ -24,6 +24,8 @@ struct View {
     std::shared_ptr<PerformanceTrace> performance=std::make_shared<PerformanceTrace>();
     // 报告仅在显式导出时后台写入，不把逐字符日志放进游戏帧。
     std::future<std::string> performanceExport;
+    // 主题切换后写回 settings.ini 的后台结果；不在帧内等待。
+    std::future<bool> themeSave;
     SearchTiming searchTiming;
     // 界面可变状态；曲库通过后台任务产生不可变快照。
     fs::path home,game;
@@ -49,9 +51,17 @@ struct View {
     char input[512]{};
     int selectedId=0,currentDifficulty=3;
     int shortcut=0x46;
-    float fontSize=19, rowHeight=68, opacity=0.97f;
+    float fontSize=19, rowHeight=64, opacity=0.97f;
+    // 独立色彩适配：普通 SDR 保留原路径，未知插件可显式指定 hdr10 或 scrgb。
+    std::string uiOutputMode="auto";
+    // HDR 界面白亮度，0 为按实际 Luma 配置自动解析；正数为玩家明确指定的尼特值。
+    float uiWhiteNits=0;
+    // 本帧主窗口的逻辑边界，只供 HDR 背景透底兼容；不改透明度设置或图片颜色。
+    ImVec4 hdrBackgroundBounds{};
     bool open=false,focus=true,dirty=true,composing=false,imeGuard=false,closeOnSuccess=true;
     bool requestEnter=false,requestEscape=false,fontDirty=false;
+    // 主题改变后在下一帧开始前重新套用样式；不重建字体图集。
+    bool styleDirty=false;
     // 连按 Enter 的按下时刻与跨页标记；enterPvid/enterRevision 为第一下实际定位的目标，第二下必须一致。
     uint64_t enterPressTick=0,enterGuardUntil=0,enterRevision=0;
     int enterPvid=0;
@@ -122,6 +132,8 @@ struct View {
     void Draw();
     // 重载可安全实时应用的界面配置。
     void ReloadStyle();
+    // 切换珍珠白／深色主题，下一帧生效，并在后台把 ui_theme 写回 settings.ini。
+    void ToggleTheme();
 };
 // 初始化共享字体和色彩；参数 size 为初始字体大小。
 void SetupStyle(float size);

@@ -1,5 +1,6 @@
 #include "customization_item_profiles.h"
 #include "native_memory.h"
+#include "native_customization_config.h"
 #include <Windows.h>
 #include <algorithm>
 #include <mutex>
@@ -28,20 +29,13 @@ bool ReadPcOwnership(uintptr_t base,uintptr_t record,bool& owned) {
         if(result>1) return false;owned=result!=0;return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
-// 参数 base/frame/slot 为当前构建、单曲配置上下文与歌者槽位；读取持久配置，不用临时显示字段代替装备。
+// 参数 base/frame/slot 为当前构建、范围上下文与歌者槽位；六槽均通过原生范围获取器读取，不用临时显示代替装备。
 uintptr_t SavedPcSlot(uintptr_t base,const CustomizationItemFrame& frame,int slot) {
-    uintptr_t overrides=0;if(!ReadAt(frame.controller+0x10,overrides)) return 0;
-    if(overrides) return overrides+static_cast<uintptr_t>(slot)*0x1C;
-    // 播放列表来源的独立记录只在 controller+0x10；缺失时不退回单曲配置，避免把另一对象当成本槽装备。
-    if(frame.playlist) return 0;
-    __try {
-        auto* save=reinterpret_cast<void*(__fastcall*)()>(base+rva::kGetSaveData)();
-        return save?reinterpret_cast<uintptr_t(__fastcall*)(void*,int,int)>(base+rva::kGetPvSlotConfig)(save,frame.sourcePvid,slot):0;
-    } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+    return ReadCustomizationSlotRecord(base,frame.controller,frame.nativeScope,frame.sourcePvid,slot,6,frame.playlist);
 }
 // 参数 base/frame/spec/index/action 为核验构建、场景、列表规格、目标索引与动作；只允许已认证命令，不开放购买。
 bool CallPcAction(uintptr_t base,const CustomizationItemFrame& frame,const CustomizationItemNativeSpec& spec,size_t index,CustomizationAction action) {
-    if(!frame.idle || frame.nativeScope!=CustomizeScope::Song || frame.slotCount<1 || frame.slotCount>6 || frame.slot<0 || frame.slot>=frame.slotCount || index>0x7FFFFFFF) return false;
+    if(!frame.idle || !ValidCustomizationSlot(frame.nativeScope,frame.sourcePvid,frame.slot,frame.slotCount) || index>0x7FFFFFFF) return false;
     uintptr_t begin=0,end=0,record=0,callback=0,bound=0,function=0;int32_t current=-1;
     if(!ReadAt(frame.scene+*spec.listBegin,begin) || !ReadAt(frame.scene+*spec.listEnd,end) || end<begin || index>=(end-begin)/8
         || !ReadAt(begin+index*8,record) || !ReadAt(frame.scene+*spec.highlightIndex,current) || current!=static_cast<int32_t>(index)
@@ -70,7 +64,7 @@ bool CallPcAction(uintptr_t base,const CustomizationItemFrame& frame,const Custo
 bool ExitPcPreview(uintptr_t base,const CustomizationItemFrame& frame) {
     int32_t internal=-1;uint8_t direct=0;
     const uintptr_t flag=frame.domain==CustomizationDomain::Hair?0x27:0x2B;
-    if(!frame.valid || frame.nativeScope!=CustomizeScope::Song || !ReadAt(frame.state+0x18,internal) || internal!=2 || !ReadAt(frame.scene+flag,direct)) return false;
+    if(!frame.valid || !ValidCustomizationSlot(frame.nativeScope,frame.sourcePvid,frame.slot,frame.slotCount) || !ReadAt(frame.state+0x18,internal) || internal!=2 || !ReadAt(frame.scene+flag,direct)) return false;
     __try {
         const int next=direct?0:3;
         if(direct) *reinterpret_cast<uint8_t*>(frame.scene+flag)=0;
@@ -217,7 +211,7 @@ int InitializeCustomizationItemProfiles(uintptr_t base) {
                 uintptr_t begin=0;if(!ReadAt(frame.scene+*nativeSpec.listBegin,begin)) return false;
                 // 只有实际高亮的拥有状态需要查询；动作先定位，下一帧才提交，避免每帧遍历调用数百次。
                 if(out.highlightIndex) {uintptr_t record=0;bool owned=false;if(ReadAt(begin+*out.highlightIndex*8,record) && ReadPcOwnership(base,record,owned)) out.owned[*out.highlightIndex]=owned;}
-                if(frame.nativeScope!=CustomizeScope::Song || frame.sourcePvid<=0 || frame.slotCount<1 || frame.slotCount>6 || frame.slot<0 || frame.slot>=frame.slotCount) return true;
+                if(!ValidCustomizationSlot(frame.nativeScope,frame.sourcePvid,frame.slot,frame.slotCount)) return true;
                 for(int slot=0;slot<6;++slot) {
                     const auto saved=SavedPcSlot(base,frame,slot);int32_t id=-1;
                     // 独立保存读取不可用时仍可观察原生显示配置供卸除使用；不因此伪造装备／预览读回。

@@ -28,8 +28,29 @@ Double Enter or double-click  Jump there from another page
 Ctrl+P / Ctrl+E               Preview / equip
 Esc or click outside          Close
 
-The hotkey, font size, row height, opacity and language can be changed in
-settings.ini.
+The hotkey, font size, row height, opacity, language and theme can be changed in
+settings.ini. The panel is pearl white by default; the Theme button at the top right
+switches to the dark look and remembers the choice.
+
+=== Luma / HDR UI brightness ===
+Recognized DIVA Luma HDR10 / scRGB output is handled automatically to preserve UI
+and thumbnail detail. ui_white_nits=auto follows Luma's saved display mode and
+white-level settings. Ordinary SDR keeps the original rendering path.
+HDR window background transparency follows the original SDR appearance and keeps your opacity setting.
+If an earlier test package left ui_white_nits=203 in your settings, change it to auto.
+Renamed add-ons or custom ReShade config paths may require explicit settings.
+Check the color-path diagnostic in search-diagnostics.log when troubleshooting.
+Set ui_color_output=sdr to restore the original rendering path. Restart the game
+or use Reload style after changing settings.
+
+=== Personal module names in search ===
+Open module search once to generate module_names.toml in this mod's folder.
+Each row includes an ID, current name, definition name, character and source.
+Edit only the quoted value, save as UTF-8, then refresh the catalog from Options.
+Leave a value empty to keep the default. Previous names remain searchable.
+Only the search panel changes; the game's native menu names stay the same.
+Your file is never overwritten. Find new IDs in module_names_reference.toml,
+then copy their rows under [module] in your personal file. The reference is regenerated.
 
 === Game updates ===
 If a game update changes the executable from the verified version, locating

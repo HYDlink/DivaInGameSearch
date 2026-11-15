@@ -9,9 +9,14 @@
 | src/core.*、catalog.cpp | 数据模型、检索、来源合并与别名 |
 | src/ui.* | 游戏与预览共用的搜索界面 |
 | src/customization* | 服装／饰品导入、独立搜索、键盘格子和安全能力 stub；不写游戏内存 |
+| src/customization_names.* | 原始官方名称基准核验、语言表候选选择与同一物品译名继承；不改变有效实体集合 |
+| src/user_module_names.cpp | 个人搜索显示名、首份可编辑名称表和自动更新参照；不改游戏原生名称 |
 | src/host.* | Win32、IME、DX11、图形资源与输入捕获 |
+| src/ui_color_output.* | 独立 Luma／HDR UI 图层与色彩合成；普通 SDR 保留原绘制路径，见 HDR_UI_ADAPTATION.md |
+| src/ui_color_profile.* | 只读解析 Luma 已保存的模式、白亮度及系统参考白；由宿主后台执行器刷新，不在游戏帧读文件 |
 | src/game.* | 游戏构建校验、对象读取、原生列表定位 |
 | src/native_layout.h | 已核查构建的全部原生地址、结构偏移与枚举，并标注名字来源 |
+| src/native_customization_config.h | 共通 A/B/C、单曲及播放列表的独立槽位记录读取，复用游戏原生范围选择 |
 | src/selector.* | 请求校验、跨帧结果确认、超时与恢复 |
 | src/mod.cpp | DML 回调、初始化、定位提交和诊断 |
 | src/preview.cpp | 不访问游戏内存的界面预览 |

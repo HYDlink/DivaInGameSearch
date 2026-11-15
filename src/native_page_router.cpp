@@ -676,12 +676,13 @@ CustomizationActionCapability ReadCustomizationItemActionCapability(Customizatio
     const bool inPreview=CustomizationItemPreviewActive() && page.internal==2;
     capability.targetPage=(page.idle || inPreview) && page.page==TargetPage(domain);
     if(capability.contextGeneration!=page.scene || capability.slot!=page.slot || capability.nativeScope!=page.nativeScope) capability.remove=capability.equipped=false;
-    capability.slot=page.slot;capability.nativeScope=page.nativeScope;capability.scope=page.nativeScope==native::CustomizeScope::Song?CustomizationScope::Song:CustomizationScope::Common;
+    capability.slot=page.slot;capability.nativeScope=page.nativeScope;capability.scope=NativeCustomizationScope(page.nativeScope);
     capability.contextGeneration=page.scene;
     capability.busy=capability.busy || (CustomizationItemLocatorBusy() && !inPreview);
     // 播放列表来源的发型／道具记录同样读取 controller+0x10；歌者按来源歌曲与槽位解析，未知时仍在下方关闭写入。
     // 实际歌者未知时预览与更换不开放；人物兼容性由界面只读规则与执行器再次核对。
     if(!SingerOf(page)) {capability.preview=capability.equip=capability.remove=false;capability.previewReason=capability.equipReason=Tr(Tx::itemop_singer_unknown);}
+    if(capability.scope==CustomizationScope::Unknown) {capability.preview=capability.equip=capability.remove=false;capability.previewReason=capability.equipReason=Tr(Tx::modloc_scope_unknown);}
     // 不在目标页时任何能力都不开放；按钮与底栏只提示双击主体进入。
     if(!capability.targetPage) capability.locate=capability.preview=capability.equip=capability.remove=false;
     return capability;

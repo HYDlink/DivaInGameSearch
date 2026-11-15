@@ -1,5 +1,6 @@
 #include "host.h"
 #include "sprite_resolver.h"
+#include "ui_theme.h"
 #include <map>
 #include <shellapi.h>
 #include <wincodec.h>
@@ -10,6 +11,61 @@
 #include <algorithm>
 
 using Microsoft::WRL::ComPtr;
+// 离屏交换链：只用一张纹理充当后缓冲，供无可见桌面的会话（如 SSH 会话 0）和自动截图使用。
+// DXGI 不允许在非交互桌面上为窗口创建交换链（DXGI_ERROR_NOT_CURRENTLY_AVAILABLE），
+// 共用界面只调用 GetDesc／GetBuffer，预览循环另用 ResizeBuffers／Present，其余接口不支持。
+class OffscreenSwapChain final : public IDXGISwapChain {
+public:
+    // 参数 device/window/width/height 为渲染设备、ImGui 输入窗口和初始尺寸。
+    OffscreenSwapChain(ID3D11Device* device,HWND window,UINT width,UINT height):device(device),window(window) {Resize(width,height);}
+    // 参数 riid/object 为请求接口与输出指针。
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,void** object) override {
+        if(!object) return E_POINTER;
+        if(riid==__uuidof(IUnknown) || riid==__uuidof(IDXGIObject) || riid==__uuidof(IDXGIDeviceSubObject) || riid==__uuidof(IDXGISwapChain)) {*object=this;AddRef();return S_OK;}
+        *object=nullptr;return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override {return ++references;}
+    ULONG STDMETHODCALLTYPE Release() override {const ULONG left=--references;if(!left) delete this;return left;}
+    HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID,UINT,const void*) override {return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID,const IUnknown*) override {return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID,UINT*,void*) override {return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetParent(REFIID,void**) override {return E_NOTIMPL;}
+    // 参数 riid/object 为请求的设备接口与输出指针。
+    HRESULT STDMETHODCALLTYPE GetDevice(REFIID riid,void** object) override {return device->QueryInterface(riid,object);}
+    HRESULT STDMETHODCALLTYPE Present(UINT,UINT) override {return S_OK;}
+    // 参数 index/riid/surface 为缓冲序号、请求接口与输出指针；只有一张后缓冲。
+    HRESULT STDMETHODCALLTYPE GetBuffer(UINT index,REFIID riid,void** surface) override {return index?DXGI_ERROR_INVALID_CALL:buffer->QueryInterface(riid,surface);}
+    HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL,IDXGIOutput*) override {return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL* fullscreen,IDXGIOutput** target) override {if(fullscreen)*fullscreen=FALSE;if(target)*target=nullptr;return S_OK;}
+    // 参数 desc 为输出描述；OutputWindow 指向接收输入的预览窗口。
+    HRESULT STDMETHODCALLTYPE GetDesc(DXGI_SWAP_CHAIN_DESC* desc) override {
+        if(!desc) return E_POINTER;
+        D3D11_TEXTURE2D_DESC texture{};buffer->GetDesc(&texture);*desc={};
+        desc->BufferDesc.Width=texture.Width;desc->BufferDesc.Height=texture.Height;desc->BufferDesc.Format=texture.Format;
+        desc->SampleDesc.Count=1;desc->BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc->BufferCount=1;desc->OutputWindow=window;desc->Windowed=TRUE;
+        return S_OK;
+    }
+    // 参数 width/height 为新尺寸，0 表示保持原值；其余参数按 DXGI 签名保留。
+    HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT,UINT width,UINT height,DXGI_FORMAT,UINT) override {
+        D3D11_TEXTURE2D_DESC texture{};buffer->GetDesc(&texture);
+        return Resize(width?width:texture.Width,height?height:texture.Height);
+    }
+    HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC*) override {return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput**) override {return DXGI_ERROR_UNSUPPORTED;}
+    HRESULT STDMETHODCALLTYPE GetFrameStatistics(DXGI_FRAME_STATISTICS*) override {return DXGI_ERROR_UNSUPPORTED;}
+    HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT* count) override {if(count)*count=0;return S_OK;}
+private:
+    // 参数 width/height 为后缓冲像素尺寸；格式与窗口交换链一致。
+    HRESULT Resize(UINT width,UINT height) {
+        D3D11_TEXTURE2D_DESC desc{};desc.Width=width;desc.Height=height;desc.MipLevels=1;desc.ArraySize=1;
+        desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;desc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+        buffer.Reset();return device->CreateTexture2D(&desc,nullptr,&buffer);
+    }
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11Texture2D> buffer;
+    HWND window;
+    ULONG references=1;
+};
 // 为独立预览生成大列表和超长名称，不进入 DLL 或发行曲库。
 static diva::Catalog StressCatalog() {
     diva::Catalog catalog;
@@ -135,6 +191,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
     std::string initialQuery;bool initialQueryApplied=false;
     // 可选界面语言，如 en 或伪翻译 qps；空时按 settings.ini。
     std::string language;
+    // 可选界面主题 classic 或 pearl，覆盖 settings.ini，便于同一份数据对比两套配色。
+    std::string theme;
     auto searchMode=diva::SearchMode::Songs;
     for(int i=1;i<argc;++i) {
         std::wstring arg=argv[i];
@@ -145,6 +203,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         else if(arg==L"--module-source" && i+1<argc) {moduleSource=diva::Utf8(argv[++i]);searchMode=diva::SearchMode::Modules;}
         else if(arg==L"--query" && i+1<argc) initialQuery=diva::Utf8(argv[++i]);
         else if(arg==L"--language" && i+1<argc) language=diva::Utf8(argv[++i]);
+        else if(arg==L"--theme" && i+1<argc) theme=diva::Utf8(argv[++i]);
         else if(arg==L"--recommendation-demo") {recommendationDemo=true;searchMode=diva::SearchMode::Modules;}
         else if(arg==L"--accessories") searchMode=diva::SearchMode::Accessories;
         else if(arg==L"--hair") searchMode=diva::SearchMode::Hair;
@@ -153,7 +212,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
         else if(arg==L"--output" && i+1<argc) output=argv[++i];
     } LocalFree(argv);
     diva::InitLocale(home,language);
-    auto& host=diva::App(); host.preview=true; host.Init(home,game); host.view.open=true; host.view.OnOpened(); host.view.SetMode(searchMode);
+    auto& host=diva::App(); host.preview=true; host.Init(home,game);
+    if(const auto parsed=diva::ParseUiTheme(theme)) {diva::SetUiTheme(*parsed);host.view.styleDirty=true;} host.view.open=true; host.view.OnOpened(); host.view.SetMode(searchMode);
     // 推荐样例在目录就绪后才填入文本，先避免空输入框占用ImGui编辑缓冲。
     if(recommendationDemo || !initialQuery.empty()) {host.view.focus=false;host.view.customization.State().focus=false;}
     if(customizationDemo) {
@@ -177,11 +237,23 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show
     HWND window=CreateWindowExW(0,wc.lpszClassName,L"DIVA 游戏内搜索 · 原生预览",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1440,960,nullptr,nullptr,instance,nullptr);
     DXGI_SWAP_CHAIN_DESC desc{}; desc.BufferCount=2; desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.OutputWindow=window; desc.SampleDesc.Count=1; desc.Windowed=TRUE; desc.SwapEffect=DXGI_SWAP_EFFECT_DISCARD;
     ComPtr<ID3D11Device> device; ComPtr<ID3D11DeviceContext> context; ComPtr<IDXGISwapChain> chain;
-    // 自动截图使用确定性的 WARP；交互预览仍使用硬件 DX11，失败时才回退。
-    HRESULT hr=D3D11CreateDeviceAndSwapChain(nullptr,smoke?D3D_DRIVER_TYPE_WARP:D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&chain,&device,nullptr,&context);
-    if(FAILED(hr)) hr=D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&chain,&device,nullptr,&context);
-    if(FAILED(hr) || !host.Attach(chain.Get(),device.Get(),context.Get())) return 2;
-    ShowWindow(window,SW_SHOWNOACTIVATE);
+    // 自动截图使用确定性的 WARP 离屏渲染：不显示窗口，不受真实鼠标或其他程序干扰，SSH 会话中也能运行。
+    // 交互预览仍使用硬件 DX11 窗口；无可见桌面而建不出交换链时同样退回离屏。
+    HRESULT hr=E_FAIL;
+    if(!smoke) {
+        hr=D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&chain,&device,nullptr,&context);
+        if(FAILED(hr)) hr=D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&chain,&device,nullptr,&context);
+    }
+    const bool offscreen=FAILED(hr);
+    if(offscreen) {
+        device.Reset();context.Reset();
+        hr=D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context);
+        RECT client{};GetClientRect(window,&client);
+        if(SUCCEEDED(hr)) chain.Attach(new OffscreenSwapChain(device.Get(),window,std::max<LONG>(client.right,1),std::max<LONG>(client.bottom,1)));
+    }
+    // 失败前先停掉后台任务，避免进程退出析构静态对象时后台目录加载仍在使用它们。
+    if(FAILED(hr) || !host.Attach(chain.Get(),device.Get(),context.Get())) {host.Shutdown();return 2;}
+    if(!offscreen) ShowWindow(window,SW_SHOWNOACTIVATE);
     MSG msg{}; int readyFrames=0; bool saved=false; auto start=GetTickCount64(); UINT oldWidth=0,oldHeight=0;
     double totalFrameMs=0;int measuredFrames=0;
     while(msg.message!=WM_QUIT) {

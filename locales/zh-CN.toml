@@ -7,6 +7,10 @@ songs = "歌曲"
 modules = "模型"
 hair = "发型"
 accessories = "自定义道具"
+theme = "主题：{name}"
+theme_pearl = "珍珠白"
+theme_classic = "深色"
+theme_tip = "切换界面主题"
 
 [song]
 results = "{count} 首结果"
@@ -56,6 +60,11 @@ linked = "{name}（关联 {count}）"
 character = "角色："
 source = "来源："
 current_singer = "（当前歌者）"
+
+[module_names]
+source = "个人服装名称"
+user_header = "# 个人服装名称：只修改搜索面板的显示与检索，不修改游戏原生菜单。\n# 只修改等号右侧的双引号内容；空字符串表示沿用当前名称。文件使用UTF-8保存。\n# 示例：0 = \"我的初音\"。双引号和反斜杠需要写为 \\\" 和 \\\\。\n# 保存后，在模型搜索的“选项”中刷新目录，或重启游戏。\n# 此文件首次生成后不会被程序覆盖；新增服装请查 module_names_reference.toml，复制对应行到[module]下。\n# 列：稳定ID = \"自定义名称\" # 当前名称 | 实体原名 | 角色 | 定义来源 | COS\n\n"
+reference_header = "# 自动生成的当前服装参照表，请勿在此文件填写名称；此文件会随目录刷新更新。\n# 将需要改名的编号行复制到 module_names.toml 的[module]下，再填写等号右侧内容。\n# 也可直接在搜索面板按ID查找对应服装；以下编号就是模型卡片显示的ID。\n# 列：稳定ID = \"自定义名称\" # 当前名称 | 实体原名 | 角色 | 定义来源 | COS\n\n"
 
 [source]
 official = "官方"

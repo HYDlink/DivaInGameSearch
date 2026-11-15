@@ -68,6 +68,12 @@ __declspec(dllexport) void Init() {
     host.view.customization.singerProvider=diva::ReadCustomizationSingerContext;
     // 参数 catalog 为最新目录；发布模块 ID 到人物的只读映射，游戏帧线程据此按实际装备模型解析歌者。
     host.view.customization.onCatalogChanged=[](const std::shared_ptr<const diva::CustomizationCatalog>& catalog) {
+        if(catalog) {
+            // 一次写入整份快照诊断，避免逐行打开和刷新日志文件阻塞目录发布。
+            std::string report="定制目录诊断（一次快照）：";
+            for(const auto& line:catalog->diagnostics) report+="\n"+line;
+            Log(report);
+        }
         auto characters=std::make_shared<std::unordered_map<int,diva::CustomizationCharacter>>();
         if(catalog) for(const auto& item:catalog->items) {
             // 同一 ID 以首个生效定义为准；未知与共通不写入，避免把 ALL 当成具体人物。
@@ -171,7 +177,7 @@ __declspec(dllexport) void Init() {
         } else diva::SubmitSongNavigation(request,available,message);
         diva::App().view.status=message;Log(message);
     };
-    Log("已初始化原生搜索 1.2.5，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
+    Log("已初始化原生搜索 1.3.0，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
 }
 // 所有 Mod 完成 Init 后再安装链式输入隔离。
 __declspec(dllexport) void PostInit() {
