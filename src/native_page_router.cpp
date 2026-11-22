@@ -3,6 +3,7 @@
 #include "customization_item_locator.h"
 #include "customization_item_profiles.h"
 #include "module_action.h"
+#include "native_customization_config.h"
 #include "native_memory.h"
 #include "performance_trace.h"
 #include <Windows.h>
@@ -448,7 +449,8 @@ NativePageSnapshot ReadNativePage(uintptr_t base) {
     uintptr_t sceneController=0;
     if(!ReadAt(s.scene+8,sceneController) || sceneController!=s.controller) return s;
     ReadAt(s.controller+0x38,s.slotCount);ReadAt(s.controller+0x3C,s.slot);
-    ReadAt(s.controller+8,s.sourcePvid);ReadAt(base+rva::kCustomizeScopeSelector,s.nativeScope);
+    ReadAt(s.controller+8,s.sourcePvid);
+    if(!ReadCustomizationScope(base,s.nativeScope)) s.nativeScope=-1;
     // 当前槽位实际装备的模型：独立记录优先（播放列表来源于 controller+0x10），缺失时用临时显示配置。
     if(s.slot>=0 && s.slot<6) {
         uintptr_t record=0;int32_t value=-1;

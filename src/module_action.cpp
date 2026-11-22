@@ -10,6 +10,7 @@
 #include <map>
 #include <mutex>
 #include <algorithm>
+#include <string>
 
 namespace diva {
 using namespace native;
@@ -50,6 +51,7 @@ struct Transaction {
     bool exitSubmitted=false;
 } active;
 ModuleLocateStatus status;
+ModuleActionContextDiagnostic contextDiagnostic;
 
 // 参数page/id为当前范围槽位与独立装备值；复用681CE0的配置获取路径，支持共通A/B/C及单曲。
 bool ReadEquippedModule(const NativePageSnapshot& page,int& id) {
@@ -116,6 +118,33 @@ std::string ContextRejection(const Snapshot& s) {
     if(!s.valid || s.equippedId<0) return Tr(Tx::moduleop_config_unreadable);
     if(s.models[s.page.slot]!=s.equippedId) return Tr(Tx::moduleop_model_loading);
     return Tr(Tx::moduleop_identity_unknown);
+}
+// 参数s为未通过动作认证的模型页快照；仅在内存中填充脱敏结构化诊断，不打印原始指针也不访问文件。
+ModuleActionContextDiagnostic BuildContextDiagnostic(const Snapshot& s) {
+    ModuleActionContextDiagnostic d;
+    d.active=true;
+    d.reason=ContextRejection(s);
+    d.nativeScope=s.page.nativeScope;
+    ReadAt(base+rva::kCustomizeScopeSelector,d.staticScope);
+    const uintptr_t save=ReadNativeSaveData(base);
+    const uintptr_t staticSave=base+rva::kCustomizeScopeSelector>=customize_config::kScope
+        ?base+rva::kCustomizeScopeSelector-customize_config::kScope:0;
+    d.saveState=!save?0:(save!=staticSave?2:1);
+    d.sourcePvid=s.page.sourcePvid;
+    d.slot=s.page.slot;
+    d.slotCount=s.page.slotCount;
+    d.playlist=IsPlaylistCustomization(s.page);
+    uintptr_t overrideTable=0;
+    d.hasOverride=s.page.controller && ReadAt(s.page.controller+customize_config::kOverrideTable,overrideTable) && overrideTable!=0;
+    const uintptr_t record=ReadCustomizationSlotRecord(base,s.page.controller,s.page.nativeScope,s.page.sourcePvid,s.page.slot,s.page.slotCount,d.playlist);
+    d.hasRecord=record!=0;
+    d.equippedId=s.equippedId;
+    if(d.equippedId<0 && record) ReadAt(record,d.equippedId);
+    if(s.valid && s.page.slot>=0 && s.page.slot<6) d.displayModel=s.models[s.page.slot];
+    else if(s.page.controller && s.page.slot>=0 && s.page.slot<6) ReadAt(s.page.controller+0x320+static_cast<uintptr_t>(s.page.slot)*0xE0,d.displayModel);
+    d.category=s.category;
+    if(d.category<0 && s.page.controller) ReadAt(s.page.controller+0x40,d.category);
+    return d;
 }
 // 参数id为稳定服装；特殊原生模型项使用不同菜单规则，不能套用普通服装动作。
 bool OrdinaryModule(int id) {
@@ -340,8 +369,10 @@ void OnModuleActionStateFrame(uintptr_t state) {
     if((active.phase==Phase::Idle || active.phase==Phase::Done) && GetTickCount64()>capabilityDemandUntil) return;
     const auto current=Capture();if(current.page.state!=state) return;
     const auto thread=GetCurrentThreadId();
-    if(frameThread && thread!=frameThread) {cards.clear();latest={};++generation;Finish(Tr(Tx::moduleop_thread_changed));return;}
+    if(frameThread && thread!=frameThread) {cards.clear();latest={};contextDiagnostic={};++generation;Finish(Tr(Tx::moduleop_thread_changed));return;}
     frameThread=thread;lastFrame=GetTickCount64();
+    if(current.page.page==NativePage::Module && !CertifiedContext(current)) contextDiagnostic=BuildContextDiagnostic(current);
+    else contextDiagnostic={};
     if(active.phase==Phase::Waiting) {
         if(active.cancelled!=cancelled.load() || active.request.uiGeneration!=uiGeneration) Finish(Tr(Tx::moduleop_cancelled_changed));
         else Execute(current);
@@ -424,6 +455,13 @@ CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey&
 }
 
 ModuleLocateStatus PollModuleAction() {std::unique_lock lock(action_runtime::mutex,std::try_to_lock);return lock.owns_lock()?action_runtime::status:ModuleLocateStatus{};}
+// 线程安全返回模型页上下文未就绪诊断；超过500毫秒未刷新或已离开模型页时返回空结构。
+ModuleActionContextDiagnostic PollModuleActionDiagnostic() {
+    using namespace action_runtime;
+    std::unique_lock lock(mutex,std::try_to_lock);
+    if(!lock.owns_lock() || !lastFrame || GetTickCount64()-lastFrame>500) return {};
+    return contextDiagnostic;
+}
 bool ModuleActionBusy() {std::unique_lock lock(action_runtime::mutex,std::try_to_lock);return !lock.owns_lock() || (action_runtime::active.phase!=action_runtime::Phase::Idle && action_runtime::active.phase!=action_runtime::Phase::Done);}
 // 只读取事务状态；UI可在稳定预览中选择下一操作，加载和换装期间仍拒绝打断。
 bool ModulePreviewCanExit() {

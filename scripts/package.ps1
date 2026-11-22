@@ -1,4 +1,4 @@
-# 仅组装玩家安装所需文件、说明与许可证；源码和开发资料通过GitHub单独提供。
+﻿# 仅组装玩家安装所需文件、说明与许可证；源码和开发资料通过GitHub单独提供。
 param(
   # 指定测试主题时使用独立目录；auto-white 为按 Luma 配置解析白亮度的修正版，不改版本号。
   [ValidateSet('hdr-ui','hdr-ui-auto-white')][string]$TestVariant,
@@ -58,8 +58,8 @@ if($TestVariant){
 }
 $actual=@(Get-ChildItem -LiteralPath $modRoot -Recurse -File | ForEach-Object {[IO.Path]::GetRelativePath($modRoot,$_.FullName).Replace('\','/')})
 if(@(Compare-Object $allowed $actual).Count){throw '安装包文件与允许清单不一致，已拒绝打包。'}
-$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.3.0-win64.zip'
-if($TestVariant){$zip=Join-Path $releaseRoot "DivaInGameSearch-1.3.0-win64-$TestVariant-test.zip"}
+$zip=Join-Path $releaseRoot 'DivaInGameSearch-1.3.1-win64.zip'
+if($TestVariant){$zip=Join-Path $releaseRoot "DivaInGameSearch-1.3.1-win64-$TestVariant-test.zip"}
 Compress-Archive -LiteralPath $modRoot -DestinationPath $zip -Force
 $utf8=[Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText(($zip+'.sha256'),(Get-FileHash $zip -Algorithm SHA256).Hash+'  '+[IO.Path]::GetFileName($zip)+"`n",$utf8)

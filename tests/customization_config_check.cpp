@@ -1,9 +1,13 @@
 // 共通A/B/C与单曲配置读取隔离回归：只访问本进程样本，原生获取器使用记录适配器替代。
 #include "native_customization_config.h"
 #include "customization_action.h"
+#include <algorithm>
 #include <array>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 int checks=0,reads=0;
@@ -14,6 +18,56 @@ void Check(bool condition,const char* message) {++checks;if(!condition) throw st
 uintptr_t ReadSample(uintptr_t base,int scope,int pvid,int slot) {
     Check(base==123 && pvid==817,"原生获取适配器收到错误基址或歌曲");++reads;
     return reinterpret_cast<uintptr_t>(saved[scope][slot].data());
+}
+uintptr_t testRelocatedSave=0;
+// 返回测试进程内的重定位存档缓冲地址，模拟 Hook 了 GetSaveData() 的 Mod 环境。
+uintptr_t RelocatedSaveGetter(uintptr_t base) {(void)base;return testRelocatedSave;}
+// 返回空指针，模拟存档对象尚未就绪或读取失败的场景。
+uintptr_t NullSaveGetter(uintptr_t base) {(void)base;return 0;}
+// 管理仅保留地址空间并按页提交的隔离基址，防止测试异常时泄漏虚拟内存。
+struct ScopeFixture {
+    void* allocation=nullptr;
+    uintptr_t base=0;
+    ScopeFixture() {
+        using namespace diva::native;
+        const size_t span=std::max(rva::kCustomizeScopeSelector,rva::kGetSaveData)+0x1000;
+        allocation=VirtualAlloc(nullptr,span,MEM_RESERVE,PAGE_READWRITE);
+        Check(allocation!=nullptr,"无法保留范围测试隔离地址空间");
+        base=reinterpret_cast<uintptr_t>(allocation);
+        const auto scopePage=(base+rva::kCustomizeScopeSelector)&~uintptr_t(0xFFF);
+        const auto getterPage=(base+rva::kGetSaveData)&~uintptr_t(0xFFF);
+        Check(VirtualAlloc(reinterpret_cast<void*>(scopePage),0x1000,MEM_COMMIT,PAGE_READWRITE)!=nullptr,"无法提交范围测试静态页");
+        if(getterPage!=scopePage)
+            Check(VirtualAlloc(reinterpret_cast<void*>(getterPage),0x1000,MEM_COMMIT,PAGE_READONLY)!=nullptr,"无法提交非可执行存档获取器页");
+    }
+    ~ScopeFixture() {if(allocation) VirtualFree(allocation,0,MEM_RELEASE);}
+};
+// 验证 SaveData 重定位、空存档拒绝回退与合成非可执行夹具回退路径。
+void CheckScopeReader() {
+    using namespace diva::native;
+    int scope=-1;
+    Check(!ReadCustomizationScope(0,scope),"空基址仍读取换装范围");
+    ScopeFixture fixture;
+    std::vector<unsigned char> relocatedBuffer(customize_config::kScope+sizeof(int32_t),0);
+    testRelocatedSave=reinterpret_cast<uintptr_t>(relocatedBuffer.data());
+    const int32_t staleScope=0;
+    std::memcpy(reinterpret_cast<void*>(fixture.base+rva::kCustomizeScopeSelector),&staleScope,sizeof(staleScope));
+    for(int32_t expected=0;expected<4;++expected) {
+        std::memcpy(relocatedBuffer.data()+customize_config::kScope,&expected,sizeof(expected));
+        scope=-1;
+        Check(ReadCustomizationScope(fixture.base,scope,RelocatedSaveGetter) && scope==expected,"重定位存档未返回 GetSaveData()+kScope 的真实范围");
+    }
+    const int32_t staleSong=3,relocatedCommonB=1;
+    std::memcpy(reinterpret_cast<void*>(fixture.base+rva::kCustomizeScopeSelector),&staleSong,sizeof(staleSong));
+    std::memcpy(relocatedBuffer.data()+customize_config::kScope,&relocatedCommonB,sizeof(relocatedCommonB));
+    scope=-1;
+    Check(ReadCustomizationScope(fixture.base,scope,RelocatedSaveGetter) && scope==relocatedCommonB,"静态范围与重定位存档不一致时未优先使用重定位存档");
+    Check(!ReadCustomizationScope(fixture.base,scope,NullSaveGetter),"存档获取器返回空指针时错误回退到静态范围");
+    for(int32_t expected=0;expected<4;++expected) {
+        std::memcpy(reinterpret_cast<void*>(fixture.base+rva::kCustomizeScopeSelector),&expected,sizeof(expected));
+        scope=-1;
+        Check(ReadCustomizationScope(fixture.base,scope) && scope==expected,"非可执行合成测试夹具未能回退读取静态范围");
+    }
 }
 }
 
@@ -54,6 +108,7 @@ int main() {
         Check(!ReadCustomizationSlotRecord(123,address,3,-1,0,1,false,ReadSample),"单曲范围接受无效来源歌曲");
         Check(!ReadCustomizationSlotRecord(123,address,0,817,0,1,false,nullptr),"无获取适配器时伪造记录");
         Check(reads==24,"拒绝路径仍调用了原生配置获取器");
+        CheckScopeReader();
         std::cout<<"共通与单曲配置读取隔离回归通过："<<checks<<"项；未访问游戏。\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"配置读取验证失败："<<error.what()<<"\n";return 1;}
 }

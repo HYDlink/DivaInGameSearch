@@ -1,6 +1,15 @@
 #pragma once
 #include "module_locator.h"
+#include <string>
 namespace diva {
+// 模型页动作上下文未就绪时的结构化诊断（仅含脱敏字段，不暴露原始指针）。
+struct ModuleActionContextDiagnostic {
+    bool active=false; // 为 true 表示当前停留在模型页且未通过动作上下文认证。
+    std::string reason; // 拒绝原因文案（由本地化表生成）。
+    int nativeScope=-1,staticScope=-1,sourcePvid=-1,slot=-1,slotCount=-1,equippedId=-1,displayModel=-1,category=-1; // 本帧读取范围、静态范围、歌曲、槽位、装备与分类。
+    int saveState=0; // 0=存档不可读，1=未重定位，2=已重定位。
+    bool playlist=false,hasOverride=false,hasRecord=false; // 是否来自播放列表、控制器是否存在独立覆盖表、是否读到槽位配置记录。
+};
 // 参数base只由已核验构建的原生路由器传入，不单独绕过profile初始化。
 void InitializeModuleActions(uintptr_t base);
 // 参数state为原生内部状态帧真实this；拥有读取及动作调用全部在该边界串行执行。
@@ -15,6 +24,8 @@ void TickModuleAction(uint64_t now,uint64_t generation);
 CustomizationActionCapability ReadModuleActionCapability(const CustomizationKey& key,CustomizationCharacter targetCharacter=CustomizationCharacter::Unknown);
 // 返回最近原生动作的跨帧读回状态，与定位状态使用统一序号。
 ModuleLocateStatus PollModuleAction();
+// 返回模型页动作上下文未就绪时的结构化诊断（无原始指针），就绪或离开模型页时 active 为 false。
+ModuleActionContextDiagnostic PollModuleActionDiagnostic();
 // 返回是否有正在执行或等待原生退出的动作。
 bool ModuleActionBusy();
 // 当前插件预览已稳定时允许新请求先退出它；不把加载或换装中途当作可中断预览。

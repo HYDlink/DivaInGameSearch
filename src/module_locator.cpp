@@ -2,6 +2,7 @@
 #include "module_locator.h"
 #include "module_category.h"
 #include "module_action.h"
+#include "native_customization_config.h"
 #include "native_memory.h"
 
 #include <Windows.h>
@@ -137,7 +138,7 @@ bool ReadFrameSnapshot(uintptr_t base,uintptr_t page,FrameSnapshot& snapshot) {
     if(!ReadAt(page+0x20,snapshot.pageState) || !ReadAt(page+0x28,snapshot.pageEpoch)
         || !ReadAt(page+0x110,snapshot.index) || !ReadAt(page+0x60,snapshot.popup)
         || !ReadAt(controller+0x38,snapshot.slotCount) || !ReadAt(controller+0x3C,snapshot.rawContext) || !ReadAt(controller+0x40,snapshot.category)
-        || !ReadAt(base+rva::kCustomizeScopeSelector,snapshot.nativeScope)
+        || !ReadCustomizationScope(base,snapshot.nativeScope)
         || !ReadAt(page+0x70,snapshot.listBegin) || !ReadAt(page+0x78,snapshot.listEnd)) return false;
     // 自然E/Q已确认3C是当前歌者槽位；按真实槽位读取模型，不回退到0号槽位。
     if(snapshot.rawContext>=0 && snapshot.rawContext<6

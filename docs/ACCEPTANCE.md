@@ -1,5 +1,22 @@
 # 验收范围
 
+## 2026-11-22 1.3.1 修复重定位存档 Mod 环境下无法换装
+
+根据反馈玩家提供的 `search-diagnostics.log` 与游戏内截图（可成功定位模型 ID 61，但左下角提示“当前槽位的独立装备配置暂不可读，请等待模型页就绪。”且换装／预览按钮禁用），结合 Ghidra 只读反编译 `0x1D6510`（`GetSaveData`）、`0x1D5E30`（`kGetCustomizationSlotConfig`）及 `0x681A90`，确认游戏原生入口始终通过 `GetSaveData() + 0x169410` 读写当前换装范围。此前 `native_page_router.cpp` 与 `module_locator.cpp` 读取硬编码静态地址 `base + 0x12B5A74`，当启用了会重定位 `SaveData` 的 Mod（日志中加载了 `EdenProject_Core` 等）或切换范围后，该静态值与 `GetSaveData() + 0x169410` 不一致，导致 `ReadNativeCustomizationSlot` 因 `actualScope != scope` 返回 `0`。
+
+产品修复与自动验收：
+- `src/native_customization_config.h` 新增 `ReadNativeSaveData` 与 `ReadCustomizationScope`，真实游戏环境下统一从 `GetSaveData() + 0x169410` 读取换装范围（仅在默认获取器面对非可执行合成测试夹具时退回静态 RVA，存档返回空指针时不静默回退）；`ReadNativeCustomizationSlot`、`native_page_router.cpp` 与 `module_locator.cpp` 同步切换至同一读取路径。
+- `src/module_action.*` 与 `src/mod.cpp` 新增脱敏结构化诊断 `ModuleActionContextDiagnostic`，在模型页上下文未就绪时由 `OnFrame` 去重写入 `search-diagnostics.log`。
+- `./scripts/build.ps1`：MSVC Release 编译通过，23/23 项 CTest 通过（`CustomizationConfigCheck` 扩展至 153 项断言，覆盖重定位存档优先、空存档拒绝回退与非可执行夹具回退；`文案硬编码检查` 等全部通过）。
+- `./build/release/DllCheck.exe`：五个 DML 导出、DX11 初始化、33 帧回调、尺寸恢复与 IME 消息通过（未访问游戏内存）。
+
+打包与本机部署：
+- `artifacts/release/DivaInGameSearch-1.3.1-win64.zip`（3,083,426 字节），SHA-256：`3B603F32596496F5014DD45EEF633AFF65D2A799B4C8FCFE3AA66850F306274E`（允许清单 23 个文件）。
+- 本机已退出游戏并经 `./scripts/update-deployment.ps1` 更新部署（备份位于忽略目录 `artifacts/deployment/update-20261122-110304`，`DivaInGameSearch.dll` 哈希 `90818CBBF24CE948814522AF28085D1FB35B365A40C8F9E2DD403AF6B6A2AC80`，`settings.ini`、`favorites.txt` 及全局 `config.toml` 哈希未变）。
+
+实机确认与未测边界：
+- 反馈用户已确认 1.3.1 发行包在该重定位存档 Mod 环境下可正常换装并修复完成；本机新部署尚未重启游戏复测，其他 Mod 组合及全量范围／槽位／发型与自定义道具动作不越界外推。
+
 ## 2026-11-15 1.2.7 同版本背景透明观感修正
 
 用户要求仅对齐 HDR 主窗口背景的旧 SDR 观感，保留已修正的图片与白亮度逻辑，并沿用 1.2.7 重新本地封包。实现按主窗口边界限定半透明透底，普通 SDR 直绘、图片纹理与 `ui_color_profile.*` 没有改变。

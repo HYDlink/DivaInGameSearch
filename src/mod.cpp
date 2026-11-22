@@ -24,6 +24,7 @@ uint64_t pendingActionCloseSerial=0;
 bool nativeRoutingAvailable=false;
 uint64_t reportedSongSerial=0;
 std::string reportedSongMessage;
+std::string reportedModuleActionDiagnostic;
 // 把中文诊断写到本 Mod 目录；参数 text 为记录内容。
 void Log(const std::string& text) {
     static std::mutex mutex; std::lock_guard lock(mutex);
@@ -177,7 +178,7 @@ __declspec(dllexport) void Init() {
         } else diva::SubmitSongNavigation(request,available,message);
         diva::App().view.status=message;Log(message);
     };
-    Log("已初始化原生搜索 1.3.0，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
+    Log("已初始化原生搜索 1.3.1，进程="+std::to_string(GetCurrentProcessId())+"，诊断日志追加写入；默认 Ctrl+F；曲库后台读取，无外部服务。");
 }
 // 所有 Mod 完成 Init 后再安装链式输入隔离。
 __declspec(dllexport) void PostInit() {
@@ -248,6 +249,29 @@ __declspec(dllexport) void OnFrame(IDXGISwapChain* chain) {
             host.view.customization.status=moduleStatus.message;
             if(moduleStatus.completed || moduleStatus.phase==diva::ModuleLocatePhase::Confirming) Log("定制原生阶段："+moduleStatus.message+(moduleStatus.detail.empty()?"":"；细节："+moduleStatus.detail));
             // 定制页面定位或跨页成功后保留搜索窗口，以便直接继续预览和更换。
+        }
+    }
+    if(host.view.open && host.view.mode==diva::SearchMode::Modules) {
+        const auto d=diva::PollModuleActionDiagnostic();
+        if(!d.active) reportedModuleActionDiagnostic.clear();
+        else {
+            const char* relocated=d.saveState==2?"是":d.saveState==1?"否":"不可读";
+            const std::string text="原因="+d.reason
+                +"，范围="+std::to_string(d.nativeScope)
+                +"，静态范围="+std::to_string(d.staticScope)
+                +"，存档重定位="+relocated
+                +"，歌曲="+std::to_string(d.sourcePvid)
+                +"，槽位="+std::to_string(d.slot)+"/"+std::to_string(d.slotCount)
+                +"，播放列表="+(d.playlist?"是":"否")
+                +"，覆盖表="+(d.hasOverride?"有":"无")
+                +"，记录="+(d.hasRecord?"有":"无")
+                +"，已装备="+std::to_string(d.equippedId)
+                +"，显示模型="+std::to_string(d.displayModel)
+                +"，分类="+std::to_string(d.category);
+            if(reportedModuleActionDiagnostic!=text) {
+                reportedModuleActionDiagnostic=text;
+                Log("模型动作上下文未就绪："+text);
+            }
         }
     }
     if(host.view.open && !Selection().Busy()) diva::Game().Read();
