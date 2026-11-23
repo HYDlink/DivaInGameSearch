@@ -43,29 +43,6 @@ static uintptr_t ReadSelectorObject(uintptr_t address) {
     __try { return ((uintptr_t(__fastcall*)())address)(); }
     __except(EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
-// 扫描模块可执行节并要求唯一命中；参数 module/pattern/mask 为模块与模式。
-static uintptr_t Find(HMODULE module,const unsigned char* pattern,const char* mask) {
-    if(!module) return 0;
-    auto base=(uintptr_t)module; IMAGE_DOS_HEADER dos{}; if(!ReadAt(base,dos)) return 0;
-    IMAGE_NT_HEADERS64 nt{}; if(!ReadAt(base+dos.e_lfanew,nt)) return 0;
-    auto section=base+dos.e_lfanew+sizeof(DWORD)+sizeof(IMAGE_FILE_HEADER)+nt.FileHeader.SizeOfOptionalHeader;
-    uintptr_t found=0; size_t n=strlen(mask);
-    for(unsigned i=0;i<nt.FileHeader.NumberOfSections;++i) {
-        IMAGE_SECTION_HEADER s{}; if(!ReadAt(section+i*sizeof(s),s) || !(s.Characteristics&IMAGE_SCN_MEM_EXECUTE)) continue;
-        auto begin=base+s.VirtualAddress,end=begin+s.Misc.VirtualSize;
-        for(auto p=begin;p+n<=end;) {
-            MEMORY_BASIC_INFORMATION info{}; if(!VirtualQuery((void*)p,&info,sizeof(info))) break;
-            auto limit=std::min(end,(uintptr_t)info.BaseAddress+info.RegionSize);
-            if(info.State==MEM_COMMIT && !(info.Protect&(PAGE_GUARD|PAGE_NOACCESS)) && info.Protect!=PAGE_EXECUTE) {
-                for(;p+n<=limit;++p) {
-                    bool match=true; for(size_t j=0;j<n;++j) if(mask[j]=='x' && *(unsigned char*)(p+j)!=pattern[j]) { match=false; break; }
-                    if(match) { if(found) return 0; found=p; }
-                }
-            }
-            p=limit;
-        }
-    } return found;
-}
 // 取得本进程适配器。
 GameMemory& Game() { static GameMemory* memory=new GameMemory; return *memory; }
 // 核查本机已记录构建，安装链式输入 Hook，并解析 New Classics 风格地址。
@@ -99,19 +76,7 @@ void GameMemory::Initialize() {
         int candidate=0;
         if(ReadAt(base+rva::kLastSelectPvId+kEdenDataOffset,candidate) && candidate>0 && candidate<10000000) dataOffset=kEdenDataOffset;
     }
-    auto nc=GetModuleHandleW(L"NewClassics.dll");
-    if(nc) {
-        const unsigned char pattern[]={0x74,0x0B,0x8B,0x88,0,0,0,0,0x83,0xF9,0x03,0x75,0x02,0x33,0xC9,0x89,0x0D,0,0,0,0,0x40,0x0F,0xB6,0xC7,0x48,0x8B};
-        auto hit=Find(nc,pattern,"xxxx????xxxxxxxxx????xxxxxx"); int displacement=0;
-        if(!hit || !ReadAt(hit+17,displacement)) { diagnostic=Tr(Tx::game_nc_signature); return; }
-        styleAddress=hit+21+displacement; int style=-1;
-        if(!ReadAt(styleAddress,style) || style<0 || style>2) { diagnostic=Tr(Tx::game_nc_data); return; }
-        unsigned char load[3]{};
-        if(!ReadAt(hit-10,load) || memcmp(load,"\x48\x8B\x05",3) || !ReadAt(hit-7,displacement) || !ReadAt(hit+4,preferredStyleOffset) || preferredStyleOffset<8 || preferredStyleOffset>0x4000) {
-            diagnostic=Tr(Tx::game_nc_pattern);return;
-        }
-        styleWindowAddress=hit-3+displacement;
-    }
+    styleAddress=0; styleWindowAddress=0; preferredStyleOffset=0;
     // 复用歌词项目已在本机使用的 applySel 相对调用，避免沿用其他构建的字段偏移指令地址。
     auto apply=base+rva::kPvSelectorApplySel;unsigned char prefix[19]{};unsigned char opcode=0;int callOffset=0;
     SIZE_T prefixRead=0;
@@ -125,7 +90,8 @@ void GameMemory::Initialize() {
     if(selectorGetter<base || selectorGetter>=base+nt.OptionalHeader.SizeOfImage || !VirtualQuery((void*)selectorGetter,&getterPage,sizeof(getterPage))
         || !(getterPage.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))) { diagnostic=Tr(Tx::game_getter_page);return; }
     selectorObject=ReadSelectorObject(selectorGetter);
-    supported=true; diagnostic="已核对本机 PC 构建、输入隔离和实际选曲对象，支持普通歌曲选择界面。";
+    supported=true;
+    diagnostic="已核对本机 PC 构建、输入隔离和实际选曲对象，支持普通歌曲选择界面。";
 }
 // 参数image/output为通过构建校验的主程序基址和固定32字节输出，调用与DML相同的只读语言目录获取器。
 static bool ReadLanguageDirectory(uintptr_t image,char* output) {

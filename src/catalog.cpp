@@ -125,7 +125,6 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
         song.hidden=get("hidden")=="1";
         if(song.name.empty()) song.name=song.english.empty()?"PV "+std::to_string(id):song.english;
         if(auto it=attrs.find("song_name");it!=attrs.end()) song.source=it->second.second;
-        if(!song.source.empty()) associations[id].insert(song.source);
         for(int d=0;d<4;++d) {
             auto prefix="difficulty."+names[d]+".";
             int length=0;
@@ -139,6 +138,16 @@ Catalog LoadCatalog(const fs::path& home,const fs::path& game) {
                 song.charts[0][actual]={ParseLevel(get(p+"level")),it->second.first,resolved.second,resolved.first};
             }
         }
+        // 仅修改歌名/歌词的汉化或别名补丁不提供谱面文件，不应覆盖原曲包来源（如“官方基础包”/“官方 DLC”）。
+        bool sourceProvidesChart=false;
+        std::string chartSource;
+        for(const auto& chart:song.charts[0]) {
+            if(!chart.available || chart.source.empty()) continue;
+            if(chartSource.empty()) chartSource=chart.source;
+            if(chart.source==song.source) { sourceProvidesChart=true; break; }
+        }
+        if(!sourceProvidesChart && !chartSource.empty()) song.source=chartSource;
+        if(!song.source.empty()) associations[id].insert(song.source);
     }
     // NC 对同一歌曲和难度的列表以高优先级为准；无 script 条目继承官方谱面。
     struct NcEntry { toml::table table; std::string source; };
